@@ -1,0 +1,18 @@
+{
+  "permlang": 1,
+  "package": "axios",
+  "functions": {
+    "AxiosInstance()": ["net({host:0})"],
+    "Axios.request": ["net({host:0})"],
+    "Axios.get": ["net({host:0})"],
+    "Axios.delete": ["net({host:0})"],
+    "Axios.head": ["net({host:0})"],
+    "Axios.options": ["net({host:0})"],
+    "Axios.post": ["net({host:0})"],
+    "Axios.put": ["net({host:0})"],
+    "Axios.patch": ["net({host:0})"],
+    "Axios.postForm": ["net({host:0})"],
+    "Axios.putForm": ["net({host:0})"],
+    "Axios.patchForm": ["net({host:0})"]
+  }
+}

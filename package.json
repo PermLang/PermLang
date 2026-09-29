@@ -9,7 +9,8 @@
     "permlang": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "adapters"
   ],
   "engines": {
     "node": ">=20"

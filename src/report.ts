@@ -9,6 +9,10 @@ export function formatText(report: Report, cwd = process.cwd()): string {
   const warnings = report.diagnostics.length - errors;
   const files = plural(report.files, "file");
 
+  if (report.unsafe.length > 0) {
+    const entries = report.unsafe.map((u) => `  ${relative(u.file, cwd)}:${u.line} ${u.function}: ${u.reason}`);
+    lines.push([`${plural(report.unsafe.length, "@perm-unsafe override")} (checks suppressed):`, ...entries].join("\n"));
+  }
   if (report.diagnostics.length === 0) {
     lines.push(`No permission violations in ${files}.`);
   } else {
@@ -32,6 +36,7 @@ export function toJson(report: Report, cwd = process.cwd()): string {
       files: report.files,
       functions: report.functions.map((f) => ({ ...f, file: relative(f.file, cwd) })),
       diagnostics: report.diagnostics.map((d) => ({ ...d, file: relative(d.file, cwd) })),
+      unsafe: report.unsafe.map((u) => ({ ...u, file: relative(u.file, cwd) })),
     },
     null,
     2,

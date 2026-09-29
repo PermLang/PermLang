@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { covers, formatCapability, parsePermList, type Capability } from "../src/capability.js";
 
-const cap = (name: Capability["name"], arg?: string): Capability => ({ name, arg });
+const cap = (name: string, arg?: string): Capability => ({ name, arg });
 
 describe("parsePermList", () => {
   it("parses a comma-separated list", () => {

@@ -1,0 +1,8 @@
+{
+  "permlang": 1,
+  "package": "nodemailer",
+  "defines": ["email.send"],
+  "functions": {
+    "Mail.sendMail": ["email.send"]
+  }
+}

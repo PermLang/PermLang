@@ -1,0 +1,9 @@
+{
+  "permlang": 1,
+  "package": ["http", "https", "http2"],
+  "functions": {
+    "request": ["net({host:0})"],
+    "get": ["net({host:0})"],
+    "connect": ["net({host:0})"]
+  }
+}

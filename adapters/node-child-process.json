@@ -1,0 +1,13 @@
+{
+  "permlang": 1,
+  "package": "child_process",
+  "functions": {
+    "exec": ["exec"],
+    "execSync": ["exec"],
+    "execFile": ["exec"],
+    "execFileSync": ["exec"],
+    "spawn": ["exec"],
+    "spawnSync": ["exec"],
+    "fork": ["exec"]
+  }
+}

@@ -4,9 +4,10 @@
 // reach, across files. Declared permissions are the unit's own @perm tags plus
 // its file's @module @perm tags.
 
-import { Project, SyntaxKind, ts, type Node } from "ts-morph";
+import { Project, ts, type Node } from "ts-morph";
+import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
 import { covers, formatCapability } from "./capability.js";
-import { detectCapabilities } from "./detect.js";
+import { detectInFile } from "./detect/index.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
   createUnit,
@@ -50,10 +51,24 @@ export interface FunctionReport {
   actual: string[];
 }
 
+/** A function whose checks are suppressed by @perm-unsafe. Always reported. */
+export interface UnsafeReport {
+  file: string;
+  line: number;
+  function: string;
+  reason: string;
+}
+
 export interface Report {
   files: number;
   functions: FunctionReport[];
   diagnostics: Diagnostic[];
+  unsafe: UnsafeReport[];
+}
+
+export interface CheckOptions {
+  /** Team adapter manifests, loaded before (and taking precedence over) the built-in ones. */
+  adapters?: readonly string[];
 }
 
 const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -66,26 +81,31 @@ const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   skipLibCheck: true,
 };
 
-export function checkFiles(files: readonly string[]): Report {
+export function checkFiles(files: readonly string[], options: CheckOptions = {}): Report {
   const project = new Project({ compilerOptions: DEFAULT_COMPILER_OPTIONS });
   project.addSourceFilesAtPaths([...files]);
-  return checkProject(project);
+  return checkProject(project, options);
 }
 
-export function checkTsConfig(tsConfigFilePath: string): Report {
-  return checkProject(new Project({ tsConfigFilePath }));
+export function checkTsConfig(tsConfigFilePath: string, options: CheckOptions = {}): Report {
+  return checkProject(new Project({ tsConfigFilePath }), options);
 }
 
-export function checkProject(project: Project): Report {
+/** @throws AdapterError when an adapter manifest is invalid. */
+export function checkProject(project: Project, options: CheckOptions = {}): Report {
+  const loaded = loadAdapters(options.adapters ?? []);
+  if (loaded.errors.length > 0) throw new AdapterError(loaded.errors);
+  const adapters = new AdapterIndex(loaded.adapters);
+
   const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
   const units = new Map<Node, Unit>();
   const diagnostics: Diagnostic[] = [];
 
   // 1. Every unit in every file, with its annotations and direct uses.
   for (const sourceFile of sourceFiles) {
-    const module = readModuleAnnotation(sourceFile);
+    const module = readModuleAnnotation(sourceFile, adapters.vocabulary);
     const exports = exportedDeclarations(sourceFile);
-    const add = (node: Node) => units.set(node, createUnit(node, module, exports));
+    const add = (node: Node) => units.set(node, createUnit(node, module, exports, adapters.vocabulary));
 
     add(sourceFile);
     sourceFile.forEachDescendant((node) => {
@@ -93,12 +113,10 @@ export function checkProject(project: Project): Report {
     });
     for (const e of module?.errors ?? []) diagnostics.push(annotationError(sourceFile.getFilePath(), "<module>", e));
 
-    for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-      const found = detectCapabilities(call);
-      if (found.length === 0) continue;
-      const unit = units.get(enclosingUnitNode(call))!;
-      const { line, column } = sourceFile.getLineAndColumnAtPos(call.getStart());
-      for (const { capability, call: text } of found) unit.uses.push({ capability, call: text, line, column });
+    for (const { node, uses } of detectInFile(sourceFile, adapters)) {
+      const unit = units.get(enclosingUnitNode(node))!;
+      const { line, column } = sourceFile.getLineAndColumnAtPos(node.getStart());
+      for (const u of uses) unit.uses.push({ ...u, line, column });
     }
   }
 
@@ -116,7 +134,12 @@ export function checkProject(project: Project): Report {
     diagnostics.push(...diagnose(unit, edgesFrom.get(unit) ?? [], reach));
   }
 
-  return { files: sourceFiles.length, functions, diagnostics: dedupe(diagnostics) };
+  const unsafe = [...units.values()].flatMap((u) =>
+    u.own?.unsafe ? [{ file: u.file, line: u.own.unsafe.line, function: u.name, reason: u.own.unsafe.reason }] : [],
+  );
+  unsafe.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+
+  return { files: sourceFiles.length, functions, diagnostics: dedupe(diagnostics), unsafe };
 }
 
 // --- diagnostics -------------------------------------------------------------
@@ -139,27 +162,45 @@ function diagnose(unit: Unit, edges: readonly Edge[], reach: Reach): Diagnostic[
     if (unit.exported) out.push(...missingAnnotation(unit, reach));
     return out;
   }
+  // @perm-unsafe suppresses this unit's own checks. Its callers still see what it reaches.
+  if (unit.own?.unsafe) return out;
 
   const declared = declaredCapabilities(unit);
   for (const use of unit.uses) {
     if (covers(declared, use.capability)) continue;
-    out.push(violation(unit, use, formatCapability(use.capability), [], use.capability.arg === undefined));
+    out.push(violation(unit, use, use.verb, formatCapability(use.capability), [], use.capability.dynamic === true));
   }
   for (const edge of edges) {
     if (edge.to === unit) continue; // recursion into itself adds nothing new
     for (const [key, p] of reach.get(edge.to)!) {
       if (covers(declared, p.capability)) continue;
       const path = [edge.to.name, ...pathTo(reach, edge.to, key)];
-      out.push(violation(unit, edge, key, path, p.capability.arg === undefined));
+      out.push(violation(unit, edge, "calls", key, path, p.capability.dynamic === true));
     }
   }
   return out;
 }
 
-function violation(unit: Unit, site: Use | Edge, capability: string, path: string[], dynamic: boolean): Diagnostic {
+/** What a capability's argument names, for "its ___ can't be determined statically". */
+function scopeWord(capability: string): string {
+  if (capability === "net") return "host";
+  if (capability.startsWith("fs.")) return "path";
+  if (capability.startsWith("db.")) return "table";
+  if (capability === "env") return "variable name";
+  return "argument";
+}
+
+function violation(
+  unit: Unit,
+  site: Use | Edge,
+  verb: string,
+  capability: string,
+  path: string[],
+  dynamic: boolean,
+): Diagnostic {
   const via = path.length > 0 ? `, reaching ${path.join(" → ")}` : "";
   const reason = dynamic
-    ? `its ${capability === "net" ? "host" : "path"} can't be determined statically, so it needs ${capability}`
+    ? `its ${scopeWord(capability)} can't be determined statically, so it needs ${capability}`
     : `its declared permissions do not include ${capability}`;
   return {
     severity: "error",
@@ -171,7 +212,7 @@ function violation(unit: Unit, site: Use | Edge, capability: string, path: strin
     capability,
     call: site.call,
     ...(path.length > 0 ? { path } : {}),
-    message: `${unit.name} calls ${site.call}${via}\n  but ${reason}.`,
+    message: `${unit.name} ${verb} ${site.call}${via}\n  but ${reason}.`,
     fix: `add ${capability} to @perm, or remove the call.`,
   };
 }
@@ -192,7 +233,7 @@ function missingAnnotation(unit: Unit, reach: Reach): Diagnostic[] {
       capability: key,
       call: site.call,
       ...(path.length > 0 ? { path } : {}),
-      message: `${unit.name} calls ${site.call}${via} but has no @perm annotation.`,
+      message: `${unit.name} ${p.edge ? "calls" : p.use.verb} ${site.call}${via} but has no @perm annotation.`,
       fix: `add /** @perm ${key} */ to ${unit.name}.`,
     } satisfies Diagnostic;
   });
