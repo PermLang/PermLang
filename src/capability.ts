@@ -9,6 +9,13 @@ export const BUILTIN_CAPABILITIES: readonly string[] = ["net", "fs.read", "fs.wr
 export const BUILTIN_VOCABULARY: ReadonlySet<string> = new Set(BUILTIN_CAPABILITIES);
 
 /**
+ * Code whose effects can't be determined statically (eval, a computed call on a
+ * sensitive object, require). It can't be declared in @perm: the only way to
+ * accept it is @perm-unsafe, which stops it from failing callers.
+ */
+export const UNVERIFIABLE = "unverifiable";
+
+/**
  * A capability with an optional scope. A missing `arg` means "any": as a
  * declaration it allows every host, path, table, or variable.
  */

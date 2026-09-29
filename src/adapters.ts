@@ -24,8 +24,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Node } from "ts-morph";
-import { BUILTIN_VOCABULARY, CAPABILITY_NAME, parsePermList, type Capability } from "./capability.js";
-import { argumentsOf, containerName, hostOf, literalString, type CallLike } from "./detect/shared.js";
+import { BUILTIN_VOCABULARY, CAPABILITY_NAME, UNVERIFIABLE, parsePermList, type Capability } from "./capability.js";
+import { containerName, hostOf, literalString } from "./detect/shared.js";
 
 interface Template {
   name: string;
@@ -111,7 +111,8 @@ export function parseManifest(raw: unknown, source: string): { manifest?: Parsed
     if (BUILTIN_VOCABULARY.has(d)) errors.push(`${source}: redefines built-in capability "${d}"`);
     else if (!CAPABILITY_NAME.test(d)) errors.push(`${source}: invalid capability name "${d}"`);
   }
-  const vocabulary = new Set([...BUILTIN_VOCABULARY, ...defined]);
+  // Adapters may also mark a function as unverifiable (vm.runInNewContext, new Worker).
+  const vocabulary = new Set([...BUILTIN_VOCABULARY, ...defined, UNVERIFIABLE]);
 
   const templates = (value: unknown, where: string): Template[] | undefined => {
     if (!Array.isArray(value)) {
@@ -174,9 +175,8 @@ export class AdapterIndex {
     this.vocabulary = new Set([...BUILTIN_VOCABULARY, ...adapters.flatMap((a) => a.defines)]);
   }
 
-  /** `declaration` is the resolved signature of `call`. */
-  capabilities(call: CallLike, declaration: Node | undefined): Capability[] {
-    if (!declaration) return [];
+  /** What calling `declaration` with `args` touches; pass no args for a function used as a value. */
+  forDeclaration(declaration: Node, args: readonly Node[]): Capability[] {
     const pkg = packageOf(declaration);
     const adapters = pkg === undefined ? undefined : this.byPackage.get(pkg);
     if (!adapters) return [];
@@ -185,11 +185,11 @@ export class AdapterIndex {
     const listed = key === undefined ? undefined : adapters.find((a) => a.functions.has(key))?.functions.get(key);
     const isConstructor = Node.isConstructorDeclaration(declaration) || Node.isConstructSignatureDeclaration(declaration);
     const templates = listed ?? (isConstructor ? undefined : adapters.find((a) => a.default)?.default);
-    return (templates ?? []).map((t) => instantiate(t, argumentsOf(call)));
+    return (templates ?? []).map((t) => instantiate(t, args));
   }
 }
 
-function instantiate(t: Template, args: Node[]): Capability {
+function instantiate(t: Template, args: readonly Node[]): Capability {
   if (t.arg === undefined || typeof t.arg === "string") return t.arg === undefined ? { name: t.name } : { name: t.name, arg: t.arg };
   const arg = args[t.arg.index];
   const value = t.arg.kind === "host" ? hostOf(arg) : literalString(arg);

@@ -1,0 +1,12 @@
+{
+  "permlang": 1,
+  "package": "vm",
+  "functions": {
+    "runInNewContext": ["unverifiable"],
+    "runInThisContext": ["unverifiable"],
+    "runInContext": ["unverifiable"],
+    "compileFunction": ["unverifiable"],
+    "Script.constructor": ["unverifiable"],
+    "SourceTextModule.constructor": ["unverifiable"]
+  }
+}

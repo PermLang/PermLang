@@ -15,8 +15,8 @@ export interface CapabilityUse {
   capability: Capability;
   /** The code as written, shortened for messages. */
   call: string;
-  /** How messages describe the use: "calls fetch(...)" or "reads process.env.X". */
-  verb: "calls" | "reads";
+  /** How messages describe the use: "calls fetch(...)", "reads process.env.X", "uses fetch as a value". */
+  verb: "calls" | "reads" | "uses";
 }
 
 export function resolveAlias(symbol: MorphSymbol): MorphSymbol {
@@ -32,7 +32,8 @@ export function callText(call: CallLike): string {
   const args = call.getArguments();
   const first = args[0]?.getText() ?? "";
   const shown = (first.length > 60 ? `${first.slice(0, 57)}...` : first) + (args.length > 1 ? ", ..." : "");
-  return `${call.getExpression().getText()}(${shown})`.replace(/\s+/g, " ");
+  const prefix = Node.isNewExpression(call) ? "new " : "";
+  return `${prefix}${call.getExpression().getText()}(${shown})`.replace(/\s+/g, " ");
 }
 
 /** A string argument's literal value; undefined when it is computed. */
@@ -48,6 +49,38 @@ export function resolvedDeclaration(call: CallLike): Node | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A global function or variable from the TypeScript lib or @types/node, such as
+ * `fetch` or `eval`: declared in a .d.ts, and not inside a `declare module "x"`
+ * package block (`declare global` is fine).
+ */
+export function isGlobalLibFunction(declaration: Node, name: string): boolean {
+  if (!Node.isFunctionDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return false;
+  if (declaration.getName() !== name || !declaration.getSourceFile().isDeclarationFile()) return false;
+  // @types/node nests some globals as `declare module "timers" { global { function setTimeout ... } }`.
+  for (const a of declaration.getAncestors()) {
+    if (!Node.isModuleDeclaration(a)) continue;
+    if (a.getName() === "global") return true;
+    if (Node.isStringLiteral(a.getNameNode())) return false;
+  }
+  return true;
+}
+
+/** Strips parentheses, `as`, `!`, and `satisfies` to reach the expression underneath. */
+export function unwrapExpression(node: Node): Node {
+  let n = node;
+  while (
+    Node.isParenthesizedExpression(n) ||
+    Node.isAsExpression(n) ||
+    Node.isTypeAssertion(n) ||
+    Node.isNonNullExpression(n) ||
+    Node.isSatisfiesExpression(n)
+  ) {
+    n = n.getExpression();
+  }
+  return n;
 }
 
 /** The name of the nearest class, interface, type alias, or namespace a declaration sits in. */

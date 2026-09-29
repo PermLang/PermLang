@@ -1,0 +1,7 @@
+{
+  "permlang": 1,
+  "package": "worker_threads",
+  "functions": {
+    "Worker.constructor": ["unverifiable"]
+  }
+}
