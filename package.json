@@ -1,0 +1,33 @@
+{
+  "name": "permlang",
+  "version": "0.1.0-dev",
+  "description": "The permission diff for AI-written TypeScript. Declare what each function can touch; the build fails when code exceeds it.",
+  "license": "UNLICENSED",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "permlang": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "permlang": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "ts-morph": "^27.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}
