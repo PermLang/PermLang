@@ -19,7 +19,7 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   -> add net(data-broker.io) to @perm, or remove the call.
 ```
 
-> **Status: pre-release (v0.1, milestone M2).** Not ready for production use.
+> **Status: pre-release (v0.1, milestone M3).** Not ready for production use.
 
 ## What works so far
 
@@ -51,10 +51,30 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
 - **Warnings.** An exported function with no `@perm` gets a warning (not an
   error) for each capability it reaches. Private helpers need no annotation;
   their callers must cover what they use.
+- **All v0.1 capabilities (M3).**
+  - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
+    `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
+    (`const env = process.env; env.KEY`). Spreading or enumerating the
+    environment needs bare `env`.
+  - `exec`: `child_process` (`exec`, `execFile`, `spawn`, `fork`, and their
+    `Sync` forms).
+  - `net`: also `http`, `https`, `http2`, `net`, and `tls` (host from a URL or
+    from an options object's `hostname` / `host`).
+  - `db`: **Prisma** (open question 2, provisionally answered). The table is the
+    model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
+    SQL (`$queryRaw`, `$executeRaw`, ...) needs bare `db.read` and `db.write`.
+- **Adapter manifests (M3).** JSON files mapping a library's functions to
+  capabilities, including app-level ones such as `payments.refund`. Built-in
+  adapters in [`adapters/`](adapters) cover axios, Stripe, nodemailer, and the Node
+  modules above. They were checked against the real axios, stripe@22, and
+  @types/nodemailer typings. Library calls resolve by signature, so aliasing a
+  method (`const post = axios.post`) doesn't hide it.
+- **Escape hatch (M3).** `@perm-unsafe reason:"..."` suppresses one function's
+  own checks. Every use is listed in the report. Callers still have to cover
+  what the function reaches.
 
-Not yet: `db`/`env`/`exec` detection, adapter manifests, `@perm-unsafe` (M3),
-unverifiable-code detection (M4), strictness levels, and `permlang diff` (M5).
-See the design doc for the full plan.
+Not yet: unverifiable-code detection (M4), strictness levels, and `permlang diff`
+(M5). See the design doc for the full plan.
 
 ### Known gaps (for the M4 adversarial suite)
 
@@ -67,7 +87,10 @@ These currently pass silently. Each will become either a detection or an
 - A subclass constructor reaching its base constructor through `super()`.
 - Shorthand properties passing a function: `{ helper }`.
 - Top-level code in an imported module (it runs on import).
-- Third-party packages: calls into `node_modules` are not followed (adapters in M3).
+- Third-party packages without an adapter: calls into them report nothing.
+- Library functions passed as values: `util.promisify(exec)`, `items.map(axios.get)`.
+- Database clients other than Prisma (Drizzle, `pg`, ...).
+- A `ProcessEnv` received as a parameter typed as a plain object.
 
 ## Capabilities
 
@@ -85,6 +108,35 @@ determined statically, for example `fetch(url)` or a template path like
 `` `./data/${name}` ``. *(Provisional: this answers open question 1 in the design
 doc and is subject to expert review.)*
 
+## Adapter manifests
+
+A manifest maps a package's functions to capabilities. Keys are
+`Container.member`, where the container is the class, interface, or type alias
+that declares the function. Use `Container()` for a call signature and a bare
+`name` for a top-level function. `{host:N}` and `{arg:N}` fill a scope from
+argument N:
+
+```json
+{
+  "permlang": 1,
+  "package": "stripe",
+  "defines": ["payments.charge", "payments.refund"],
+  "default": ["net(api.stripe.com)"],
+  "functions": {
+    "RefundResource.create": ["payments.refund", "net(api.stripe.com)"],
+    "WebhookObject.constructEvent": []
+  }
+}
+```
+
+`default` applies to every other method in the package (not constructors). An
+empty list maps a function to nothing. Add your own adapters in
+`permlang.config.json`; they take precedence over the built-in ones:
+
+```json
+{ "adapters": ["./permlang/adapters/acme-sms.json"] }
+```
+
 ## Usage
 
 ```bash
@@ -94,7 +146,7 @@ npm run permlang -- check fixtures/m1     # run the checker from source
 npm run permlang -- check src --json      # JSON report of declared vs. actual permissions
 ```
 
-Exit codes: `0` no errors, `1` permission errors, `2` usage error.
+Exit codes: `0` no errors, `1` permission errors, `2` usage or configuration error.
 
 ## Development
 
@@ -112,7 +164,8 @@ other. Every fixture file must be a module (have an import or export).
 ```
 src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
-src/detect.ts       mapping a call to the capabilities it uses directly
+src/adapters.ts     adapter manifests: loading, validation, matching
+src/detect/         direct uses: fetch, fs, env, Prisma, and adapter-mapped calls
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/check.ts        comparing declared vs. actual per unit

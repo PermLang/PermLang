@@ -14,9 +14,17 @@ export interface AnnotationError {
   column: number;
 }
 
+/** A `@perm-unsafe reason:"..."` tag: the function's own checks are suppressed. */
+export interface UnsafeOverride {
+  reason: string;
+  line: number;
+  column: number;
+}
+
 export interface PermAnnotation {
   capabilities: Capability[];
   errors: AnnotationError[];
+  unsafe?: UnsafeOverride;
 }
 
 /** A comment's full text (including delimiters) and its start position in the file. */
@@ -26,6 +34,8 @@ export interface Comment {
 }
 
 const PERM_TAG = /@perm(?![\w-])/g;
+const UNSAFE_TAG = /@perm-unsafe(?![\w-])/g;
+const UNSAFE_REASON = /^\s*reason:\s*"([^"]*)"/;
 const NEXT_TAG = /\s@[A-Za-z]/;
 // A line break plus the comment's leading `*`, replaced by spaces so offsets stay exact.
 const CONTINUATION = /\n[ \t]*\*(?!\/)/g;
@@ -58,29 +68,52 @@ export function moduleComments(sourceFile: SourceFile): Comment[] {
   return comments;
 }
 
-/** Merges every `@perm` tag across the given comments; undefined when there are none. */
-export function readPermAnnotation(comments: readonly Comment[], sourceFile: SourceFile): PermAnnotation | undefined {
+/**
+ * Merges every `@perm` and `@perm-unsafe` tag across the given comments;
+ * undefined when there are none. `vocabulary` is the set of known capability
+ * names: the built-ins plus whatever the loaded adapters define.
+ */
+export function readPermAnnotation(
+  comments: readonly Comment[],
+  sourceFile: SourceFile,
+  vocabulary: ReadonlySet<string>,
+): PermAnnotation | undefined {
   let found = false;
   const capabilities: Capability[] = [];
   const errors: AnnotationError[] = [];
+  let unsafe: UnsafeOverride | undefined;
+  const at = (pos: number) => sourceFile.getLineAndColumnAtPos(pos);
 
   for (const { text, start } of comments) {
     for (const tag of text.matchAll(PERM_TAG)) {
       found = true;
       const bodyStart = tag.index + tag[0].length;
-      const parsed = parsePermList(tagBody(text.slice(bodyStart)));
+      const parsed = parsePermList(tagBody(text.slice(bodyStart)), vocabulary);
       capabilities.push(...parsed.capabilities);
 
       for (const e of parsed.errors) {
         // An empty tag is reported at the tag itself.
         const pos = e.text === "@perm" ? start + tag.index : start + bodyStart + e.offset;
-        const { line, column } = sourceFile.getLineAndColumnAtPos(pos);
-        errors.push({ text: e.text, reason: e.reason, line, column });
+        errors.push({ text: e.text, reason: e.reason, ...at(pos) });
+      }
+    }
+
+    for (const tag of text.matchAll(UNSAFE_TAG)) {
+      found = true;
+      const reason = UNSAFE_REASON.exec(tagBody(text.slice(tag.index + tag[0].length)))?.[1]?.trim();
+      if (reason) {
+        unsafe ??= { reason, ...at(start + tag.index) };
+      } else {
+        errors.push({
+          text: "@perm-unsafe",
+          reason: '@perm-unsafe needs a reason, e.g. @perm-unsafe reason:"wraps a legacy SDK"',
+          ...at(start + tag.index),
+        });
       }
     }
   }
 
-  return found ? { capabilities, errors } : undefined;
+  return found ? { capabilities, errors, ...(unsafe ? { unsafe } : {}) } : undefined;
 }
 
 /** The text of one tag: up to the next tag or the end of the comment. */

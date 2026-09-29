@@ -1,0 +1,8 @@
+{
+  "permlang": 1,
+  "package": ["net", "tls"],
+  "functions": {
+    "connect": ["net({host:0})"],
+    "createConnection": ["net({host:0})"]
+  }
+}
