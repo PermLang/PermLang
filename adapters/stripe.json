@@ -1,0 +1,17 @@
+{
+  "permlang": 1,
+  "package": "stripe",
+  "defines": ["payments.charge", "payments.refund"],
+  "default": ["net(api.stripe.com)"],
+  "functions": {
+    "RefundResource.create": ["payments.refund", "net(api.stripe.com)"],
+    "PaymentIntentResource.create": ["payments.charge", "net(api.stripe.com)"],
+    "PaymentIntentResource.confirm": ["payments.charge", "net(api.stripe.com)"],
+    "PaymentIntentResource.capture": ["payments.charge", "net(api.stripe.com)"],
+    "ChargeResource.create": ["payments.charge", "net(api.stripe.com)"],
+    "ChargeResource.capture": ["payments.charge", "net(api.stripe.com)"],
+    "WebhookObject.constructEvent": [],
+    "WebhookObject.constructEventAsync": [],
+    "WebhookObject.generateTestHeaderString": []
+  }
+}

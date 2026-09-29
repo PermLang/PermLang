@@ -7,6 +7,7 @@ import { functionComments, moduleComments, readPermAnnotation, type PermAnnotati
 import type { Capability } from "./capability.js";
 
 export interface Use {
+  verb: "calls" | "reads";
   capability: Capability;
   call: string;
   line: number;
@@ -36,11 +37,16 @@ export function declaredCapabilities(unit: Unit): Capability[] {
   return [...(unit.module?.capabilities ?? []), ...(unit.own?.capabilities ?? [])];
 }
 
-export function readModuleAnnotation(sourceFile: SourceFile): PermAnnotation | undefined {
-  return readPermAnnotation(moduleComments(sourceFile), sourceFile);
+export function readModuleAnnotation(sourceFile: SourceFile, vocabulary: ReadonlySet<string>): PermAnnotation | undefined {
+  return readPermAnnotation(moduleComments(sourceFile), sourceFile, vocabulary);
 }
 
-export function createUnit(node: Node, module: PermAnnotation | undefined, exports: ReadonlySet<Node>): Unit {
+export function createUnit(
+  node: Node,
+  module: PermAnnotation | undefined,
+  exports: ReadonlySet<Node>,
+  vocabulary: ReadonlySet<string>,
+): Unit {
   const sourceFile = node.getSourceFile();
   return {
     node,
@@ -48,7 +54,7 @@ export function createUnit(node: Node, module: PermAnnotation | undefined, expor
     name: unitName(node),
     line: Node.isSourceFile(node) ? 1 : node.getStartLineNumber(),
     exported: Node.isSourceFile(node) || exports.has(exportOwner(node)),
-    own: Node.isSourceFile(node) ? undefined : readPermAnnotation(functionComments(jsDocsOf(node)), sourceFile),
+    own: Node.isSourceFile(node) ? undefined : readPermAnnotation(functionComments(jsDocsOf(node)), sourceFile, vocabulary),
     module,
     uses: [],
   };

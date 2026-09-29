@@ -4,7 +4,7 @@ export function a() {}
 /** @perm net(*.stripe.com) */ // expect: error PERM002 net(*.stripe.com)
 export function b() {}
 
-/** @perm email.send(team) */ // expect: error PERM002 email.send(team)
+/** @perm crm.create(contacts) */ // expect: error PERM002 crm.create(contacts)
 export function c() {}
 
 /** @perm net(api.stripe.com */ // expect: error PERM002 net(api.stripe.com

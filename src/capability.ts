@@ -1,20 +1,22 @@
 // The capability vocabulary and the rules for when a declared permission covers
 // an actual use. Names are language-neutral so future analyzers can share them.
+// Adapter manifests extend the vocabulary with app-level names like email.send.
 
 import path from "node:path";
 
-export const BUILTIN_CAPABILITIES = ["net", "fs.read", "fs.write", "db.read", "db.write", "env", "exec"] as const;
+export const BUILTIN_CAPABILITIES: readonly string[] = ["net", "fs.read", "fs.write", "db.read", "db.write", "env", "exec"];
 
-export type CapabilityName = (typeof BUILTIN_CAPABILITIES)[number];
+export const BUILTIN_VOCABULARY: ReadonlySet<string> = new Set(BUILTIN_CAPABILITIES);
 
 /**
  * A capability with an optional scope. A missing `arg` means "any": as a
- * declaration it allows every host, path, table, or variable; as an actual use
- * it means the scope could not be determined statically.
+ * declaration it allows every host, path, table, or variable.
  */
 export interface Capability {
-  name: CapabilityName;
+  name: string;
   arg?: string;
+  /** On an actual use: the scope exists but could not be determined statically. */
+  dynamic?: boolean;
 }
 
 export interface PermListError {
@@ -25,19 +27,19 @@ export interface PermListError {
   offset: number;
 }
 
-const NO_ARGUMENT: ReadonlySet<CapabilityName> = new Set(["exec"]);
+const NO_ARGUMENT: ReadonlySet<string> = new Set(["exec"]);
+export const CAPABILITY_NAME = /^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*$/i;
 const ENTRY = /^([a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)*)(?:\(([^()]*)\))?$/i;
-
-function isBuiltin(name: string): name is CapabilityName {
-  return (BUILTIN_CAPABILITIES as readonly string[]).includes(name);
-}
 
 export function formatCapability(c: Capability): string {
   return c.arg === undefined ? c.name : `${c.name}(${c.arg})`;
 }
 
 /** Parses the body of a `@perm` tag, e.g. `net(api.stripe.com), env(STRIPE_KEY)`. */
-export function parsePermList(text: string): { capabilities: Capability[]; errors: PermListError[] } {
+export function parsePermList(
+  text: string,
+  vocabulary: ReadonlySet<string> = BUILTIN_VOCABULARY,
+): { capabilities: Capability[]; errors: PermListError[] } {
   const capabilities: Capability[] = [];
   const errors: PermListError[] = [];
 
@@ -62,7 +64,7 @@ export function parsePermList(text: string): { capabilities: Capability[]; error
       continue;
     }
     const [, name, arg] = match as unknown as [string, string, string | undefined];
-    if (!isBuiltin(name)) {
+    if (!vocabulary.has(name)) {
       fail(`unknown capability "${name}"; app-level capabilities need an adapter manifest`);
       continue;
     }
@@ -108,7 +110,7 @@ export function covers(declared: readonly Capability[], actual: Capability): boo
   return declared.some((d) => d.name === actual.name && argCovers(d.name, d.arg, actual.arg));
 }
 
-function argCovers(name: CapabilityName, declared: string | undefined, actual: string | undefined): boolean {
+function argCovers(name: string, declared: string | undefined, actual: string | undefined): boolean {
   if (declared === undefined) return true;
   if (actual === undefined) return false;
   if (name === "net") return declared.toLowerCase() === actual.toLowerCase();

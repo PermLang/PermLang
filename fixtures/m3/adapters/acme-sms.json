@@ -1,0 +1,8 @@
+{
+  "permlang": 1,
+  "package": "@acme/sms",
+  "defines": ["sms.send"],
+  "functions": {
+    "sendSms": ["sms.send({arg:0})"]
+  }
+}

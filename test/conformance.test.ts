@@ -32,10 +32,15 @@ function expectationsIn(file: string): string[] {
   );
 }
 
+// Team-written adapters used by fixtures; the built-in adapters load automatically.
+const fixtureAdapters = readdirSync(fixturesRoot, { recursive: true, encoding: "utf8" })
+  .filter((f) => f.endsWith(".json"))
+  .map((f) => path.join(fixturesRoot, f));
+
 let report: Report;
 
 beforeAll(() => {
-  report = checkFiles(fixtureFiles);
+  report = checkFiles(fixtureFiles, { adapters: fixtureAdapters });
 });
 
 function actualFor(file: string): string[] {
@@ -104,6 +109,19 @@ describe("diagnostic content", () => {
     expect(fn("m2/pass/module-level.ts", "authedBalance")).toMatchObject({
       declared: ["net(api.stripe.com)", "env(STRIPE_KEY)"],
     });
+  });
+
+  it("lists every @perm-unsafe function in the report", () => {
+    const unsafe = report.unsafe.map((u) => `${path.basename(u.file)} ${u.function}: ${u.reason}`);
+    expect(unsafe).toEqual([
+      "unsafe-still-propagates.ts legacy: wraps a legacy client",
+      "unsafe.ts legacySync: legacy SDK builds URLs at runtime; tracked in PERM-12",
+    ]);
+  });
+
+  it("says reads rather than calls for environment variables", () => {
+    const d = report.diagnostics.find((x) => x.capability === "env(STRIPE_SECRET)");
+    expect(d?.message).toMatch(/^charge reads process\.env\.STRIPE_SECRET\n/);
   });
 
   it("shows the call path for violations reached through helpers", () => {
