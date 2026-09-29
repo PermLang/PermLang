@@ -4,7 +4,7 @@
 // function called `fetch` is not the network, and `import { writeFile as save }`
 // is still a file write. M1 covers the global fetch and Node's fs modules.
 
-import { Node, type CallExpression, type Symbol as MorphSymbol } from "ts-morph";
+import { Node, type CallExpression, type NewExpression, type Symbol as MorphSymbol } from "ts-morph";
 import type { Capability } from "./capability.js";
 
 export interface CapabilityUse {
@@ -87,10 +87,18 @@ function fsFunctionName(call: CallExpression): string | undefined {
   return resolved.getDeclarations().some(isInFsModule) ? resolved.getName() : undefined;
 }
 
+/**
+ * A function exported by an fs module itself. Members of the objects fs returns
+ * (`Stats.isDirectory`, `FileHandle.read`, streams) are excluded: they act on
+ * something already opened or read, where the access was checked.
+ */
 function isInFsModule(declaration: Node): boolean {
-  return declaration
-    .getAncestors()
-    .some((a) => Node.isModuleDeclaration(a) && FS_MODULES.has(a.getName().replace(/^["']|["']$/g, "")));
+  if (!Node.isFunctionDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return false;
+  for (const a of declaration.getAncestors()) {
+    if (Node.isClassDeclaration(a) || Node.isInterfaceDeclaration(a) || Node.isTypeLiteral(a)) return false;
+    if (Node.isModuleDeclaration(a) && FS_MODULES.has(a.getName().replace(/^["']|["']$/g, ""))) return true;
+  }
+  return false;
 }
 
 // Operations on an open descriptor add no access; it was granted at open().
@@ -143,11 +151,11 @@ function pathOf(arg: Node | undefined): string | undefined {
 
 // --- helpers -----------------------------------------------------------------
 
-function resolveAlias(symbol: MorphSymbol): MorphSymbol {
+export function resolveAlias(symbol: MorphSymbol): MorphSymbol {
   return symbol.isAlias() ? (symbol.getAliasedSymbol() ?? symbol) : symbol;
 }
 
-function callText(call: CallExpression): string {
+export function callText(call: CallExpression | NewExpression): string {
   const args = call.getArguments();
   const first = args[0]?.getText() ?? "";
   const shown = (first.length > 60 ? `${first.slice(0, 57)}...` : first) + (args.length > 1 ? ", ..." : "");

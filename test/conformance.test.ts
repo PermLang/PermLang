@@ -4,6 +4,11 @@
 //
 // A fixture under pass/ must produce no diagnostics. A fixture under fail/ must
 // declare at least one expectation, and must produce exactly the expected set.
+// A fixture is a file, or a folder of files that import each other; a folder
+// needs an expectation in at least one of its files.
+//
+// All fixtures are checked as one project, so each file must be a module (have
+// an import or export) to keep its names out of the shared global scope.
 
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -44,16 +49,23 @@ describe("conformance fixtures", () => {
     expect(fixtureFiles.length).toBeGreaterThan(0);
   });
 
+  const cases = new Map<string, string[]>();
   for (const file of fixtureFiles) {
-    const name = path.relative(fixturesRoot, file).replaceAll("\\", "/");
-    const kind = name.split("/")[1];
+    // <milestone>/<pass|fail>/<case file or folder>/...
+    const caseName = path.relative(fixturesRoot, file).replaceAll("\\", "/").split("/").slice(0, 3).join("/");
+    cases.set(caseName, [...(cases.get(caseName) ?? []), file]);
+  }
 
-    it(name, () => {
-      const expected = expectationsIn(file);
+  for (const [caseName, files] of cases) {
+    const kind = caseName.split("/")[1];
+
+    it(caseName, () => {
+      const expected = files.flatMap((f) => expectationsIn(f).map((e) => `${path.basename(f)}:${e}`));
+      const actual = files.flatMap((f) => actualFor(f).map((a) => `${path.basename(f)}:${a}`));
       if (kind === "pass") expect(expected, "pass/ fixtures must not declare expectations").toEqual([]);
       if (kind === "fail") expect(expected.length, "fail/ fixtures must declare expectations").toBeGreaterThan(0);
 
-      expect(actualFor(file).sort()).toEqual(expected.sort());
+      expect(actual.sort()).toEqual(expected.sort());
     });
   }
 });
@@ -72,15 +84,31 @@ describe("diagnostic content", () => {
     }
   });
 
+  const fn = (fixture: string, name: string) =>
+    report.functions.find((f) => f.name === name && f.file === path.join(fixturesRoot, fixture).replaceAll("\\", "/"));
+
   it("reports declared and actual permissions for every function", () => {
-    const fn = report.functions.find((f) => f.name === "handleLead");
-    expect(fn).toMatchObject({
+    expect(fn("m1/fail/fetch-undeclared-host.ts", "handleLead")).toMatchObject({
       annotated: true,
       declared: ["db.write(leads)"],
       actual: ["net(data-broker.io)"],
     });
+    expect(fn("m1/pass/class-method.ts", "StripeClient.charge")).toMatchObject({
+      declared: ["net(api.stripe.com)"],
+      actual: ["net(api.stripe.com)"],
+    });
+  });
 
-    const method = report.functions.find((f) => f.name === "StripeClient.charge");
-    expect(method).toMatchObject({ declared: ["net(api.stripe.com)"], actual: ["net(api.stripe.com)"] });
+  it("includes permissions reached through helpers, and module-level permissions", () => {
+    expect(fn("m2/fail/deep-chain.ts", "a")).toMatchObject({ actual: ["fs.write(./public/dump.json)"] });
+    expect(fn("m2/pass/module-level.ts", "authedBalance")).toMatchObject({
+      declared: ["net(api.stripe.com)", "env(STRIPE_KEY)"],
+    });
+  });
+
+  it("shows the call path for violations reached through helpers", () => {
+    const d = report.diagnostics.find((x) => x.file.endsWith("m2/fail/deep-chain.ts") && x.code === "PERM001");
+    expect(d?.path).toEqual(["b", "c", 'writeFileSync("./public/dump.json", ...)']);
+    expect(d?.message).toContain("b → c → writeFileSync");
   });
 });

@@ -1,20 +1,25 @@
-// Compares each function's declared permissions with the capabilities it uses.
+// Compares each function's declared permissions with everything it can reach.
 //
-// M1 scope: direct calls only. A call inside an anonymous callback counts toward
-// the nearest named function around it. Propagation through helpers is M2.
+// A unit's actual permissions are its direct uses plus everything its callees
+// reach, across files. Declared permissions are the unit's own @perm tags plus
+// its file's @module @perm tags.
 
-import {
-  Node,
-  Project,
-  SyntaxKind,
-  ts,
-  type CallExpression,
-  type JSDoc,
-  type SourceFile,
-} from "ts-morph";
-import { readPermAnnotation, type PermAnnotation } from "./annotations.js";
-import { covers, formatCapability, type Capability } from "./capability.js";
+import { Project, SyntaxKind, ts, type Node } from "ts-morph";
+import { covers, formatCapability } from "./capability.js";
 import { detectCapabilities } from "./detect.js";
+import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
+import {
+  createUnit,
+  declaredCapabilities,
+  enclosingUnitNode,
+  exportedDeclarations,
+  isAnnotated,
+  isInNodeModules,
+  isUnitNode,
+  readModuleAnnotation,
+  type Unit,
+  type Use,
+} from "./units.js";
 
 export type Severity = "error" | "warning";
 
@@ -30,6 +35,8 @@ export interface Diagnostic {
   capability: string;
   /** The offending call as written; empty for annotation errors. */
   call: string;
+  /** For capabilities reached through helpers: each unit on the way, then the call that uses it. */
+  path?: string[];
   message: string;
   fix?: string;
 }
@@ -71,183 +78,155 @@ export function checkTsConfig(tsConfigFilePath: string): Report {
 
 export function checkProject(project: Project): Report {
   const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
-  const functions: FunctionReport[] = [];
+  const units = new Map<Node, Unit>();
   const diagnostics: Diagnostic[] = [];
 
+  // 1. Every unit in every file, with its annotations and direct uses.
   for (const sourceFile of sourceFiles) {
-    for (const unit of collectUnits(sourceFile)) {
-      functions.push(summarize(unit));
-      diagnostics.push(...diagnose(unit));
+    const module = readModuleAnnotation(sourceFile);
+    const exports = exportedDeclarations(sourceFile);
+    const add = (node: Node) => units.set(node, createUnit(node, module, exports));
+
+    add(sourceFile);
+    sourceFile.forEachDescendant((node) => {
+      if (isUnitNode(node)) add(node);
+    });
+    for (const e of module?.errors ?? []) diagnostics.push(annotationError(sourceFile.getFilePath(), "<module>", e));
+
+    for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+      const found = detectCapabilities(call);
+      if (found.length === 0) continue;
+      const unit = units.get(enclosingUnitNode(call))!;
+      const { line, column } = sourceFile.getLineAndColumnAtPos(call.getStart());
+      for (const { capability, call: text } of found) unit.uses.push({ capability, call: text, line, column });
     }
   }
 
-  diagnostics.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column);
-  return { files: sourceFiles.length, functions, diagnostics };
-}
+  // 2. Edges between units, then what each unit can reach.
+  const edges = sourceFiles.flatMap((sf) => collectEdges(sf, (node) => units.get(node)));
+  const reach = propagate(units.values(), edges);
+  const edgesFrom = groupBy(edges, (e) => e.from);
 
-// --- units -------------------------------------------------------------------
-
-interface Use {
-  capability: Capability;
-  call: string;
-  line: number;
-  column: number;
-}
-
-/** A named function, method, or the module's top level. */
-interface Unit {
-  file: string;
-  name: string;
-  line: number;
-  annotation: PermAnnotation | undefined;
-  uses: Use[];
-}
-
-function collectUnits(sourceFile: SourceFile): Unit[] {
-  const file = sourceFile.getFilePath();
-  const units = new Map<Node, Unit>();
-  const unitFor = (node: Node): Unit => {
-    let unit = units.get(node);
-    if (!unit) {
-      unit = {
-        file,
-        name: unitName(node),
-        line: node.getStartLineNumber(),
-        annotation: readPermAnnotation(jsDocsOf(node)),
-        uses: [],
-      };
-      units.set(node, unit);
-    }
-    return unit;
-  };
-
-  // Register every annotated unit, including ones that use nothing.
-  sourceFile.forEachDescendant((node) => {
-    if (isUnitNode(node)) unitFor(node);
-  });
-
-  for (const call of sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const found = detectCapabilities(call);
-    if (found.length === 0) continue;
-    const unit = unitFor(enclosingUnit(call));
-    const { line, column } = sourceFile.getLineAndColumnAtPos(call.getStart());
-    for (const { capability, call: text } of found) unit.uses.push({ capability, call: text, line, column });
+  // 3. Compare declared with actual.
+  const functions: FunctionReport[] = [];
+  for (const unit of units.values()) {
+    const reached = reach.get(unit)!;
+    if (!isAnnotated(unit) && reached.size === 0) continue;
+    functions.push(summarize(unit, reach));
+    diagnostics.push(...diagnose(unit, edgesFrom.get(unit) ?? [], reach));
   }
 
-  // Unannotated units that use nothing are noise in the report.
-  return [...units.values()].filter((u) => u.annotation !== undefined || u.uses.length > 0);
-}
-
-function isUnitNode(node: Node): boolean {
-  return (
-    Node.isFunctionDeclaration(node) ||
-    Node.isMethodDeclaration(node) ||
-    Node.isConstructorDeclaration(node) ||
-    Node.isGetAccessorDeclaration(node) ||
-    Node.isSetAccessorDeclaration(node) ||
-    (Node.isVariableDeclaration(node) && isFunctionLike(node.getInitializer()))
-  );
-}
-
-function isFunctionLike(node: Node | undefined): boolean {
-  return node !== undefined && (Node.isArrowFunction(node) || Node.isFunctionExpression(node));
-}
-
-function enclosingUnit(node: Node): Node {
-  for (const ancestor of node.getAncestors()) {
-    if (isFunctionLike(ancestor) && Node.isVariableDeclaration(ancestor.getParent())) return ancestor.getParentOrThrow();
-    if (isUnitNode(ancestor) || Node.isSourceFile(ancestor)) return ancestor;
-  }
-  return node.getSourceFile();
-}
-
-function unitName(node: Node): string {
-  if (Node.isSourceFile(node)) return "<module>";
-  if (Node.isConstructorDeclaration(node)) return `${className(node)}.constructor`;
-  if (Node.isMethodDeclaration(node) || Node.isGetAccessorDeclaration(node) || Node.isSetAccessorDeclaration(node)) {
-    return `${className(node)}.${node.getName()}`;
-  }
-  if (Node.isFunctionDeclaration(node)) return node.getName() ?? "default";
-  if (Node.isVariableDeclaration(node)) return node.getName();
-  return "<anonymous>";
-}
-
-function className(node: Node): string {
-  const parent = node.getParent();
-  return parent && Node.isClassDeclaration(parent) ? (parent.getName() ?? "default") : "<class>";
-}
-
-function jsDocsOf(node: Node): JSDoc[] {
-  if (Node.isVariableDeclaration(node)) return node.getVariableStatement()?.getJsDocs() ?? [];
-  if (Node.isJSDocable(node)) return node.getJsDocs();
-  return [];
-}
-
-function isInNodeModules(sf: SourceFile): boolean {
-  return sf.getFilePath().split("/").includes("node_modules");
+  return { files: sourceFiles.length, functions, diagnostics: dedupe(diagnostics) };
 }
 
 // --- diagnostics -------------------------------------------------------------
 
-function summarize(unit: Unit): FunctionReport {
-  const unique = (caps: Capability[]) => [...new Set(caps.map(formatCapability))];
+function summarize(unit: Unit, reach: Reach): FunctionReport {
   return {
     file: unit.file,
     name: unit.name,
     line: unit.line,
-    annotated: unit.annotation !== undefined,
-    declared: unique(unit.annotation?.capabilities ?? []),
-    actual: unique(unit.uses.map((u) => u.capability)),
+    annotated: isAnnotated(unit),
+    declared: [...new Set(declaredCapabilities(unit).map(formatCapability))],
+    actual: [...reach.get(unit)!.keys()],
   };
 }
 
-function diagnose(unit: Unit): Diagnostic[] {
-  const out: Diagnostic[] = [];
-  const base = { file: unit.file, function: unit.name };
+function diagnose(unit: Unit, edges: readonly Edge[], reach: Reach): Diagnostic[] {
+  const out: Diagnostic[] = (unit.own?.errors ?? []).map((e) => annotationError(unit.file, unit.name, e));
 
-  for (const e of unit.annotation?.errors ?? []) {
-    out.push({
-      ...base,
-      severity: "error",
-      code: "PERM002",
-      line: e.line,
-      column: e.column,
-      capability: e.text,
-      call: "",
-      message: `invalid @perm entry "${e.text}" on ${unit.name}: ${e.reason}.`,
-    });
+  if (!isAnnotated(unit)) {
+    if (unit.exported) out.push(...missingAnnotation(unit, reach));
+    return out;
   }
 
+  const declared = declaredCapabilities(unit);
   for (const use of unit.uses) {
-    const capability = formatCapability(use.capability);
-    const where = { ...base, line: use.line, column: use.column, capability, call: use.call };
-
-    if (unit.annotation === undefined) {
-      out.push({
-        ...where,
-        severity: "warning",
-        code: "PERM003",
-        message: `${unit.name} calls ${use.call} but has no @perm annotation.`,
-        fix: `add /** @perm ${capability} */ to ${unit.name}.`,
-      });
-    } else if (!covers(unit.annotation.capabilities, use.capability)) {
-      out.push({
-        ...where,
-        severity: "error",
-        code: "PERM001",
-        message: violationMessage(unit.name, use, capability),
-        fix: `add ${capability} to @perm, or remove the call.`,
-      });
+    if (covers(declared, use.capability)) continue;
+    out.push(violation(unit, use, formatCapability(use.capability), [], use.capability.arg === undefined));
+  }
+  for (const edge of edges) {
+    if (edge.to === unit) continue; // recursion into itself adds nothing new
+    for (const [key, p] of reach.get(edge.to)!) {
+      if (covers(declared, p.capability)) continue;
+      const path = [edge.to.name, ...pathTo(reach, edge.to, key)];
+      out.push(violation(unit, edge, key, path, p.capability.arg === undefined));
     }
   }
-
   return out;
 }
 
-function violationMessage(name: string, use: Use, capability: string): string {
-  if (use.capability.arg !== undefined) {
-    return `${name} calls ${use.call}\n  but its declared permissions do not include ${capability}.`;
-  }
-  const what = use.capability.name === "net" ? "host" : "path";
-  return `${name} calls ${use.call}\n  but its ${what} can't be determined statically, so it needs ${capability}.`;
+function violation(unit: Unit, site: Use | Edge, capability: string, path: string[], dynamic: boolean): Diagnostic {
+  const via = path.length > 0 ? `, reaching ${path.join(" → ")}` : "";
+  const reason = dynamic
+    ? `its ${capability === "net" ? "host" : "path"} can't be determined statically, so it needs ${capability}`
+    : `its declared permissions do not include ${capability}`;
+  return {
+    severity: "error",
+    code: "PERM001",
+    file: unit.file,
+    line: site.line,
+    column: site.column,
+    function: unit.name,
+    capability,
+    call: site.call,
+    ...(path.length > 0 ? { path } : {}),
+    message: `${unit.name} calls ${site.call}${via}\n  but ${reason}.`,
+    fix: `add ${capability} to @perm, or remove the call.`,
+  };
+}
+
+/** One warning per capability an exported, unannotated unit reaches, at the first place it does. */
+function missingAnnotation(unit: Unit, reach: Reach): Diagnostic[] {
+  return [...reach.get(unit)!].map(([key, p]) => {
+    const site = p.edge ?? p.use;
+    const path = p.edge ? [p.edge.to.name, ...pathTo(reach, p.edge.to, key)] : [];
+    const via = path.length > 0 ? `, reaching ${path.join(" → ")},` : "";
+    return {
+      severity: "warning",
+      code: "PERM003",
+      file: unit.file,
+      line: site.line,
+      column: site.column,
+      function: unit.name,
+      capability: key,
+      call: site.call,
+      ...(path.length > 0 ? { path } : {}),
+      message: `${unit.name} calls ${site.call}${via} but has no @perm annotation.`,
+      fix: `add /** @perm ${key} */ to ${unit.name}.`,
+    } satisfies Diagnostic;
+  });
+}
+
+function annotationError(file: string, name: string, e: { text: string; reason: string; line: number; column: number }): Diagnostic {
+  return {
+    severity: "error",
+    code: "PERM002",
+    file,
+    line: e.line,
+    column: e.column,
+    function: name,
+    capability: e.text,
+    call: "",
+    message: `invalid @perm entry "${e.text}" on ${name}: ${e.reason}.`,
+  };
+}
+
+/** One diagnostic per function, line, and capability; sorted by location. */
+function dedupe(diagnostics: Diagnostic[]): Diagnostic[] {
+  const seen = new Set<string>();
+  return diagnostics
+    .sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
+    .filter((d) => {
+      const key = [d.file, d.line, d.code, d.function, d.capability].join("\0");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function groupBy<T, K>(items: readonly T[], key: (item: T) => K): Map<K, T[]> {
+  const out = new Map<K, T[]>();
+  for (const item of items) out.set(key(item), [...(out.get(key(item)) ?? []), item]);
+  return out;
 }
