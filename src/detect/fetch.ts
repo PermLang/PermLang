@@ -2,33 +2,29 @@
 
 import { Node, type CallExpression } from "ts-morph";
 import type { Capability } from "../capability.js";
-import { hostOf, resolveAlias } from "./shared.js";
+import { hostOf, isGlobalLibFunction } from "./shared.js";
 
-const GLOBAL_OBJECTS = new Set(["globalThis", "window", "self", "global"]);
-
-export function fetchCapabilities(call: CallExpression): Capability[] {
-  if (!isGlobalFetch(call)) return [];
-  const host = hostOf(call.getArguments()[0]);
-  return [host === undefined ? { name: "net", dynamic: true } : { name: "net", arg: host }];
+/** The capability of calling fetch with `args`; no args means fetch used as a value. */
+export function fetchCapability(args: readonly Node[]): Capability {
+  const host = hostOf(args[0]);
+  return host === undefined ? { name: "net", dynamic: true } : { name: "net", arg: host };
 }
 
-function isGlobalFetch(call: CallExpression): boolean {
-  const callee = call.getExpression();
-  let nameNode: Node | undefined;
-  if (Node.isIdentifier(callee) && callee.getText() === "fetch") {
-    nameNode = callee;
-  } else if (
-    Node.isPropertyAccessExpression(callee) &&
-    callee.getName() === "fetch" &&
-    GLOBAL_OBJECTS.has(callee.getExpression().getText())
-  ) {
-    nameNode = callee.getNameNode();
-  }
-  if (!nameNode) return false;
+/** The global fetch from lib.dom or @types/node, however it was reached. */
+export function isGlobalFetch(declaration: Node): boolean {
+  return isGlobalLibFunction(declaration, "fetch");
+}
 
-  const symbol = nameNode.getSymbol();
-  // Without type information, assume the global rather than silently passing.
-  if (!symbol) return true;
-  const declarations = resolveAlias(symbol).getDeclarations();
-  return declarations.length === 0 || declarations.every((d) => d.getSourceFile().isDeclarationFile());
+/**
+ * Without type information (no lib or @types/node), assume a bare `fetch` or
+ * `globalThis.fetch` that doesn't resolve is the global rather than silently passing.
+ */
+export function isUnresolvedFetch(call: CallExpression): boolean {
+  const callee = call.getExpression();
+  const nameNode = Node.isIdentifier(callee)
+    ? callee
+    : Node.isPropertyAccessExpression(callee) && /^(globalThis|window|self|global)$/.test(callee.getExpression().getText())
+      ? callee.getNameNode()
+      : undefined;
+  return nameNode?.getText() === "fetch" && nameNode.getSymbol() === undefined;
 }

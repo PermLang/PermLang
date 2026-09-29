@@ -2,29 +2,16 @@
 // This stays custom code rather than an adapter manifest: open() depends on its
 // flags, and copies read one path and write another.
 
-import { Node, type CallExpression } from "ts-morph";
+import { Node } from "ts-morph";
 import type { Capability } from "../capability.js";
-import { literalString, resolveAlias } from "./shared.js";
+import { literalString } from "./shared.js";
 
 const FS_MODULES = new Set(["fs", "node:fs", "fs/promises", "node:fs/promises"]);
 
-export function fsCapabilities(call: CallExpression): Capability[] {
-  const fn = fsFunctionName(call);
-  return fn === undefined ? [] : classify(fn, call);
-}
-
-/** The fs function a call resolves to, or undefined if it is not an fs call. */
-function fsFunctionName(call: CallExpression): string | undefined {
-  const callee = call.getExpression();
-  const nameNode = Node.isIdentifier(callee)
-    ? callee
-    : Node.isPropertyAccessExpression(callee)
-      ? callee.getNameNode()
-      : undefined;
-  const symbol = nameNode?.getSymbol();
-  if (!symbol) return undefined;
-  const resolved = resolveAlias(symbol);
-  return resolved.getDeclarations().some(isInFsModule) ? resolved.getName() : undefined;
+/** The fs function a declaration is, or undefined. */
+export function fsFunctionName(declaration: Node): string | undefined {
+  if (!Node.isFunctionDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return undefined;
+  return isInFsModule(declaration) ? declaration.getName() : undefined;
 }
 
 /**
@@ -33,7 +20,6 @@ function fsFunctionName(call: CallExpression): string | undefined {
  * something already opened or read, where the access was checked.
  */
 function isInFsModule(declaration: Node): boolean {
-  if (!Node.isFunctionDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return false;
   for (const a of declaration.getAncestors()) {
     if (Node.isClassDeclaration(a) || Node.isInterfaceDeclaration(a) || Node.isTypeLiteral(a)) return false;
     if (Node.isModuleDeclaration(a) && FS_MODULES.has(a.getName().replace(/^["']|["']$/g, ""))) return true;
@@ -55,9 +41,9 @@ const COPIES = new Set(["copyFile", "cp"]);
 // Every path argument is written.
 const TWO_PATH_WRITES = new Set(["rename", "link", "symlink"]);
 
-function classify(fn: string, call: CallExpression): Capability[] {
+/** What calling fs function `fn` with `args` touches. No args (used as a value) makes every path dynamic. */
+export function fsCapabilities(fn: string, args: readonly Node[]): Capability[] {
   const base = fn.replace(/Sync$/, "");
-  const args = call.getArguments();
   const scoped = (name: string, i: number): Capability => {
     const path = literalString(args[i]);
     return path === undefined ? { name, dynamic: true } : { name, arg: path };
@@ -69,13 +55,16 @@ function classify(fn: string, call: CallExpression): Capability[] {
   if (READS.has(base)) return [read(0)];
   if (COPIES.has(base)) return [read(0), write(1)];
   if (TWO_PATH_WRITES.has(base)) return [write(0), write(1)];
-  if (base === "open") return openCapabilities(args[1], read(0), write(0));
+  if (base === "open") return openCapabilities(args, read(0), write(0));
   // Everything else (writeFile, mkdir, rm, unlink, chmod, and anything unrecognized)
   // is treated as a write, so an unknown fs function never passes silently.
   return [write(0)];
 }
 
-function openCapabilities(flags: Node | undefined, read: Capability, write: Capability): Capability[] {
+function openCapabilities(args: readonly Node[], read: Capability, write: Capability): Capability[] {
+  // Used as a value, open() could be called with any flags.
+  if (args.length === 0) return [read, write];
+  const flags = args[1];
   if (!flags) return [read];
   const f = literalString(flags);
   if (f === undefined) return [read, write];
