@@ -1,13 +1,22 @@
 // The call graph between units, and propagation of capabilities along it.
 //
-// An edge is any reference from one unit's code to another unit, not only a
-// call: passing `helper` to `map` or `setTimeout` lets it run, so it counts.
-// References in type positions, imports, and exports do not.
+// An edge is anything that can make one unit's code run another's:
+//   - a reference, not only a call: passing `helper` to `map` or `setTimeout`
+//     lets it run (references in type positions, imports, and exports don't count);
+//   - the declaration a call resolves to, which covers `super()`, literal
+//     computed keys (`api["ping"]()`), and calls through const aliases;
+//   - every implementation a call through an interface or base class may reach;
+//   - every member a computed key could select (`handlers[kind]()`);
+//   - a class's implicit constructor running its base constructor;
+//   - importing a module, which runs its top-level code.
 
 import { Node, SyntaxKind, type Identifier, type SourceFile } from "ts-morph";
-import { formatCapability, type Capability } from "./capability.js";
-import { callText, resolveAlias } from "./detect/shared.js";
-import { enclosingUnitNode, unitNodeForSymbol, type Unit, type Use } from "./units.js";
+import type { AdapterIndex } from "./adapters.js";
+import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js";
+import { classifyComputedCall, computedCallee } from "./detect/computed.js";
+import { callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
+import type { Hierarchy } from "./dispatch.js";
+import { constructorUnitNode, enclosingUnitNode, unitNodeForDeclaration, unitNodeForSymbol, type Unit, type Use } from "./units.js";
 
 export interface Edge {
   from: Unit;
@@ -18,21 +27,121 @@ export interface Edge {
   column: number;
 }
 
-export function collectEdges(sourceFile: SourceFile, unitOf: (node: Node) => Unit | undefined): Edge[] {
-  const edges: Edge[] = [];
-  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
-    if (!isValueReference(id)) continue;
-    const symbol = id.getSymbol();
-    const targetNode = symbol && unitNodeForSymbol(resolveAlias(symbol));
-    const to = targetNode && unitOf(targetNode);
-    const from = unitOf(enclosingUnitNode(id));
-    if (!to || !from) continue;
+export interface GraphContext {
+  unitOf: (node: Node) => Unit | undefined;
+  hierarchy: Hierarchy;
+  adapters: AdapterIndex;
+}
 
-    const site = referenceSite(id);
+export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] {
+  const edges: Edge[] = [];
+  const add = (fromNode: Node, target: Node | undefined, site: Node, text: string) => {
+    const from = ctx.unitOf(enclosingUnitNode(fromNode));
+    const to = target && ctx.unitOf(target);
+    if (!from || !to) return;
     const { line, column } = sourceFile.getLineAndColumnAtPos(site.getStart());
-    edges.push({ from, to, call: Node.isCallExpression(site) || Node.isNewExpression(site) ? callText(site) : site.getText(), line, column });
+    edges.push({ from, to, call: text, line, column });
+  };
+  const addFromModule = (target: Node | undefined, site: Node) => {
+    const from = ctx.unitOf(sourceFile);
+    const to = target && ctx.unitOf(target);
+    if (!from || !to) return;
+    const { line, column } = sourceFile.getLineAndColumnAtPos(site.getStart());
+    edges.push({ from, to, call: site.getText().replace(/\s+/g, " "), line, column });
+  };
+
+  // References.
+  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    const symbol = referencedSymbol(id);
+    if (!symbol) continue;
+    const site = referenceSite(id);
+    const text = Node.isCallExpression(site) || Node.isNewExpression(site) ? callText(site) : site.getText();
+    add(id, unitNodeForSymbol(resolveAlias(symbol)), site, text);
+  }
+
+  // Calls: the resolved declaration, dispatch to implementations, computed members.
+  sourceFile.forEachDescendant((node) => {
+    if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
+    const call: CallLike = node;
+    const text = callText(call);
+
+    if (Node.isCallExpression(call) && call.getExpression().getKind() === SyntaxKind.ImportKeyword) {
+      const target = literalString(call.getArguments()[0]) === undefined ? undefined : moduleOf(call.getArguments()[0]!);
+      add(call, target, call, text);
+      return;
+    }
+
+    // super(...) runs the base constructor, explicit or implicit (an implicit one resolves to no declaration).
+    if (Node.isCallExpression(call) && call.getExpression().getKind() === SyntaxKind.SuperKeyword) {
+      const cls = call.getFirstAncestor((a) => Node.isClassDeclaration(a) || Node.isClassExpression(a));
+      const base = cls && (Node.isClassDeclaration(cls) || Node.isClassExpression(cls)) ? cls.getBaseClass() : undefined;
+      if (base) add(call, constructorUnitNode(base), call, text);
+    }
+
+    const declaration = resolvedDeclaration(call);
+    if (declaration) {
+      add(call, unitNodeForDeclaration(declaration), call, text);
+      for (const impl of ctx.hierarchy.implementations(declaration)) add(call, impl, call, text);
+    }
+
+    const computed = computedCallee(call);
+    const target = computed && classifyComputedCall(computed, ctx.adapters);
+    if (target?.kind === "members") {
+      for (const member of target.members) {
+        for (const d of member.getDeclarations()) {
+          add(call, unitNodeForDeclaration(d) ?? valueUnit(d), call, text);
+          for (const impl of ctx.hierarchy.implementations(d)) add(call, impl, call, text);
+        }
+      }
+    }
+  });
+
+  // An implicit constructor runs the base class's constructor.
+  for (const cls of [...sourceFile.getDescendantsOfKind(SyntaxKind.ClassDeclaration), ...sourceFile.getDescendantsOfKind(SyntaxKind.ClassExpression)]) {
+    const base = cls.getBaseClass();
+    if (!base || constructorUnitNode(cls) !== cls) continue;
+    const from = ctx.unitOf(cls);
+    const to = ctx.unitOf(constructorUnitNode(base));
+    if (!from || !to) continue;
+    const { line, column } = sourceFile.getLineAndColumnAtPos(cls.getStart());
+    edges.push({ from, to, call: `extends ${base.getName() ?? "base class"}`, line, column });
+  }
+
+  // Imports and re-exports run the target module's top level.
+  for (const decl of [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations()]) {
+    if (decl.isTypeOnly()) continue;
+    addFromModule(decl.getModuleSpecifierSourceFile(), decl);
   }
   return edges;
+}
+
+/** The symbol an identifier refers to as a value, or undefined if it isn't a value reference. */
+function referencedSymbol(id: Identifier) {
+  const parent = id.getParent();
+  // `{ helper }` passes the local `helper`.
+  if (parent && Node.isShorthandPropertyAssignment(parent)) return isInValuePosition(id) ? parent.getValueSymbol() : undefined;
+  return isValueReference(id) ? id.getSymbol() : undefined;
+}
+
+/** A property whose value names a function: `notify: sendAlert`. */
+function valueUnit(declaration: Node): Node | undefined {
+  if (!Node.isPropertyAssignment(declaration)) return undefined;
+  const symbol = declaration.getInitializer()?.getSymbol();
+  return symbol ? unitNodeForSymbol(resolveAlias(symbol)) : undefined;
+}
+
+/** The source file a module specifier (an import() argument) resolves to. */
+function moduleOf(specifier: Node): Node | undefined {
+  const declaration = specifier.getSymbol()?.getDeclarations()[0];
+  return declaration && Node.isSourceFile(declaration) ? declaration : undefined;
+}
+
+function isInValuePosition(id: Identifier): boolean {
+  for (const ancestor of id.getAncestors()) {
+    if (Node.isTypeNode(ancestor) || Node.isJSDoc(ancestor)) return false;
+    if (Node.isStatement(ancestor)) break;
+  }
+  return true;
 }
 
 function isValueReference(id: Identifier): boolean {
@@ -98,6 +207,8 @@ export function propagate(units: Iterable<Unit>, edges: readonly Edge[]): Reach 
       const into = reach.get(edge.from)!;
       for (const [key, p] of reach.get(edge.to)!) {
         if (into.has(key)) continue;
+        // @perm-unsafe vouches for code the checker can't see; that doesn't fail its callers.
+        if (key === UNVERIFIABLE && edge.to.own?.unsafe) continue;
         into.set(key, { capability: p.capability, edge });
         changed = true;
       }

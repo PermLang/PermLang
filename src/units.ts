@@ -2,12 +2,12 @@
 // constructors, accessors, function-valued variables and properties, and each
 // file's top-level code. Anonymous callbacks belong to the unit around them.
 
-import { Node, type JSDoc, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
+import { Node, type ClassDeclaration, type ClassExpression, type JSDoc, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
 import { functionComments, moduleComments, readPermAnnotation, type PermAnnotation } from "./annotations.js";
 import type { Capability } from "./capability.js";
 
 export interface Use {
-  verb: "calls" | "reads";
+  verb: "calls" | "reads" | "uses";
   capability: Capability;
   call: string;
   line: number;
@@ -54,7 +54,7 @@ export function createUnit(
     name: unitName(node),
     line: Node.isSourceFile(node) ? 1 : node.getStartLineNumber(),
     exported: Node.isSourceFile(node) || exports.has(exportOwner(node)),
-    own: Node.isSourceFile(node) ? undefined : readPermAnnotation(functionComments(jsDocsOf(node)), sourceFile, vocabulary),
+    own: Node.isSourceFile(node) || isClass(node) ? undefined : readPermAnnotation(functionComments(jsDocsOf(node)), sourceFile, vocabulary),
     module,
     uses: [],
   };
@@ -66,6 +66,8 @@ export function isUnitNode(node: Node): boolean {
   if (Node.isFunctionDeclaration(node) || Node.isMethodDeclaration(node) || Node.isConstructorDeclaration(node)) {
     return node.hasBody(); // overload signatures are not units
   }
+  // A class with no constructor has an implicit one: it runs field initializers and the base constructor.
+  if (isClass(node)) return !hasExplicitConstructor(node);
   return (
     Node.isGetAccessorDeclaration(node) ||
     Node.isSetAccessorDeclaration(node) ||
@@ -82,11 +84,32 @@ function isFunctionLike(node: Node | undefined): boolean {
   return node !== undefined && (Node.isArrowFunction(node) || Node.isFunctionExpression(node));
 }
 
-/** The unit a node's code runs in: its nearest named function, else the file. */
+function isClass(node: Node): node is ClassDeclaration | ClassExpression {
+  return Node.isClassDeclaration(node) || Node.isClassExpression(node);
+}
+
+function hasExplicitConstructor(cls: ClassDeclaration | ClassExpression): boolean {
+  return cls.getConstructors().some((c) => c.hasBody());
+}
+
+/** The unit for a class's constructor: the explicit one, or the class itself as its implicit constructor. */
+export function constructorUnitNode(cls: ClassDeclaration | ClassExpression): Node {
+  return cls.getConstructors().find((c) => c.hasBody()) ?? cls;
+}
+
+/**
+ * The unit a node's code runs in: its nearest named function, else the file.
+ * Instance field initializers run in the constructor; static ones and class
+ * bodies run where the class is defined.
+ */
 export function enclosingUnitNode(node: Node): Node {
   for (const ancestor of node.getAncestors()) {
     const parent = ancestor.getParent();
     if (isFunctionLike(ancestor) && parent && isFunctionHolder(parent)) return parent;
+    if (Node.isPropertyDeclaration(ancestor) && !ancestor.isStatic() && parent && isClass(parent)) {
+      return constructorUnitNode(parent);
+    }
+    if (isClass(ancestor)) continue;
     if (isUnitNode(ancestor) || Node.isSourceFile(ancestor)) return ancestor;
   }
   return node.getSourceFile();
@@ -105,11 +128,11 @@ export function unitNodeForSymbol(symbol: MorphSymbol): Node | undefined {
   return undefined;
 }
 
-function unitNodeForDeclaration(d: Node): Node | undefined {
+export function unitNodeForDeclaration(d: Node): Node | undefined {
   const sf = d.getSourceFile();
   if (sf.isDeclarationFile() || isInNodeModules(sf)) return undefined;
   if ((Node.isFunctionDeclaration(d) || Node.isMethodDeclaration(d)) && !d.hasBody()) return d.getImplementation();
-  if (Node.isClassDeclaration(d) || Node.isClassExpression(d)) return d.getConstructors().find((c) => c.hasBody());
+  if (isClass(d)) return constructorUnitNode(d);
   if (isUnitNode(d)) return d;
   const parent = d.getParent();
   if (isFunctionLike(d) && parent && isFunctionHolder(parent)) return parent;
@@ -124,6 +147,7 @@ export function isInNodeModules(sf: SourceFile): boolean {
 
 function unitName(node: Node): string {
   if (Node.isSourceFile(node)) return "<module>";
+  if (isClass(node)) return `${node.getName() ?? "default"}.constructor`;
   if (Node.isConstructorDeclaration(node)) return `${ownerName(node)}.constructor`;
   if (Node.isFunctionDeclaration(node)) return node.getName() ?? "default";
   if (Node.isVariableDeclaration(node)) return node.getName();
