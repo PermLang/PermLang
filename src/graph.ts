@@ -6,7 +6,7 @@
 
 import { Node, SyntaxKind, type Identifier, type SourceFile } from "ts-morph";
 import { formatCapability, type Capability } from "./capability.js";
-import { callText, resolveAlias } from "./detect.js";
+import { callText, resolveAlias } from "./detect/shared.js";
 import { enclosingUnitNode, unitNodeForSymbol, type Unit, type Use } from "./units.js";
 
 export interface Edge {
