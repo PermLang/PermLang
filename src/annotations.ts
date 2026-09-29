@@ -4,7 +4,7 @@
 // parser, so tags like `@perm-unsafe` or `@permissions` are never mistaken for
 // `@perm`, and every entry keeps an exact source position.
 
-import type { JSDoc } from "ts-morph";
+import { ts, type JSDoc, type SourceFile } from "ts-morph";
 import { parsePermList, type Capability } from "./capability.js";
 
 export interface AnnotationError {
@@ -19,32 +19,61 @@ export interface PermAnnotation {
   errors: AnnotationError[];
 }
 
+/** A comment's full text (including delimiters) and its start position in the file. */
+export interface Comment {
+  text: string;
+  start: number;
+}
+
 const PERM_TAG = /@perm(?![\w-])/g;
 const NEXT_TAG = /\s@[A-Za-z]/;
 // A line break plus the comment's leading `*`, replaced by spaces so offsets stay exact.
 const CONTINUATION = /\n[ \t]*\*(?!\/)/g;
+// Standard JSDoc markers for a file-level comment.
+const MODULE_TAG = /@(?:module|file|fileoverview)(?![\w-])/;
+
+export function isModuleComment(text: string): boolean {
+  return text.startsWith("/**") && MODULE_TAG.test(text);
+}
+
+/** A function's own JSDoc comments, excluding a module comment that happens to sit above it. */
+export function functionComments(docs: readonly JSDoc[]): Comment[] {
+  return docs.map((d) => ({ text: d.getText(), start: d.getStart() })).filter((c) => !isModuleComment(c.text));
+}
+
+/** Every `@module` comment before a top-level statement (or at the end of the file). */
+export function moduleComments(sourceFile: SourceFile): Comment[] {
+  const text = sourceFile.getFullText();
+  const positions = [...sourceFile.getStatements().map((s) => s.getPos()), sourceFile.compilerNode.endOfFileToken.pos];
+  const seen = new Set<number>();
+  const comments: Comment[] = [];
+  for (const pos of positions) {
+    for (const range of ts.getLeadingCommentRanges(text, pos) ?? []) {
+      const body = text.slice(range.pos, range.end);
+      if (seen.has(range.pos) || !isModuleComment(body)) continue;
+      seen.add(range.pos);
+      comments.push({ text: body, start: range.pos });
+    }
+  }
+  return comments;
+}
 
 /** Merges every `@perm` tag across the given comments; undefined when there are none. */
-export function readPermAnnotation(docs: readonly JSDoc[]): PermAnnotation | undefined {
+export function readPermAnnotation(comments: readonly Comment[], sourceFile: SourceFile): PermAnnotation | undefined {
   let found = false;
   const capabilities: Capability[] = [];
   const errors: AnnotationError[] = [];
 
-  for (const doc of docs) {
-    const text = doc.getText();
-    const docStart = doc.getStart();
-    const sourceFile = doc.getSourceFile();
-
+  for (const { text, start } of comments) {
     for (const tag of text.matchAll(PERM_TAG)) {
       found = true;
       const bodyStart = tag.index + tag[0].length;
-      const body = tagBody(text.slice(bodyStart));
-      const parsed = parsePermList(body);
+      const parsed = parsePermList(tagBody(text.slice(bodyStart)));
       capabilities.push(...parsed.capabilities);
 
       for (const e of parsed.errors) {
         // An empty tag is reported at the tag itself.
-        const pos = e.text === "@perm" ? docStart + tag.index : docStart + bodyStart + e.offset;
+        const pos = e.text === "@perm" ? start + tag.index : start + bodyStart + e.offset;
         const { line, column } = sourceFile.getLineAndColumnAtPos(pos);
         errors.push({ text: e.text, reason: e.reason, line, column });
       }

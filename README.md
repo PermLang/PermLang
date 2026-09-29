@@ -19,19 +19,55 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   -> add net(data-broker.io) to @perm, or remove the call.
 ```
 
-> **Status: pre-release (v0.1, milestone M1).** Not ready for production use.
+> **Status: pre-release (v0.1, milestone M2).** Not ready for production use.
 
-## What M1 does
+## What works so far
 
-- Parses `@perm` tags in JSDoc on functions, methods, and `const` arrow functions.
-- Detects direct calls to the global `fetch` and to Node's `fs`, `fs/promises`
+- **Annotations (M1).** `@perm` tags in JSDoc on functions, methods, constructors,
+  accessors, and function-valued `const`s and properties.
+- **Direct calls (M1).** The global `fetch` and Node's `fs` / `fs/promises`
   (including `node:` imports, renamed imports, and `fs.promises.*`).
-- Reports each violation with file, line, the offending call, and a suggested fix.
-- Warns (does not fail) when an unannotated function uses a capability.
+- **Propagation (M2).** A function's actual permissions include everything its
+  callees use, across files, through re-exports, recursion, class methods,
+  constructors, object methods, and functions passed as callbacks. Violations
+  show the path:
 
-Not yet: propagation through helper functions (M2), `db`/`env`/`exec` detection,
-adapter manifests, `@perm-unsafe` (M3), unverifiable-code detection (M4), and
-`permlang diff` (M5). See the design doc for the full plan.
+  ```
+  a calls b("{}"), reaching b → c → writeFileSync("./public/dump.json", ...)
+    but its declared permissions do not include fs.write(./public/dump.json).
+  ```
+
+- **Module-level permissions (M2).** A top-of-file JSDoc tagged `@module` (or
+  `@file` / `@fileoverview`) applies its `@perm` to every function in the file:
+
+  ```ts
+  /**
+   * Stripe integration.
+   * @module
+   * @perm net(api.stripe.com)
+   */
+  ```
+
+- **Warnings.** An exported function with no `@perm` gets a warning (not an
+  error) for each capability it reaches. Private helpers need no annotation;
+  their callers must cover what they use.
+
+Not yet: `db`/`env`/`exec` detection, adapter manifests, `@perm-unsafe` (M3),
+unverifiable-code detection (M4), strictness levels, and `permlang diff` (M5).
+See the design doc for the full plan.
+
+### Known gaps (for the M4 adversarial suite)
+
+These currently pass silently. Each will become either a detection or an
+"unverifiable" error:
+
+- `fetch` or an fs function used as a value: `urls.map(fetch)`, `const f = fetch`.
+- Computed member calls: `obj["send"]()`, `api[name]()`.
+- Dynamic dispatch: calls through an interface, or to a method a subclass overrides.
+- A subclass constructor reaching its base constructor through `super()`.
+- Shorthand properties passing a function: `{ helper }`.
+- Top-level code in an imported module (it runs on import).
+- Third-party packages: calls into `node_modules` are not followed (adapters in M3).
 
 ## Capabilities
 
@@ -70,13 +106,16 @@ writeFileSync("./data/out.json", data); // expect: error PERM001 fs.write(./data
 ```
 
 Files in `pass/` must produce no diagnostics. Files in `fail/` must produce
-exactly the expected ones.
+exactly the expected ones. A fixture can be a folder of files that import each
+other. Every fixture file must be a module (have an import or export).
 
 ```
 src/capability.ts   vocabulary, parsing, and coverage rules
-src/annotations.ts  reading @perm tags from JSDoc
-src/detect.ts       mapping a call to the capabilities it uses
-src/check.ts        comparing declared vs. actual per function
+src/annotations.ts  reading @perm tags from JSDoc and @module comments
+src/detect.ts       mapping a call to the capabilities it uses directly
+src/units.ts        functions, methods, and files that permissions attach to
+src/graph.ts        the call graph and propagation along it
+src/check.ts        comparing declared vs. actual per unit
 src/report.ts       text and JSON output
 src/cli.ts          the permlang command
 ```
