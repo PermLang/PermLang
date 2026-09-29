@@ -19,7 +19,7 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   -> add net(data-broker.io) to @perm, or remove the call.
 ```
 
-> **Status: pre-release (v0.1, milestone M3).** Not ready for production use.
+> **Status: pre-release (v0.1, milestone M4).** Not ready for production use.
 
 ## What works so far
 
@@ -73,22 +73,44 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   own checks. Every use is listed in the report. Callers still have to cover
   what the function reaches.
 
-Not yet: unverifiable-code detection (M4), strictness levels, and `permlang diff`
-(M5). See the design doc for the full plan.
+- **Adversarial coverage (M4).** Tricks that try to hide access are caught:
+  - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
+    `paths.forEach(unlinkSync)`, `send.call(...)` (a `const` alias is fine,
+    because calls through it resolve to the original);
+  - calls through an interface or base class, which reach every first-party
+    implementation, including object literals written against the type;
+  - `super()`, implicit constructors, and instance field initializers;
+  - `{ helper }` shorthand, getters, and literal computed keys (`api["ping"]()`);
+  - computed keys over a known object (`handlers[kind]()`), which reach every
+    member the key allows;
+  - importing a module, which runs its top-level code (static and literal
+    `import()`).
+- **Unverifiable code (M4, PERM004).** Code whose effects can't be determined is
+  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
+  `require()`, `import(variable)`, `vm`, `new Worker`, and computed calls on
+  sensitive objects (`fs[method]()`, `globalThis[name]()`) or behind an index
+  signature (`table[name]()`). The only way to accept it is `@perm-unsafe`,
+  which also stops it from failing the function's callers.
 
-### Known gaps (for the M4 adversarial suite)
+Not yet: strictness levels, and `permlang diff` (M5). See the design doc for the
+full plan.
 
-These currently pass silently. Each will become either a detection or an
-"unverifiable" error:
+### Known limits
 
-- `fetch` or an fs function used as a value: `urls.map(fetch)`, `const f = fetch`.
-- Computed member calls: `obj["send"]()`, `api[name]()`.
-- Dynamic dispatch: calls through an interface, or to a method a subclass overrides.
-- A subclass constructor reaching its base constructor through `super()`.
-- Shorthand properties passing a function: `{ helper }`.
-- Top-level code in an imported module (it runs on import).
+Design doc §12 asks the checker to catch the whole adversarial suite, or to
+document each miss. These misses are documented as fixtures in
+[`fixtures/m4/limits/`](fixtures/m4/limits). Each one's test fails once the miss
+is fixed, so the list can't go stale.
+
+- Values typed `any`: nothing called on them can be resolved.
+- `Proxy` traps, which can return a capability function for any property.
+- Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
+  linked to calls through that property or variable. The top-level code that
+  assigns them is still reported.
+
+Other gaps, not yet in fixtures:
+
 - Third-party packages without an adapter: calls into them report nothing.
-- Library functions passed as values: `util.promisify(exec)`, `items.map(axios.get)`.
 - Database clients other than Prisma (Drizzle, `pg`, ...).
 - A `ProcessEnv` received as a parameter typed as a plain object.
 
@@ -165,7 +187,8 @@ other. Every fixture file must be a module (have an import or export).
 src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
-src/detect/         direct uses: fetch, fs, env, Prisma, and adapter-mapped calls
+src/detect/         direct uses: fetch, fs, env, Prisma, adapter-mapped calls, values, unverifiable code
+src/dispatch.ts     implementations reachable through interfaces and base classes
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/check.ts        comparing declared vs. actual per unit

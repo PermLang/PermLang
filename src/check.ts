@@ -6,8 +6,9 @@
 
 import { Project, ts, type Node } from "ts-morph";
 import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
-import { covers, formatCapability } from "./capability.js";
+import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
+import { Hierarchy } from "./dispatch.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
   createUnit,
@@ -26,8 +27,11 @@ export type Severity = "error" | "warning";
 
 export interface Diagnostic {
   severity: Severity;
-  /** PERM001 undeclared capability, PERM002 invalid annotation, PERM003 missing annotation. */
-  code: "PERM001" | "PERM002" | "PERM003";
+  /**
+   * PERM001 undeclared capability, PERM002 invalid annotation, PERM003 missing
+   * annotation, PERM004 unverifiable code (eval, computed calls on sensitive objects, ...).
+   */
+  code: "PERM001" | "PERM002" | "PERM003" | "PERM004";
   file: string;
   line: number;
   column: number;
@@ -121,7 +125,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   }
 
   // 2. Edges between units, then what each unit can reach.
-  const edges = sourceFiles.flatMap((sf) => collectEdges(sf, (node) => units.get(node)));
+  const context = { unitOf: (node: Node) => units.get(node), hierarchy: new Hierarchy(sourceFiles), adapters };
+  const edges = sourceFiles.flatMap((sf) => collectEdges(sf, context));
   const reach = propagate(units.values(), edges);
   const edgesFrom = groupBy(edges, (e) => e.from);
 
@@ -174,6 +179,7 @@ function diagnose(unit: Unit, edges: readonly Edge[], reach: Reach): Diagnostic[
     if (edge.to === unit) continue; // recursion into itself adds nothing new
     for (const [key, p] of reach.get(edge.to)!) {
       if (covers(declared, p.capability)) continue;
+      if (key === UNVERIFIABLE && edge.to.own?.unsafe) continue; // vouched for by @perm-unsafe
       const path = [edge.to.name, ...pathTo(reach, edge.to, key)];
       out.push(violation(unit, edge, "calls", key, path, p.capability.dynamic === true));
     }
@@ -199,6 +205,7 @@ function violation(
   dynamic: boolean,
 ): Diagnostic {
   const via = path.length > 0 ? `, reaching ${path.join(" → ")}` : "";
+  if (capability === UNVERIFIABLE) return unverifiable(unit, site, verb, path, "error");
   const reason = dynamic
     ? `its ${scopeWord(capability)} can't be determined statically, so it needs ${capability}`
     : `its declared permissions do not include ${capability}`;
@@ -217,11 +224,31 @@ function violation(
   };
 }
 
+/** Code whose effects can't be known. Only @perm-unsafe accepts it. */
+function unverifiable(unit: Unit, site: Use | Edge, verb: string, path: string[], severity: Severity): Diagnostic {
+  const via = path.length > 0 ? `, reaching ${path.join(" → ")}` : "";
+  return {
+    severity,
+    code: "PERM004",
+    file: unit.file,
+    line: site.line,
+    column: site.column,
+    function: unit.name,
+    capability: UNVERIFIABLE,
+    call: site.call,
+    ...(path.length > 0 ? { path } : {}),
+    message: `${unit.name} ${verb} ${site.call}${via}
+  which can't be verified statically.`,
+    fix: `rewrite it so what it calls is known statically, or mark ${path.length > 0 ? "the function that does it" : unit.name} @perm-unsafe with a reason.`,
+  };
+}
+
 /** One warning per capability an exported, unannotated unit reaches, at the first place it does. */
 function missingAnnotation(unit: Unit, reach: Reach): Diagnostic[] {
   return [...reach.get(unit)!].map(([key, p]) => {
     const site = p.edge ?? p.use;
     const path = p.edge ? [p.edge.to.name, ...pathTo(reach, p.edge.to, key)] : [];
+    if (key === UNVERIFIABLE) return unverifiable(unit, site, p.edge ? "calls" : p.use.verb, path, "warning");
     const via = path.length > 0 ? `, reaching ${path.join(" → ")},` : "";
     return {
       severity: "warning",

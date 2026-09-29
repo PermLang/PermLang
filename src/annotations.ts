@@ -40,10 +40,17 @@ const NEXT_TAG = /\s@[A-Za-z]/;
 // A line break plus the comment's leading `*`, replaced by spaces so offsets stay exact.
 const CONTINUATION = /\n[ \t]*\*(?!\/)/g;
 // Standard JSDoc markers for a file-level comment.
-const MODULE_TAG = /@(?:module|file|fileoverview)(?![\w-])/;
+const MODULE_TAG = /@(?:module|file|fileoverview)(?![\w-])/g;
+// A block tag starts a line: nothing before it but the comment opener or leading `*`.
+const LINE_START = /(?:^|\n)[ \t]*(?:\/\*\*)?[ \t]*\*?[ \t]*$/;
+
+/** Matches of `tag` that begin a line, so prose that mentions a tag (a `@perm` tag) is ignored. */
+function blockTags(text: string, tag: RegExp): RegExpExecArray[] {
+  return [...text.matchAll(tag)].filter((m) => LINE_START.test(text.slice(0, m.index)));
+}
 
 export function isModuleComment(text: string): boolean {
-  return text.startsWith("/**") && MODULE_TAG.test(text);
+  return text.startsWith("/**") && blockTags(text, MODULE_TAG).length > 0;
 }
 
 /** A function's own JSDoc comments, excluding a module comment that happens to sit above it. */
@@ -85,7 +92,7 @@ export function readPermAnnotation(
   const at = (pos: number) => sourceFile.getLineAndColumnAtPos(pos);
 
   for (const { text, start } of comments) {
-    for (const tag of text.matchAll(PERM_TAG)) {
+    for (const tag of blockTags(text, PERM_TAG)) {
       found = true;
       const bodyStart = tag.index + tag[0].length;
       const parsed = parsePermList(tagBody(text.slice(bodyStart)), vocabulary);
@@ -98,7 +105,7 @@ export function readPermAnnotation(
       }
     }
 
-    for (const tag of text.matchAll(UNSAFE_TAG)) {
+    for (const tag of blockTags(text, UNSAFE_TAG)) {
       found = true;
       const reason = UNSAFE_REASON.exec(tagBody(text.slice(tag.index + tag[0].length)))?.[1]?.trim();
       if (reason) {

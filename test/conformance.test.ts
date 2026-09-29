@@ -4,6 +4,9 @@
 //
 // A fixture under pass/ must produce no diagnostics. A fixture under fail/ must
 // declare at least one expectation, and must produce exactly the expected set.
+// A fixture under limits/ documents a known miss (design doc §12): it explains
+// the miss in a `// limit:` comment and produces exactly its expected set, so
+// the test fails, and the fixture must move to fail/, once the miss is fixed.
 // A fixture is a file, or a folder of files that import each other; a folder
 // needs an expectation in at least one of its files.
 //
@@ -69,6 +72,10 @@ describe("conformance fixtures", () => {
       const actual = files.flatMap((f) => actualFor(f).map((a) => `${path.basename(f)}:${a}`));
       if (kind === "pass") expect(expected, "pass/ fixtures must not declare expectations").toEqual([]);
       if (kind === "fail") expect(expected.length, "fail/ fixtures must declare expectations").toBeGreaterThan(0);
+      if (kind === "limits") {
+        const documented = files.some((f) => /\/\/ limit: \S/.test(readFileSync(f, "utf8")));
+        expect(documented, "limits/ fixtures must explain the miss in a `// limit:` comment").toBe(true);
+      }
 
       expect(actual.sort()).toEqual(expected.sort());
     });
@@ -116,7 +123,14 @@ describe("diagnostic content", () => {
     expect(unsafe).toEqual([
       "unsafe-still-propagates.ts legacy: wraps a legacy client",
       "unsafe.ts legacySync: legacy SDK builds URLs at runtime; tracked in PERM-12",
+      "unsafe-stops-unverifiable.ts compile: template compiler; input is trusted build-time templates",
     ]);
+  });
+
+  it("explains unverifiable code and how to resolve it", () => {
+    const d = report.diagnostics.find((x) => x.file.endsWith("m4/fail/eval.ts") && x.code === "PERM004");
+    expect(d?.message).toMatch(/^run calls eval\(code\)\n {2}which can't be verified statically/);
+    expect(d?.fix).toMatch(/@perm-unsafe/);
   });
 
   it("says reads rather than calls for environment variables", () => {
