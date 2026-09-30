@@ -19,9 +19,11 @@
     "src/cli.ts#<module>": [
       "exec",
       "fs.read",
+      "fs.read(.github/workflows/permlang.yml)",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)",
-      "fs.write"
+      "fs.write",
+      "fs.write(.github/workflows/permlang.yml)"
     ],
     "src/cli.ts#analyze": [
       "fs.read",
@@ -42,6 +44,14 @@
     "src/cli.ts#expand": [
       "fs.read"
     ],
+    "src/cli.ts#init": [
+      "fs.read",
+      "fs.read(.github/workflows/permlang.yml)",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)",
+      "fs.write",
+      "fs.write(.github/workflows/permlang.yml)"
+    ],
     "src/cli.ts#lock": [
       "fs.read",
       "fs.read(permlang.config.json)",
@@ -54,9 +64,11 @@
     "src/cli.ts#main": [
       "exec",
       "fs.read",
+      "fs.read(.github/workflows/permlang.yml)",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)",
-      "fs.write"
+      "fs.write",
+      "fs.write(.github/workflows/permlang.yml)"
     ],
     "src/cli.ts#readConfig": [
       "fs.read",

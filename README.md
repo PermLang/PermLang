@@ -249,6 +249,7 @@ in the PermLang organization. This repository runs it on itself (see
 ```bash
 npm install
 npm test                                           # conformance + unit tests
+npm run permlang -- init src                        # set up a project: sketch config + first lock
 npm run permlang -- check fixtures/m1 --no-lock    # run the checker from source
 npm run permlang -- check src --json               # JSON report of declared vs. actual permissions
 npm run permlang -- lock src                       # write permlang.lock.json

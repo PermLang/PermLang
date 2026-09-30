@@ -7,7 +7,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AdapterError } from "./adapters.js";
 import {
@@ -25,6 +25,7 @@ import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type 
 import { formatText, toJson } from "./report.js";
 
 const USAGE = `Usage:
+  permlang init  [paths...] [options]    set up: a sketch-level config and a first lock file
   permlang check [paths...] [options]    check permissions (and the lock file, if there is one)
   permlang lock  [paths...] [options]    write permlang.lock.json from the current code
   permlang diff  [base-ref] [options]    permission changes since base-ref (default HEAD)
@@ -43,6 +44,7 @@ Options:
   --json                          check: print the JSON report
   --head <ref>                    diff: compare against this commit instead of the working tree
   --format <text|markdown|json>   diff: output format (default: text)
+  --workflow                      init: also add .github/workflows/permlang.yml
 
 permlang.config.json:
   { "strictness": "sketch", "unmapped": "warn", "adapters": ["./permlang/adapters/acme-sms.json"] }
@@ -64,6 +66,7 @@ interface Args {
   unmapped?: string;
   lock?: string;
   noLock: boolean;
+  workflow: boolean;
   json: boolean;
   head?: string;
   format: string;
@@ -77,6 +80,7 @@ function main(argv: string[]): number {
   }
   try {
     const args = parseArgs(rest);
+    if (command === "init") return init(args);
     if (command === "check") return check(args);
     if (command === "lock") return lock(args);
     if (command === "diff") return diff(args);
@@ -91,7 +95,7 @@ function main(argv: string[]): number {
 }
 
 function parseArgs(rest: string[]): Args {
-  const args: Args = { paths: [], adapters: [], noLock: false, json: false, format: "text" };
+  const args: Args = { paths: [], adapters: [], noLock: false, workflow: false, json: false, format: "text" };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
     const value = () => {
@@ -101,6 +105,7 @@ function parseArgs(rest: string[]): Args {
     };
     if (arg === "--json") args.json = true;
     else if (arg === "--no-lock") args.noLock = true;
+    else if (arg === "--workflow") args.workflow = true;
     else if (arg === "--project" || arg === "-p") args.project = value();
     else if (arg === "--config") args.config = value();
     else if (arg === "--adapter") args.adapters.push(value());
@@ -116,6 +121,79 @@ function parseArgs(rest: string[]): Args {
 }
 
 // --- commands ----------------------------------------------------------------
+
+/** Day-one setup: a sketch-level config (unless one exists), a first lock file, optionally the workflow. */
+function init(args: Args): number {
+  const done: string[] = [];
+  const configFile = args.config ?? DEFAULT_CONFIG;
+  if (existsSync(configFile)) {
+    done.push(`Kept ${configFile}.`);
+  } else {
+    const strictness = args.strictness ?? "sketch";
+    if (!STRICTNESS_LEVELS.includes(strictness as Strictness)) {
+      throw new UsageError(`Strictness must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
+    }
+    writeFileSync(configFile, `${JSON.stringify({ strictness }, null, 2)}\n`);
+    const meaning = strictness === "sketch" ? ": permissions are inferred and reported, and nothing fails yet" : "";
+    done.push(`Wrote ${configFile} (strictness ${strictness}${meaning}).`);
+  }
+
+  const lockFile = path.resolve(args.lock ?? DEFAULT_LOCK);
+  const report = analyze(args, undefined);
+  const lock = buildLock(report, path.dirname(lockFile));
+  writeFileSync(lockFile, serializeLock(lock));
+  const lockName = path.relative(process.cwd(), lockFile).replaceAll("\\", "/");
+  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const reaching = Object.keys(lock.functions).length;
+  done.push(`Wrote ${lockName}: ${count(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${count(report.files, "file")}.`);
+
+  const workflow = ".github/workflows/permlang.yml";
+  if (args.workflow) {
+    if (existsSync(workflow)) {
+      done.push(`Kept ${workflow}.`);
+    } else {
+      mkdirSync(path.dirname(workflow), { recursive: true });
+      writeFileSync(workflow, workflowFile(args));
+      done.push(`Wrote ${workflow}: checks every pull request and comments the permission diff.`);
+    }
+  }
+
+  const commit = [configFile, lockName, ...(args.workflow ? [workflow] : [])].join(", ");
+  const steps = [
+    `Commit ${commit}.`,
+    "From now on, `permlang check` fails when code reaches something the lock doesn't record. Run `permlang lock` to accept a change, and review the lock's diff.",
+    ...(report.unmapped.length > 0 ? [`Review the ${report.unmapped.length} packages with no adapter; \`permlang check\` lists them.`] : []),
+    'Add @perm annotations where you want rules enforced, then raise "strictness" to development.',
+  ];
+  console.log([...done, "", "Next steps:", ...steps.map((s) => `  - ${s}`)].join("\n"));
+  return 0;
+}
+
+/** A workflow that runs the PermLang Action on the same files init checked. */
+function workflowFile(args: Args): string {
+  const selection = args.project ? `--project ${args.project}` : args.paths.join(" ");
+  const withArgs = selection ? `\n        with:\n          args: ${selection}` : "";
+  return [
+    "name: PermLang",
+    "",
+    "on:",
+    "  pull_request:",
+    "  push:",
+    "    branches: [main]",
+    "",
+    "permissions:",
+    "  contents: read",
+    "  pull-requests: write",
+    "",
+    "jobs:",
+    "  permissions:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    `      - uses: PermLang/permlang@main${withArgs}`,
+    "",
+  ].join("\n");
+}
 
 function check(args: Args): number {
   const lockFile = args.lock ?? DEFAULT_LOCK;
