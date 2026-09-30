@@ -35,6 +35,10 @@ diagnostic. Each now has a regression fixture in `fixtures/m6/`:
 
 ### Added
 
+- **Specs (phase 2 groundwork).** A `.perm` file format for rules, examples, and
+  permissions (`docs/spec-format.md`), and `permlang spec`, which checks each
+  spec's permissions against its implementation (SPEC001 to SPEC004). Rules and
+  examples are parsed and reported as not yet verified.
 - **License: Apache 2.0** (`LICENSE`, `NOTICE`).
 - **Package coverage.**
   - Every package called is now mapped by an adapter, declared pure
