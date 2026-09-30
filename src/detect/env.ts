@@ -16,7 +16,7 @@ export interface EnvUse {
 export function envUses(sourceFile: SourceFile): EnvUse[] {
   const out: EnvUse[] = [];
   sourceFile.forEachDescendant((n) => {
-    if (!Node.isIdentifier(n) && !Node.isPropertyAccessExpression(n)) return;
+    if (!Node.isIdentifier(n) && !Node.isPropertyAccessExpression(n) && !Node.isElementAccessExpression(n)) return;
     if (isNameNode(n) || !isProcessEnv(n) || n.getFirstAncestor((a) => Node.isTypeNode(a))) return;
     const found = classify(n);
     if (found) out.push(found);

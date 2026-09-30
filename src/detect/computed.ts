@@ -7,7 +7,7 @@
 //   - behind an index signature (arrays, Record<string, Fn>), the functions
 //     can't be known, so the call is unverifiable.
 
-import { Node, type ElementAccessExpression, type ObjectLiteralExpression, type Symbol as MorphSymbol, type Type } from "ts-morph";
+import { Node, SyntaxKind, type ElementAccessExpression, type ObjectLiteralExpression, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import { declarationCapabilities } from "./functions.js";
 import { resolveAlias, unwrapExpression, type CallLike } from "./shared.js";
@@ -29,14 +29,17 @@ export function classifyComputedCall(access: ElementAccessExpression, adapters: 
   const key = access.getArgumentExpression();
   const keyType = key?.getType();
   if (!key || !keyType) return { kind: "unknown" };
-  if (keyType.isStringLiteral() || keyType.isNumberLiteral()) return { kind: "resolved" };
+  // A cast gives the key a literal type without a literal value, so its type narrows nothing.
+  const cast = key.getDescendantsOfKind(SyntaxKind.AsExpression).length > 0 || Node.isAsExpression(key) ||
+    Node.isTypeAssertion(key) || key.getDescendantsOfKind(SyntaxKind.TypeAssertionExpression).length > 0;
+  if (!cast && (keyType.isStringLiteral() || keyType.isNumberLiteral())) return { kind: "resolved" };
 
   const object = access.getExpression();
   const objectType = object.getType();
   if (objectType.isAny() || objectType.isUnknown()) return { kind: "unknown" };
 
   // A key union of string literals narrows the members; any other string key allows all of them.
-  const allowed = keyType.isUnion() && keyType.getUnionTypes().every((t) => t.isStringLiteral())
+  const allowed = !cast && keyType.isUnion() && keyType.getUnionTypes().every((t) => t.isStringLiteral())
     ? new Set(keyType.getUnionTypes().map((t) => String(t.getLiteralValue())))
     : undefined;
 

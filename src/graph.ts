@@ -10,14 +10,22 @@
 //   - a class's implicit constructor running its base constructor;
 //   - importing a module, which runs its top-level code.
 
-import { Node, SyntaxKind, ts, type Identifier, type SourceFile } from "ts-morph";
+import { Node, SyntaxKind, ts, type Identifier, type SourceFile, type Type } from "ts-morph";
 import type { AdapterIndex } from "./adapters.js";
 import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js";
 import { classifyComputedCall, computedCallee } from "./detect/computed.js";
 import { isRequire } from "./detect/functions.js";
 import { argumentsOf, callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
 import type { Hierarchy } from "./dispatch.js";
-import { constructorUnitNode, enclosingUnitNode, unitNodeForDeclaration, unitNodeForSymbol, type Unit, type Use } from "./units.js";
+import {
+  constructorUnitNode,
+  enclosingUnitNode,
+  unitNodeForDeclaration,
+  unitNodeForSymbol,
+  unitNodesForSymbol,
+  type Unit,
+  type Use,
+} from "./units.js";
 
 export interface Edge {
   from: Unit;
@@ -57,7 +65,56 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     if (!symbol) continue;
     const site = referenceSite(id);
     const text = Node.isCallExpression(site) || Node.isNewExpression(site) ? callText(site) : site.getText();
-    add(id, unitNodeForSymbol(resolveAlias(symbol)), site, text);
+    // All of the symbol's units: `b.value = 2` runs the setter, not the getter that shares its name.
+    for (const target of unitNodesForSymbol(resolveAlias(symbol))) add(id, target, site, text);
+  }
+
+  // Property reads that run getters without an `a.b`: `const { g } = b`, `b["g"]`.
+  const addMembers = (from: Node, type: Type, names: (name: string) => boolean, text: string) => {
+    for (const property of type.getProperties()) {
+      if (!names(property.getName())) continue;
+      for (const d of property.getDeclarations()) {
+        add(from, unitNodeForDeclaration(d), from, text);
+        for (const impl of ctx.hierarchy.implementations(d)) add(from, impl, from, text);
+      }
+    }
+  };
+  for (const element of sourceFile.getDescendantsOfKind(SyntaxKind.BindingElement)) {
+    const pattern = element.getParent();
+    if (!Node.isObjectBindingPattern(pattern)) continue;
+    // `...rest` copies every property, running every getter.
+    const name = element.getDotDotDotToken() ? undefined : (element.getPropertyNameNode()?.getText() ?? element.getName());
+    addMembers(element, pattern.getType(), (n) => name === undefined || n === name, element.getText());
+  }
+  for (const access of sourceFile.getDescendantsOfKind(SyntaxKind.ElementAccessExpression)) {
+    const key = literalString(access.getArgumentExpression());
+    if (key !== undefined) addMembers(access, access.getExpression().getType(), (n) => n === key, access.getText());
+  }
+
+  // Methods the language calls implicitly.
+  for (const node of sourceFile.getDescendantsOfKind(SyntaxKind.AwaitExpression)) {
+    addMembers(node, node.getExpression().getType(), (n) => n === "then", node.getText().slice(0, 60));
+  }
+  const toPrimitive = (n: string) => n === "toString" || n === "valueOf" || n.startsWith("__@toPrimitive");
+  for (const template of sourceFile.getDescendantsOfKind(SyntaxKind.TemplateExpression)) {
+    for (const span of template.getTemplateSpans()) addMembers(span, span.getExpression().getType(), toPrimitive, template.getText().slice(0, 60));
+  }
+  for (const binary of sourceFile.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
+    if (binary.getOperatorToken().getKind() !== SyntaxKind.PlusToken) continue;
+    const [left, right] = [binary.getLeft(), binary.getRight()];
+    const text = binary.getText().slice(0, 60);
+    if (isStringType(left.getType())) addMembers(binary, right.getType(), toPrimitive, text);
+    if (isStringType(right.getType())) addMembers(binary, left.getType(), toPrimitive, text);
+  }
+  const iterator = (n: string) => n.startsWith("__@iterator") || n.startsWith("__@asyncIterator");
+  for (const loop of sourceFile.getDescendantsOfKind(SyntaxKind.ForOfStatement)) {
+    addMembers(loop, loop.getExpression().getType(), iterator, `for (... of ${loop.getExpression().getText()})`);
+  }
+  for (const spread of sourceFile.getDescendantsOfKind(SyntaxKind.SpreadElement)) {
+    addMembers(spread, spread.getExpression().getType(), iterator, spread.getText());
+  }
+  for (const pattern of sourceFile.getDescendantsOfKind(SyntaxKind.ArrayBindingPattern)) {
+    addMembers(pattern, pattern.getType(), iterator, pattern.getText());
   }
 
   // Calls: the resolved declaration, dispatch to implementations, computed members.
@@ -242,4 +299,8 @@ export function pathTo(reach: Reach, unit: Unit, key: string): string[] {
   }
   if (p) path.push(p.use.call);
   return path;
+}
+
+function isStringType(type: Type): boolean {
+  return type.isString() || type.isStringLiteral() || type.isTemplateLiteral();
 }

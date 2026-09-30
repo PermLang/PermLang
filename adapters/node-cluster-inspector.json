@@ -1,0 +1,22 @@
+{
+  "permlang": 1,
+  "package": [
+    "cluster",
+    "inspector"
+  ],
+  "default": [],
+  "functions": {
+    "fork": [
+      "exec"
+    ],
+    "setupPrimary": [
+      "exec"
+    ],
+    "setupMaster": [
+      "exec"
+    ],
+    "open": [
+      "net"
+    ]
+  }
+}

@@ -28,7 +28,7 @@ const USAGE = `Usage:
   permlang init  [paths...] [options]    set up: a sketch-level config and a first lock file
   permlang check [paths...] [options]    check permissions (and the lock file, if there is one)
   permlang lock  [paths...] [options]    write permlang.lock.json from the current code
-  permlang diff  [base-ref] [options]    permission changes since base-ref (default HEAD)
+  permlang diff  [base-ref] [paths...]   permission changes since base-ref (default HEAD)
 
 Which files: paths, or --project <tsconfig.json>. With neither, ./tsconfig.json
 if present, else ./src.
@@ -217,8 +217,8 @@ function lock(args: Args): number {
 
 function diff(args: Args): number {
   if (!["text", "markdown", "json"].includes(args.format)) throw new UsageError(`--format must be text, markdown, or json.`);
-  if (args.paths.length > 1) throw new UsageError("diff takes one base ref.");
-  const base = args.paths[0] ?? "HEAD";
+  // diff [base-ref] [paths...]: the paths select the code analyzed for "reached through".
+  const [base = "HEAD", ...sources] = args.paths;
   const lockFile = args.lock ?? DEFAULT_LOCK;
 
   const baseLock = lockAt(base, lockFile);
@@ -232,7 +232,13 @@ function diff(args: Args): number {
     if (!existsSync(lockFile)) throw new UsageError(`No ${lockFile}. Run \`permlang lock\` first.`);
     headLock = parseLock(readFileSync(lockFile, "utf8"), lockFile);
     // The working tree can be analyzed, so new access can be shown with its path.
-    via = viaPaths(analyze({ ...args, paths: [] }, undefined), path.dirname(path.resolve(lockFile)));
+    // Best effort: the diff comes from the locks; analysis only adds where new access happens.
+    try {
+      via = viaPaths(analyze({ ...args, paths: sources }, undefined), path.dirname(path.resolve(lockFile)));
+    } catch (e) {
+      if (!(e instanceof UsageError)) throw e;
+      console.error(`Showing the diff without paths: ${e.message}`);
+    }
   }
 
   const changes = diffLocks(baseLock, headLock);
@@ -270,7 +276,9 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
 
 /** The lock file as committed at `ref`, or undefined if it didn't exist there. */
 function lockAt(ref: string, lockFile: string): LockFile | undefined {
-  const spec = `${ref}:./${lockFile.replaceAll("\\", "/")}`;
+  // git resolves `ref:./path` relative to the working directory, so an absolute path is made relative.
+  const relative = path.relative(process.cwd(), path.resolve(lockFile)).replaceAll("\\", "/");
+  const spec = `${ref}:./${relative}`;
   let text: string;
   try {
     text = execFileSync("git", ["show", spec], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -302,6 +310,7 @@ function readConfig(explicit: string | undefined): Config {
   } catch (e) {
     throw new UsageError(`Can't read ${file}: ${(e as Error).message}`);
   }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${file}: must be a JSON object.`);
   const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown };
   const list = config.adapters ?? [];
   if (!Array.isArray(list) || !list.every((a) => typeof a === "string")) {
