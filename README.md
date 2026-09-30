@@ -232,11 +232,13 @@ Exit codes: `0` no errors, `1` permission errors, `2` usage or configuration err
 
 ## Real-world trial
 
-[docs/trial-2026-09.md](docs/trial-2026-09.md): PermLang on Umami (1,338 files, 22 s)
-and Ghostfolio's API (498 files, 8 s). It found and fixed three false-positive
-classes, found no false positives in a spot check of its network, process, and
-file-write findings, and identified the main false negatives: Prisma without a
-generated client, and SDKs without adapters.
+[docs/trial-2026-09.md](docs/trial-2026-09.md): PermLang on Umami (1,372 files, 22 s)
+and Ghostfolio's API (524 files, 9 s). It found and fixed three false-positive
+classes and one false-negative class (Prisma clients built with `$extends`),
+found no false positives in a spot check of its network, process, and file-write
+findings, and identified the main remaining false negative: SDKs without
+adapters. Run `prisma generate` before PermLang in CI, or database access is
+invisible.
 
 ## Development
 

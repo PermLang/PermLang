@@ -8,14 +8,19 @@ import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { fetchCapability, isGlobalFetch } from "./fetch.js";
 import { fsCapabilities, fsFunctionName } from "./fs.js";
 import { prismaCapabilities } from "./prisma.js";
-import { containerName, isGlobalLibFunction } from "./shared.js";
+import { containerName, isGlobalLibFunction, type CallLike } from "./shared.js";
 
-export function declarationCapabilities(declaration: Node, args: readonly Node[], adapters: AdapterIndex): Capability[] {
+export function declarationCapabilities(
+  declaration: Node,
+  args: readonly Node[],
+  adapters: AdapterIndex,
+  call?: CallLike,
+): Capability[] {
   if (isGlobalFetch(declaration)) return [fetchCapability(args)];
   if (runsArbitraryCode(declaration)) return [{ name: UNVERIFIABLE }];
   const fs = fsFunctionName(declaration);
   if (fs !== undefined) return fsCapabilities(fs, args);
-  const db = prismaCapabilities(declaration);
+  const db = prismaCapabilities(declaration, call);
   if (db.length > 0) return db;
   return adapters.forDeclaration(declaration, args);
 }
