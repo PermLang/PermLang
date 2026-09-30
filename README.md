@@ -64,6 +64,18 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   - `db`: **Prisma** (open question 2, provisionally answered). The table is the
     model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
     SQL (`$queryRaw`, `$executeRaw`, ...) needs bare `db.read` and `db.write`.
+  - `db`: **Drizzle**. The table is the name given to `pgTable` / `mysqlTable` /
+    `sqliteTable`: `db.insert(auditLog)`, with `auditLog = pgTable("audit_log", ...)`,
+    needs `db.write(audit_log)`. `.from()` and joins read. `db.query.<key>.findMany()`
+    reads `<key>` and each `with` relation. `db.execute()` is raw SQL.
+  - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
+    `postgres`, `@neondatabase/serverless`, `@vercel/postgres`). When the query
+    is literal text, its tables are read out of it: `SELECT ... FROM leads JOIN
+    teams` needs `db.read(leads), db.read(teams)`. Tagged templates (`` sql`...` ``)
+    count, because their substitutions are bound parameters. SQL built with string
+    concatenation or a template passed to `query()` can touch any table, and needs
+    bare `db.read` and `db.write`. Schema-qualified names are declared as written
+    (`db.read(public.users)`).
 - **Adapter manifests (M3).** JSON files mapping a library's functions to
   capabilities, including app-level ones such as `payments.refund`. Built-in
   adapters in [`adapters/`](adapters) cover axios, Stripe, nodemailer, and the Node
@@ -117,7 +129,6 @@ Other gaps, not yet in fixtures:
 
 - Third-party packages without an adapter: what they touch is trusted. They are
   listed in every report and warned about (PERM006; see below).
-- Database clients other than Prisma (Drizzle, `pg`, ...).
 - A `ProcessEnv` received as a parameter typed as a plain object.
 - A decorator's arguments run when the class is defined, but are charged to the
   decorated member.
