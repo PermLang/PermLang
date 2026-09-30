@@ -37,15 +37,48 @@ export function callText(call: CallLike): string {
 }
 
 /**
- * A string argument's value when it is known statically: a literal, or an
- * expression whose type is a single string literal (`const PATH = "a.json"`).
+ * A string argument's value when it is known statically: a literal, a `const`
+ * holding one, a string enum member, or a property of an `as const` object.
  * Undefined when it is computed.
+ *
+ * The value is traced, never taken from the type: the checker doesn't require
+ * code to type-check, and `u as "https://good.example/"` has a literal type
+ * without a literal value.
  */
-export function literalString(arg: Node | undefined): string | undefined {
-  if (!arg) return undefined;
+export function literalString(arg: Node | undefined, depth = 0): string | undefined {
+  if (!arg || depth > 8) return undefined;
   if (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg)) return arg.getLiteralValue();
-  const type = arg.getType();
-  return type.isStringLiteral() ? String(type.getLiteralValue()) : undefined;
+  if (!Node.isIdentifier(arg) && !Node.isPropertyAccessExpression(arg)) return undefined;
+
+  const symbol = (Node.isPropertyAccessExpression(arg) ? arg.getNameNode() : arg).getSymbol();
+  const declaration = symbol && resolveAlias(symbol).getDeclarations()[0];
+  if (!declaration) return undefined;
+  if (Node.isEnumMember(declaration)) return literalString(declaration.getInitializer(), depth + 1);
+  if (Node.isVariableDeclaration(declaration)) {
+    return isConst(declaration) ? literalString(declaration.getInitializer(), depth + 1) : undefined;
+  }
+  if (Node.isPropertyAssignment(declaration) && inConstObject(declaration)) {
+    return literalString(declaration.getInitializer(), depth + 1);
+  }
+  return undefined;
+}
+
+function isConst(declaration: Node): boolean {
+  return Node.isVariableDeclaration(declaration) && declaration.getVariableStatement()?.getDeclarationKind() === "const";
+}
+
+/** A property of `const X = { ... } as const` (possibly nested), which can't be reassigned. */
+function inConstObject(property: Node): boolean {
+  let node = property.getParent();
+  while (node && Node.isObjectLiteralExpression(node)) {
+    const parent = node.getParent();
+    if (parent && Node.isAsExpression(parent) && parent.getTypeNode()?.getText() === "const") {
+      const holder = parent.getParent();
+      return holder !== undefined && isConst(holder);
+    }
+    node = parent && Node.isPropertyAssignment(parent) ? parent.getParent() : undefined;
+  }
+  return false;
 }
 
 // Several passes resolve the same calls; signature resolution is the expensive part.
@@ -105,9 +138,21 @@ export function containerName(declaration: Node): string | undefined {
   return undefined;
 }
 
-// Host is known only when the literal text fixes it, i.e. something ends the host
-// before any substitution. `https://api.stripe.com${x}` could become any host.
-const TEMPLATE_HOST = /^[a-z][a-z0-9+.-]*:\/\/([^/?#:@\s]+)(?=[/?#:])/i;
+// The host is known only when the literal text contains the whole authority
+// (userinfo, host, port): the scheme, then everything up to the first `/`, `?`,
+// or `#`. `https://api.stripe.com${x}` and `https://good.example:${p}/` could
+// both become any host (`p = "x@evil.example"`).
+const TEMPLATE_AUTHORITY = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)[/?#]/i;
+
+function templateHost(head: string): string | undefined {
+  const authority = TEMPLATE_AUTHORITY.exec(head)?.[1];
+  if (!authority) return undefined;
+  try {
+    return new URL(`${authority}/`).hostname.toLowerCase() || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * The host an argument names: a URL string or template, or an options object
@@ -124,7 +169,7 @@ export function hostOf(arg: Node | undefined): string | undefined {
     }
   }
   if (Node.isTemplateExpression(arg)) {
-    return TEMPLATE_HOST.exec(arg.getHead().getLiteralText())?.[1]?.toLowerCase();
+    return templateHost(arg.getHead().getLiteralText());
   }
   if (Node.isObjectLiteralExpression(arg)) {
     const prop = (name: string) => {

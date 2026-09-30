@@ -52,9 +52,9 @@ runs:
         ARGS: ${{ inputs.args }}
       run: |
         set +e
+        set -f  # ARGS is split on spaces, like a command line, but never glob-expanded.
         extra=()
         [ -n "$STRICTNESS" ] && extra+=(--strictness "$STRICTNESS")
-        # ARGS is split on spaces on purpose, like a command line.
         node "$PERMLANG" check $ARGS "${extra[@]}"
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
 
@@ -68,17 +68,27 @@ runs:
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
         REPO: ${{ github.repository }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         ARGS: ${{ inputs.args }}
       run: |
+        set -f  # ARGS is split on spaces, like a command line, but never glob-expanded.
         if [ ! -f permlang.lock.json ]; then
           echo "No permlang.lock.json; run \`permlang lock\` and commit it to get a permission diff."
           exit 0
         fi
         git fetch --no-tags --depth=1 origin "$BASE_SHA"
-        # The diff's "reached through" paths come from analyzing the checked-out code.
-        project=()
-        for a in $ARGS; do case "$a" in --project|-p) next=1 ;; *) [ -n "$next" ] && project=(--project "$a") && next= ;; esac; done
-        node "$PERMLANG" diff "$BASE_SHA" --format markdown "${project[@]}" > "$RUNNER_TEMP/permlang-diff.md"
+        # The same source selection as the check, so "Where it happens" can be filled in.
+        node "$PERMLANG" diff "$BASE_SHA" $ARGS --format markdown > "$RUNNER_TEMP/permlang-diff.md"
+        cat "$RUNNER_TEMP/permlang-diff.md" >> "$GITHUB_STEP_SUMMARY"
+
+        # A pull request from a fork gets a read-only token: the diff stays in the job summary.
+        if [ "$HEAD_REPO" != "$REPO" ]; then
+          echo "::notice::Pull request from a fork: the permission diff is in the job summary."
+          exit 0
+        fi
+
+        # Posting is best effort: the check result, not the comment, decides the job.
+        set +e
         body="$(cat "$RUNNER_TEMP/permlang-diff.md")"
         existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
           --jq '.[] | select(.body | startswith("<!-- permlang-diff -->")) | .id' | head -1)
@@ -87,7 +97,9 @@ runs:
         else
           gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
         fi
-        cat "$RUNNER_TEMP/permlang-diff.md" >> "$GITHUB_STEP_SUMMARY"
+        if [ $? -ne 0 ]; then
+          echo "::warning::Couldn't post the permission diff comment (the token needs pull-requests: write). It's in the job summary."
+        fi
 
     - name: Fail on permission errors
       shell: bash

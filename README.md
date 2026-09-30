@@ -101,14 +101,17 @@ Not yet: the external review and open-source release (M6). See the design doc fo
 
 Design doc §12 asks the checker to catch the whole adversarial suite, or to
 document each miss. These misses are documented as fixtures in
-[`fixtures/m4/limits/`](fixtures/m4/limits). Each one's test fails once the miss
-is fixed, so the list can't go stale.
+[`fixtures/m4/limits/`](fixtures/m4/limits) and [`fixtures/m6/limits/`](fixtures/m6/limits).
+Each one's test fails once the miss is fixed, so the list can't go stale.
 
 - Values typed `any`: nothing called on them can be resolved.
 - `Proxy` traps, which can return a capability function for any property.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that
   assigns them is still reported.
+- Implicit calls made inside a library function: `Promise.resolve(x)` calling
+  `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
+  Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
 
 Other gaps, not yet in fixtures:
 
@@ -116,6 +119,10 @@ Other gaps, not yet in fixtures:
   listed in every report and warned about (PERM006; see below).
 - Database clients other than Prisma (Drizzle, `pg`, ...).
 - A `ProcessEnv` received as a parameter typed as a plain object.
+- A decorator's arguments run when the class is defined, but are charged to the
+  decorated member.
+- Lock keys for same-named functions in one file (`#2`, `#3`) follow source
+  order, so adding one can renumber the others and show spurious lock changes.
 
 ## Capabilities
 
@@ -208,7 +215,7 @@ it. From then on:
   can't land without the lock changing, so it always shows up in review.
   Access that was removed is a warning: the lock is stale, but nothing new can
   happen.
-- **`permlang diff <base-ref>` shows what changed since `base-ref`**, one row per
+- **`permlang diff <base-ref> [paths...]` shows what changed since `base-ref`**, one row per
   new capability, with where it happens and which functions can now reach it:
 
   | New access | Where it happens | Now reachable from |

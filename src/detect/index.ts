@@ -13,6 +13,7 @@ import { fetchCapability, isUnresolvedFetch } from "./fetch.js";
 import { declarationCapabilities, isRequire, isTimer, requiresCapabilityModule } from "./functions.js";
 import { argumentsOf, callText, literalString, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 import { valueUses } from "./values.js";
+import { webCapabilities } from "./web.js";
 
 export type { CapabilityUse } from "./shared.js";
 
@@ -50,7 +51,13 @@ function callCapabilities(call: CallLike, adapters: AdapterIndex): Capability[] 
     // "members" become call-graph edges; "resolved" falls through to a normal call.
   }
 
+  // A value typed `Function` could be the Function constructor itself:
+  // `(() => {}).constructor("code")()` is eval without naming either.
+  if (!Node.isTaggedTemplateExpression(call) && isFunctionTyped(call.getExpression())) return unverifiable;
+
   const declaration = resolvedDeclaration(call);
+  const web = webCapabilities(call, declaration);
+  if (web.length > 0) return web;
   if (declaration) {
     if (isTimer(declaration) && evaluatesString(argumentsOf(call)[0])) return unverifiable;
     if (isRequire(declaration)) {
@@ -60,6 +67,14 @@ function callCapabilities(call: CallLike, adapters: AdapterIndex): Capability[] 
   }
   if (Node.isCallExpression(call) && isUnresolvedFetch(call)) return [fetchCapability(call.getArguments())];
   return [];
+}
+
+/** An expression of the global `Function` interface type, which has no call signatures to resolve. */
+function isFunctionTyped(expression: Node): boolean {
+  const type = unwrapExpression(expression).getType();
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return false;
+  const symbol = type.getSymbol();
+  return symbol?.getName() === "Function" && symbol.getDeclarations().some((d) => d.getSourceFile().isDeclarationFile());
 }
 
 /** setTimeout("code") evaluates its string, even when a cast hides it from the type checker. */
