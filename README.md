@@ -19,7 +19,7 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   -> add net(data-broker.io) to @perm, or remove the call.
 ```
 
-> **Status: pre-release (v0.1, milestone M4).** Not ready for production use.
+> **Status: pre-release (v0.1, milestone M5).** Not ready for production use.
 
 ## What works so far
 
@@ -92,8 +92,9 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   signature (`table[name]()`). The only way to accept it is `@perm-unsafe`,
   which also stops it from failing the function's callers.
 
-Not yet: strictness levels, and `permlang diff` (M5). See the design doc for the
-full plan.
+- **Strictness levels, lock file, permission diff, GitHub Action (M5).** See below.
+
+Not yet: the external review and open-source release (M6). See the design doc for the full plan.
 
 ### Known limits
 
@@ -159,16 +160,83 @@ empty list maps a function to nothing. Add your own adapters in
 { "adapters": ["./permlang/adapters/acme-sms.json"] }
 ```
 
+## Strictness levels
+
+Set `"strictness"` in `permlang.config.json`, or pass `--strictness`:
+
+| Level | What fails |
+| --- | --- |
+| `sketch` | Nothing. Every function's permissions are inferred and reported. Start here on an existing codebase. |
+| `development` (default) | Annotated functions that exceed their `@perm`, invalid annotations, unverifiable code, and exported functions or top-level code without `@perm`. |
+| `production` | All of the above, plus any function (private helpers too) that reaches something without being covered by function- or module-level `@perm`. |
+
+## The lock file and the permission diff
+
+`permlang lock` writes `permlang.lock.json`: what every function can reach. Commit
+it. From then on:
+
+- **`permlang check` fails when the code reaches something the lock doesn't
+  record** (PERM005), at every strictness level, sketch included. New access
+  can't land without the lock changing, so it always shows up in review.
+  Access that was removed is a warning: the lock is stale, but nothing new can
+  happen.
+- **`permlang diff <base-ref>` shows what changed since `base-ref`**, one row per
+  new capability, with where it happens and which functions can now reach it:
+
+  | New access | Where it happens | Now reachable from |
+  | --- | --- | --- |
+  | `+ net(api.data-broker.io)` | `scoreLead`<br>axios.post("https://api.data-broker.io/v2/enrich", ...) | `scoreLead`, `handleLead` |
+
+`--format markdown` produces the pull-request comment; `--format json` is for tools.
+
+The check compares against `./permlang.lock.json` whenever it exists. When
+checking other files from the same folder (like the fixtures here), pass
+`--no-lock`.
+
+## GitHub Action
+
+```yaml
+# .github/workflows/permlang.yml
+on: [pull_request]
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PermLang/permlang@main
+        with:
+          args: src            # or --project tsconfig.json
+```
+
+The Action runs `permlang check`, fails the build on errors, and posts the
+permission diff as a pull-request comment, updating it on later pushes. The
+repository is private for now, so the Action can only be used from repositories
+in the PermLang organization. This repository runs it on itself (see
+`.github/workflows/permlang.yml` and `permlang.lock.json`).
+
 ## Usage
 
 ```bash
 npm install
-npm test                                  # conformance + unit tests
-npm run permlang -- check fixtures/m1     # run the checker from source
-npm run permlang -- check src --json      # JSON report of declared vs. actual permissions
+npm test                                           # conformance + unit tests
+npm run permlang -- check fixtures/m1 --no-lock    # run the checker from source
+npm run permlang -- check src --json               # JSON report of declared vs. actual permissions
+npm run permlang -- lock src                       # write permlang.lock.json
+npm run permlang -- diff origin/main               # permission changes since main
 ```
 
 Exit codes: `0` no errors, `1` permission errors, `2` usage or configuration error.
+
+## Real-world trial
+
+[docs/trial-2026-09.md](docs/trial-2026-09.md): PermLang on Umami (1,338 files, 22 s)
+and Ghostfolio's API (498 files, 8 s). It found and fixed three false-positive
+classes, found no false positives in a spot check of its network, process, and
+file-write findings, and identified the main false negatives: Prisma without a
+generated client, and SDKs without adapters.
 
 ## Development
 
@@ -192,6 +260,8 @@ src/dispatch.ts     implementations reachable through interfaces and base classe
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/check.ts        comparing declared vs. actual per unit
+src/lock.ts         permlang.lock.json: build, read, compare
+src/diff.ts         the permission diff, as text or a pull-request comment
 src/report.ts       text and JSON output
 src/cli.ts          the permlang command
 ```

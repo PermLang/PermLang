@@ -34,7 +34,7 @@ jobs:
       - name: CLI smoke test
         shell: bash
         run: |
-          node dist/cli.js check fixtures/m1/pass
+          node dist/cli.js check fixtures/m1/pass --no-lock
           # The fail fixtures must make the CLI exit 1.
-          set +e; node dist/cli.js check fixtures/m1/fail > /dev/null; code=$?; set -e
+          set +e; node dist/cli.js check fixtures/m1/fail --no-lock > /dev/null; code=$?; set -e
           test "$code" -eq 1
