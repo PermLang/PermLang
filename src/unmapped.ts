@@ -1,0 +1,66 @@
+// Packages that first-party code calls into but no adapter covers. PermLang can't
+// see what they touch, so it trusts them (design doc decision D1). The real-world
+// trial found network SDKs among them (kafkajs, redis, AI SDKs), so they are listed
+// in every report instead of passing silently. Packages that touch nothing
+// PermLang tracks are declared pure in adapters/pure.json.
+
+import { Node, type SourceFile } from "ts-morph";
+import { packageOf, type AdapterIndex } from "./adapters.js";
+import { resolveAlias, resolvedDeclaration } from "./detect/shared.js";
+
+export interface UnmappedPackage {
+  package: string;
+  calls: number;
+  /** The first call, in file order. */
+  file: string;
+  line: number;
+}
+
+/** Packages with built-in detection instead of an adapter, or that stand for the language itself. */
+const HANDLED = new Set(["fs", "module", "@prisma/client", ".prisma", "node", "typescript"]);
+
+export interface UnmappedUse extends UnmappedPackage {
+  /** Where the first call is, so its diagnostic can name the function. */
+  node: Node;
+  files: number;
+}
+
+export function unmappedPackages(sourceFiles: readonly SourceFile[], adapters: AdapterIndex): UnmappedUse[] {
+  const found = new Map<string, UnmappedUse & { fileSet: Set<string> }>();
+  for (const sourceFile of sourceFiles) {
+    sourceFile.forEachDescendant((node) => {
+      if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
+      // `new Client()` of a class with no declared constructor resolves to no signature; the class names the package.
+      const declaration =
+        resolvedDeclaration(node) ??
+        (Node.isNewExpression(node) ? newTargetDeclaration(node.getExpression()) : undefined);
+      if (!declaration?.getSourceFile().isDeclarationFile() && !declaration?.getSourceFile().getFilePath().includes("/node_modules/")) return;
+      const pkg = packageOf(declaration);
+      if (pkg === undefined || HANDLED.has(pkg) || adapters.hasPackage(pkg)) return;
+
+      const existing = found.get(pkg);
+      if (existing) {
+        existing.calls++;
+        existing.fileSet.add(sourceFile.getFilePath());
+        return;
+      }
+      found.set(pkg, {
+        package: pkg,
+        calls: 1,
+        file: sourceFile.getFilePath(),
+        line: node.getStartLineNumber(),
+        node,
+        files: 1,
+        fileSet: new Set([sourceFile.getFilePath()]),
+      });
+    });
+  }
+  return [...found.values()]
+    .map(({ fileSet, ...u }) => ({ ...u, files: fileSet.size }))
+    .sort((a, b) => b.calls - a.calls || a.package.localeCompare(b.package));
+}
+
+function newTargetDeclaration(expression: Node): Node | undefined {
+  const symbol = expression.getSymbol();
+  return symbol ? resolveAlias(symbol).getDeclarations()[0] : undefined;
+}

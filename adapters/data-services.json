@@ -1,0 +1,18 @@
+{
+  "permlang": 1,
+  "package": [
+    "redis",
+    "@redis/client",
+    "ioredis",
+    "kafkajs",
+    "bull",
+    "bullmq",
+    "@keyv/redis"
+  ],
+  "default": [
+    "net"
+  ],
+  "functions": {
+    "createClient": []
+  }
+}
