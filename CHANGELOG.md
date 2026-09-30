@@ -35,6 +35,11 @@ diagnostic. Each now has a regression fixture in `fixtures/m6/`:
 
 ### Added
 
+- **Database clients beyond Prisma.** Drizzle (the table name comes from its
+  `pgTable` / `mysqlTable` / `sqliteTable` definition) and raw SQL clients: `pg`,
+  `mysql2`, `better-sqlite3`, `sqlite3`, `postgres`, Neon, and Vercel Postgres. Tables
+  are read out of literal SQL; SQL built from strings needs bare `db.read` and
+  `db.write`. Checked against the real packages' typings.
 - **License: Apache 2.0** (`LICENSE`, `NOTICE`).
 - **Package coverage.**
   - Every package called is now mapped by an adapter, declared pure
