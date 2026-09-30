@@ -7,6 +7,7 @@ published.
 
 ### Added
 
+- **License: Apache 2.0** (`LICENSE`, `NOTICE`).
 - **Package coverage.**
   - Every package called is now mapped by an adapter, declared pure
     (`adapters/pure.json`), or reported with a warning (PERM006).
