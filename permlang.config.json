@@ -1,0 +1,5 @@
+{
+  "strictness": "development",
+  "unmapped": "error",
+  "adapters": ["./permlang/adapters/ts-morph.json"]
+}

@@ -1,0 +1,9 @@
+{
+  "permlang": 1,
+  "package": "@nestjs/config",
+  "default": [],
+  "functions": {
+    "ConfigService.get": ["env"],
+    "ConfigService.getOrThrow": ["env"]
+  }
+}

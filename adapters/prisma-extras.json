@@ -1,0 +1,5 @@
+{
+  "permlang": 1,
+  "package": ["@prisma/adapter-pg", "@prisma/extension-read-replicas", "@prisma/client-runtime-utils", "@prisma/config"],
+  "default": []
+}

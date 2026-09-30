@@ -48,13 +48,20 @@ export function literalString(arg: Node | undefined): string | undefined {
   return type.isStringLiteral() ? String(type.getLiteralValue()) : undefined;
 }
 
+// Several passes resolve the same calls; signature resolution is the expensive part.
+const resolved = new WeakMap<Node, Node | undefined>();
+
 /** The declaration of the signature a call resolves to: the overload, method, or call signature actually used. */
 export function resolvedDeclaration(call: CallLike): Node | undefined {
+  if (resolved.has(call)) return resolved.get(call);
+  let declaration: Node | undefined;
   try {
-    return call.getProject().getTypeChecker().getResolvedSignature(call)?.getDeclaration();
+    declaration = call.getProject().getTypeChecker().getResolvedSignature(call)?.getDeclaration();
   } catch {
-    return undefined;
+    declaration = undefined;
   }
+  resolved.set(call, declaration);
+  return declaration;
 }
 
 /**

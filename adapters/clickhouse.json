@@ -1,0 +1,11 @@
+{
+  "permlang": 1,
+  "package": "@clickhouse/client",
+  "default": [
+    "db.read",
+    "db.write"
+  ],
+  "functions": {
+    "createClient": []
+  }
+}
