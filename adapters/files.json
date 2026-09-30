@@ -1,0 +1,11 @@
+{
+  "permlang": 1,
+  "package": ["maxmind", "tar"],
+  "default": ["fs.read"],
+  "functions": {
+    "x": ["fs.read", "fs.write"],
+    "extract": ["fs.read", "fs.write"],
+    "c": ["fs.read", "fs.write"],
+    "create": ["fs.read", "fs.write"]
+  }
+}

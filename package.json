@@ -2,12 +2,32 @@
   "name": "permlang",
   "version": "0.1.0-dev",
   "description": "The permission diff for AI-written TypeScript. Declare what each function can touch; the build fails when code exceeds it.",
+  "keywords": [
+    "permissions",
+    "capabilities",
+    "static-analysis",
+    "typescript",
+    "security",
+    "code-review",
+    "ai-generated-code",
+    "lint"
+  ],
+  "homepage": "https://github.com/PermLang/permlang#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PermLang/permlang.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PermLang/permlang/issues"
+  },
   "license": "UNLICENSED",
   "private": true,
   "type": "module",
   "bin": {
     "permlang": "dist/cli.js"
   },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "files": [
     "dist",
     "adapters"
@@ -20,7 +40,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "permlang": "tsx src/cli.ts"
+    "permlang": "tsx src/cli.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "ts-morph": "^27.0.0"
@@ -30,5 +51,12 @@
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   }
 }

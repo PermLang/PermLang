@@ -1,0 +1,9 @@
+{
+  "permlang": 1,
+  "package": "process",
+  "default": [],
+  "functions": {
+    "kill": ["exec"],
+    "dlopen": ["unverifiable"]
+  }
+}

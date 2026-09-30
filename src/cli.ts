@@ -7,15 +7,25 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AdapterError } from "./adapters.js";
-import { STRICTNESS_LEVELS, checkFiles, checkTsConfig, type CheckOptions, type Report, type Strictness } from "./check.js";
+import {
+  STRICTNESS_LEVELS,
+  UNMAPPED_POLICIES,
+  checkFiles,
+  checkTsConfig,
+  type CheckOptions,
+  type Report,
+  type Strictness,
+  type UnmappedPolicy,
+} from "./check.js";
 import { formatDiffMarkdown, formatDiffText, type ViaPaths } from "./diff.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { formatText, toJson } from "./report.js";
 
 const USAGE = `Usage:
+  permlang init  [paths...] [options]    set up: a sketch-level config and a first lock file
   permlang check [paths...] [options]    check permissions (and the lock file, if there is one)
   permlang lock  [paths...] [options]    write permlang.lock.json from the current code
   permlang diff  [base-ref] [options]    permission changes since base-ref (default HEAD)
@@ -28,14 +38,16 @@ Options:
   --config <file>                 config file (default: ./permlang.config.json if present)
   --adapter <file.json>           add an adapter manifest (repeatable)
   --strictness <level>            sketch | development | production (default: development)
+  --unmapped <policy>             packages with no adapter: warn | error | trust (default: warn)
   --lock <file>                   lock file (default: ./permlang.lock.json)
   --no-lock                       check: don't compare against the lock file
   --json                          check: print the JSON report
   --head <ref>                    diff: compare against this commit instead of the working tree
   --format <text|markdown|json>   diff: output format (default: text)
+  --workflow                      init: also add .github/workflows/permlang.yml
 
 permlang.config.json:
-  { "strictness": "sketch", "adapters": ["./permlang/adapters/acme-sms.json"] }
+  { "strictness": "sketch", "unmapped": "warn", "adapters": ["./permlang/adapters/acme-sms.json"] }
 
 Exit codes: 0 no errors, 1 permission errors, 2 usage or configuration error.`;
 
@@ -51,8 +63,10 @@ interface Args {
   project?: string;
   config?: string;
   strictness?: string;
+  unmapped?: string;
   lock?: string;
   noLock: boolean;
+  workflow: boolean;
   json: boolean;
   head?: string;
   format: string;
@@ -66,6 +80,7 @@ function main(argv: string[]): number {
   }
   try {
     const args = parseArgs(rest);
+    if (command === "init") return init(args);
     if (command === "check") return check(args);
     if (command === "lock") return lock(args);
     if (command === "diff") return diff(args);
@@ -80,7 +95,7 @@ function main(argv: string[]): number {
 }
 
 function parseArgs(rest: string[]): Args {
-  const args: Args = { paths: [], adapters: [], noLock: false, json: false, format: "text" };
+  const args: Args = { paths: [], adapters: [], noLock: false, workflow: false, json: false, format: "text" };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
     const value = () => {
@@ -90,10 +105,12 @@ function parseArgs(rest: string[]): Args {
     };
     if (arg === "--json") args.json = true;
     else if (arg === "--no-lock") args.noLock = true;
+    else if (arg === "--workflow") args.workflow = true;
     else if (arg === "--project" || arg === "-p") args.project = value();
     else if (arg === "--config") args.config = value();
     else if (arg === "--adapter") args.adapters.push(value());
     else if (arg === "--strictness") args.strictness = value();
+    else if (arg === "--unmapped") args.unmapped = value();
     else if (arg === "--lock") args.lock = value();
     else if (arg === "--head") args.head = value();
     else if (arg === "--format") args.format = value();
@@ -104,6 +121,79 @@ function parseArgs(rest: string[]): Args {
 }
 
 // --- commands ----------------------------------------------------------------
+
+/** Day-one setup: a sketch-level config (unless one exists), a first lock file, optionally the workflow. */
+function init(args: Args): number {
+  const done: string[] = [];
+  const configFile = args.config ?? DEFAULT_CONFIG;
+  if (existsSync(configFile)) {
+    done.push(`Kept ${configFile}.`);
+  } else {
+    const strictness = args.strictness ?? "sketch";
+    if (!STRICTNESS_LEVELS.includes(strictness as Strictness)) {
+      throw new UsageError(`Strictness must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
+    }
+    writeFileSync(configFile, `${JSON.stringify({ strictness }, null, 2)}\n`);
+    const meaning = strictness === "sketch" ? ": permissions are inferred and reported, and nothing fails yet" : "";
+    done.push(`Wrote ${configFile} (strictness ${strictness}${meaning}).`);
+  }
+
+  const lockFile = path.resolve(args.lock ?? DEFAULT_LOCK);
+  const report = analyze(args, undefined);
+  const lock = buildLock(report, path.dirname(lockFile));
+  writeFileSync(lockFile, serializeLock(lock));
+  const lockName = path.relative(process.cwd(), lockFile).replaceAll("\\", "/");
+  const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const reaching = Object.keys(lock.functions).length;
+  done.push(`Wrote ${lockName}: ${count(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${count(report.files, "file")}.`);
+
+  const workflow = ".github/workflows/permlang.yml";
+  if (args.workflow) {
+    if (existsSync(workflow)) {
+      done.push(`Kept ${workflow}.`);
+    } else {
+      mkdirSync(path.dirname(workflow), { recursive: true });
+      writeFileSync(workflow, workflowFile(args));
+      done.push(`Wrote ${workflow}: checks every pull request and comments the permission diff.`);
+    }
+  }
+
+  const commit = [configFile, lockName, ...(args.workflow ? [workflow] : [])].join(", ");
+  const steps = [
+    `Commit ${commit}.`,
+    "From now on, `permlang check` fails when code reaches something the lock doesn't record. Run `permlang lock` to accept a change, and review the lock's diff.",
+    ...(report.unmapped.length > 0 ? [`Review the ${report.unmapped.length} packages with no adapter; \`permlang check\` lists them.`] : []),
+    'Add @perm annotations where you want rules enforced, then raise "strictness" to development.',
+  ];
+  console.log([...done, "", "Next steps:", ...steps.map((s) => `  - ${s}`)].join("\n"));
+  return 0;
+}
+
+/** A workflow that runs the PermLang Action on the same files init checked. */
+function workflowFile(args: Args): string {
+  const selection = args.project ? `--project ${args.project}` : args.paths.join(" ");
+  const withArgs = selection ? `\n        with:\n          args: ${selection}` : "";
+  return [
+    "name: PermLang",
+    "",
+    "on:",
+    "  pull_request:",
+    "  push:",
+    "    branches: [main]",
+    "",
+    "permissions:",
+    "  contents: read",
+    "  pull-requests: write",
+    "",
+    "jobs:",
+    "  permissions:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    `      - uses: PermLang/permlang@main${withArgs}`,
+    "",
+  ].join("\n");
+}
 
 function check(args: Args): number {
   const lockFile = args.lock ?? DEFAULT_LOCK;
@@ -159,9 +249,14 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
   if (strictness !== undefined && !STRICTNESS_LEVELS.includes(strictness as Strictness)) {
     throw new UsageError(`Strictness must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
   }
+  const unmapped = args.unmapped ?? config.unmapped;
+  if (unmapped !== undefined && !UNMAPPED_POLICIES.includes(unmapped as UnmappedPolicy)) {
+    throw new UsageError(`"unmapped" must be one of: ${UNMAPPED_POLICIES.join(", ")}.`);
+  }
   const options: CheckOptions = {
     adapters: [...args.adapters, ...config.adapters],
     ...(strictness ? { strictness: strictness as Strictness } : {}),
+    ...(unmapped ? { unmapped: unmapped as UnmappedPolicy } : {}),
     ...(lock ? { lock } : {}),
   };
 
@@ -193,6 +288,7 @@ function viaPaths(report: Report, root: string): ViaPaths {
 
 interface Config {
   strictness?: string;
+  unmapped?: string;
   adapters: string[];
 }
 
@@ -206,7 +302,7 @@ function readConfig(explicit: string | undefined): Config {
   } catch (e) {
     throw new UsageError(`Can't read ${file}: ${(e as Error).message}`);
   }
-  const config = raw as { adapters?: unknown; strictness?: unknown };
+  const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown };
   const list = config.adapters ?? [];
   if (!Array.isArray(list) || !list.every((a) => typeof a === "string")) {
     throw new UsageError(`${file}: "adapters" must be a list of manifest paths.`);
@@ -217,6 +313,7 @@ function readConfig(explicit: string | undefined): Config {
   return {
     adapters: list.map((a) => path.resolve(path.dirname(file), a)),
     ...(config.strictness ? { strictness: config.strictness } : {}),
+    ...(typeof config.unmapped === "string" ? { unmapped: config.unmapped } : {}),
   };
 }
 
