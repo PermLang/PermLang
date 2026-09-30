@@ -10,7 +10,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AdapterError } from "./adapters.js";
-import { STRICTNESS_LEVELS, checkFiles, checkTsConfig, type CheckOptions, type Report, type Strictness } from "./check.js";
+import {
+  STRICTNESS_LEVELS,
+  UNMAPPED_POLICIES,
+  checkFiles,
+  checkTsConfig,
+  type CheckOptions,
+  type Report,
+  type Strictness,
+  type UnmappedPolicy,
+} from "./check.js";
 import { formatDiffMarkdown, formatDiffText, type ViaPaths } from "./diff.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { formatText, toJson } from "./report.js";
@@ -28,6 +37,7 @@ Options:
   --config <file>                 config file (default: ./permlang.config.json if present)
   --adapter <file.json>           add an adapter manifest (repeatable)
   --strictness <level>            sketch | development | production (default: development)
+  --unmapped <policy>             packages with no adapter: warn | error | trust (default: warn)
   --lock <file>                   lock file (default: ./permlang.lock.json)
   --no-lock                       check: don't compare against the lock file
   --json                          check: print the JSON report
@@ -35,7 +45,7 @@ Options:
   --format <text|markdown|json>   diff: output format (default: text)
 
 permlang.config.json:
-  { "strictness": "sketch", "adapters": ["./permlang/adapters/acme-sms.json"] }
+  { "strictness": "sketch", "unmapped": "warn", "adapters": ["./permlang/adapters/acme-sms.json"] }
 
 Exit codes: 0 no errors, 1 permission errors, 2 usage or configuration error.`;
 
@@ -51,6 +61,7 @@ interface Args {
   project?: string;
   config?: string;
   strictness?: string;
+  unmapped?: string;
   lock?: string;
   noLock: boolean;
   json: boolean;
@@ -94,6 +105,7 @@ function parseArgs(rest: string[]): Args {
     else if (arg === "--config") args.config = value();
     else if (arg === "--adapter") args.adapters.push(value());
     else if (arg === "--strictness") args.strictness = value();
+    else if (arg === "--unmapped") args.unmapped = value();
     else if (arg === "--lock") args.lock = value();
     else if (arg === "--head") args.head = value();
     else if (arg === "--format") args.format = value();
@@ -159,9 +171,14 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
   if (strictness !== undefined && !STRICTNESS_LEVELS.includes(strictness as Strictness)) {
     throw new UsageError(`Strictness must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
   }
+  const unmapped = args.unmapped ?? config.unmapped;
+  if (unmapped !== undefined && !UNMAPPED_POLICIES.includes(unmapped as UnmappedPolicy)) {
+    throw new UsageError(`"unmapped" must be one of: ${UNMAPPED_POLICIES.join(", ")}.`);
+  }
   const options: CheckOptions = {
     adapters: [...args.adapters, ...config.adapters],
     ...(strictness ? { strictness: strictness as Strictness } : {}),
+    ...(unmapped ? { unmapped: unmapped as UnmappedPolicy } : {}),
     ...(lock ? { lock } : {}),
   };
 
@@ -193,6 +210,7 @@ function viaPaths(report: Report, root: string): ViaPaths {
 
 interface Config {
   strictness?: string;
+  unmapped?: string;
   adapters: string[];
 }
 
@@ -206,7 +224,7 @@ function readConfig(explicit: string | undefined): Config {
   } catch (e) {
     throw new UsageError(`Can't read ${file}: ${(e as Error).message}`);
   }
-  const config = raw as { adapters?: unknown; strictness?: unknown };
+  const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown };
   const list = config.adapters ?? [];
   if (!Array.isArray(list) || !list.every((a) => typeof a === "string")) {
     throw new UsageError(`${file}: "adapters" must be a list of manifest paths.`);
@@ -217,6 +235,7 @@ function readConfig(explicit: string | undefined): Config {
   return {
     adapters: list.map((a) => path.resolve(path.dirname(file), a)),
     ...(config.strictness ? { strictness: config.strictness } : {}),
+    ...(typeof config.unmapped === "string" ? { unmapped: config.unmapped } : {}),
   };
 }
 

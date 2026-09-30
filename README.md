@@ -111,7 +111,8 @@ is fixed, so the list can't go stale.
 
 Other gaps, not yet in fixtures:
 
-- Third-party packages without an adapter: calls into them report nothing.
+- Third-party packages without an adapter: what they touch is trusted. They are
+  listed in every report and warned about (PERM006; see below).
 - Database clients other than Prisma (Drizzle, `pg`, ...).
 - A `ProcessEnv` received as a parameter typed as a plain object.
 
@@ -159,6 +160,32 @@ empty list maps a function to nothing. Add your own adapters in
 ```json
 { "adapters": ["./permlang/adapters/acme-sms.json"] }
 ```
+
+### Packages without an adapter
+
+PermLang can't see what a package does unless an adapter describes it, so a
+package with no adapter is trusted. It's never trusted silently: every report
+lists these packages with their call counts, and each one gets a warning
+(PERM006) at its first call. Set `"unmapped"` in `permlang.config.json`, or pass
+`--unmapped`, to change that:
+
+| Policy | Effect |
+| --- | --- |
+| `warn` (default) | One warning per package. |
+| `error` | One error per package: every package must be mapped or declared pure. |
+| `trust` | No diagnostic. The report still lists them. |
+
+A package that touches nothing PermLang tracks is declared pure with an adapter
+whose `default` is `[]`. [`adapters/pure.json`](adapters/pure.json) does this for
+Node's pure built-ins and common libraries (zod, date-fns, React, ...).
+
+Built-in adapters cover axios, Stripe, nodemailer, `node-fetch`, `undici`, Redis
+(`redis`, `ioredis`), Kafka, Bull/BullMQ, ClickHouse, AI SDKs (`ai`, `openai`,
+`@anthropic-ai/sdk`, ...), MCP clients, several web APIs, `@nestjs/config`,
+`maxmind`, `tar`, and the Node modules that carry capabilities. Where an
+adapter can't know a service's hosts, it uses bare `net`. PermLang runs itself
+with `"unmapped": "error"` and a team adapter for ts-morph (see
+[`permlang.config.json`](permlang.config.json)).
 
 ## Strictness levels
 

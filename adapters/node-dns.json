@@ -1,0 +1,5 @@
+{
+  "permlang": 1,
+  "package": "dns",
+  "default": ["net"]
+}

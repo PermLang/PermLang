@@ -1,0 +1,11 @@
+{
+  "permlang": 1,
+  "package": ["ts-morph", "@ts-morph/common"],
+  "default": [],
+  "functions": {
+    "Project.constructor": ["fs.read"],
+    "Project.addSourceFilesAtPaths": ["fs.read"],
+    "Project.addSourceFileAtPath": ["fs.read"],
+    "Project.addSourceFilesFromTsConfig": ["fs.read"]
+  }
+}

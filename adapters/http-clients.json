@@ -1,0 +1,11 @@
+{
+  "permlang": 1,
+  "package": ["node-fetch", "undici"],
+  "default": ["net"],
+  "functions": {
+    "fetch": ["net({host:0})"],
+    "request": ["net({host:0})"],
+    "setGlobalDispatcher": [],
+    "getGlobalDispatcher": []
+  }
+}

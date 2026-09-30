@@ -1,0 +1,5 @@
+{
+  "permlang": 1,
+  "package": ["yahoo-finance2", "alphavantage", "twitter-api-v2", "google-spreadsheet", "@umami/api-client"],
+  "default": ["net"]
+}

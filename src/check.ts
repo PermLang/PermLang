@@ -11,6 +11,7 @@ import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
 import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
+import { unmappedPackages, type UnmappedPackage } from "./unmapped.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
   createUnit,
@@ -32,9 +33,10 @@ export interface Diagnostic {
   /**
    * PERM001 undeclared capability, PERM002 invalid annotation, PERM003 missing
    * annotation, PERM004 unverifiable code (eval, computed calls on sensitive objects, ...),
-   * PERM005 permissions that differ from permlang.lock.json.
+   * PERM005 permissions that differ from permlang.lock.json, PERM006 calls into a
+   * package with no adapter (what it touches isn't checked).
    */
-  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005";
+  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006";
   file: string;
   line: number;
   column: number;
@@ -73,6 +75,8 @@ export interface Report {
   functions: FunctionReport[];
   diagnostics: Diagnostic[];
   unsafe: UnsafeReport[];
+  /** Packages called with no adapter, most calls first. PermLang trusts them (D1). */
+  unmapped: UnmappedPackage[];
 }
 
 /**
@@ -92,7 +96,13 @@ export interface CheckOptions {
   strictness?: Strictness;
   /** The committed lock file to compare against; keys are relative to its directory. */
   lock?: { file: string; contents: LockFile };
+  /** How to report calls into packages with no adapter: warn (default), error, or trust (report only). */
+  unmapped?: UnmappedPolicy;
 }
+
+export type UnmappedPolicy = "warn" | "error" | "trust";
+
+export const UNMAPPED_POLICIES: readonly UnmappedPolicy[] = ["warn", "error", "trust"];
 
 const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   target: ts.ScriptTarget.ES2022,
@@ -172,9 +182,31 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   );
   unsafe.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
+  // Packages with no adapter: listed always; a diagnostic unless trusted.
+  const unmappedUses = unmappedPackages(sourceFiles, adapters);
+  const policy = options.unmapped ?? "warn";
+  if (policy !== "trust") {
+    for (const u of unmappedUses) {
+      const unit = units.get(enclosingUnitNode(u.node))!;
+      diagnostics.push({
+        severity: policy === "error" ? "error" : "warning",
+        code: "PERM006",
+        file: u.file,
+        line: u.line,
+        column: u.node.getSourceFile().getLineAndColumnAtPos(u.node.getStart()).column,
+        function: unit.name,
+        capability: u.package,
+        call: "",
+        message: `${unit.name} calls into ${u.package} (${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}), which has no adapter, so what it touches isn't checked.`,
+        fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see README).`,
+      });
+    }
+  }
+  const unmapped = unmappedUses.map(({ package: pkg, calls, file, line }) => ({ package: pkg, calls, file, line }));
+
   // Sketch reports everything but fails nothing.
   const checked = strictness === "sketch" ? diagnostics.map((d) => ({ ...d, severity: "warning" as const })) : diagnostics;
-  const report: Report = { files: sourceFiles.length, functions, diagnostics: checked, unsafe };
+  const report: Report = { files: sourceFiles.length, functions, diagnostics: checked, unsafe, unmapped };
   if (options.lock) {
     const root = path.dirname(options.lock.file);
     report.diagnostics.push(...lockDrift(options.lock.contents, buildLock(report, root), report, options.lock.file));
