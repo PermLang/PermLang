@@ -56,7 +56,7 @@ function callCapabilities(call: CallLike, adapters: AdapterIndex): Capability[] 
     if (isRequire(declaration)) {
       return requiresCapabilityModule(literalString(argumentsOf(call)[0]), adapters) ? unverifiable : [];
     }
-    return declarationCapabilities(declaration, argumentsOf(call), adapters);
+    return declarationCapabilities(declaration, argumentsOf(call), adapters, call);
   }
   if (Node.isCallExpression(call) && isUnresolvedFetch(call)) return [fetchCapability(call.getArguments())];
   return [];
