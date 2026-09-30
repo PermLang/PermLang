@@ -7,6 +7,7 @@
 import { Node, type SourceFile } from "ts-morph";
 import { packageOf, type AdapterIndex } from "./adapters.js";
 import { resolveAlias, resolvedDeclaration } from "./detect/shared.js";
+import { SQL_PACKAGES } from "./detect/sql.js";
 
 export interface UnmappedPackage {
   package: string;
@@ -17,7 +18,7 @@ export interface UnmappedPackage {
 }
 
 /** Packages with built-in detection instead of an adapter, or that stand for the language itself. */
-const HANDLED = new Set(["fs", "module", "@prisma/client", ".prisma", "node", "typescript"]);
+const HANDLED = new Set(["fs", "module", "@prisma/client", ".prisma", "drizzle-orm", ...SQL_PACKAGES, "node", "typescript"]);
 
 export interface UnmappedUse extends UnmappedPackage {
   /** Where the first call is, so its diagnostic can name the function. */
