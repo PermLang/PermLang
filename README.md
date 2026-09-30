@@ -308,3 +308,8 @@ PermLang is a TypeScript implementation of proven ideas. It builds on:
 - **Bock**, whose strictness levels PermLang's `sketch` / `development` / `production` modes follow.
 - Effect systems in **Koka**, **Unison**, **Flix**, **E**, **Pony**, and **Austral**, and the lessons of
   .NET Code Access Security and the Java SecurityManager, which PermLang must stay simpler than.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The license covers
+the code; it grants no rights to the PermLang name or marks (Section 6).

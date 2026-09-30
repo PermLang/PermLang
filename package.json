@@ -20,7 +20,7 @@
   "bugs": {
     "url": "https://github.com/PermLang/permlang/issues"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "bin": {
@@ -30,7 +30,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "adapters"
+    "adapters",
+    "NOTICE"
   ],
   "engines": {
     "node": ">=20"
