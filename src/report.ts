@@ -9,6 +9,9 @@ export function formatText(report: Report, cwd = process.cwd()): string {
   const warnings = report.diagnostics.length - errors;
   const files = plural(report.files, "file");
 
+  if (report.unresolved.length > 0) {
+    lines.push(`${plural(report.unresolved.length, "import")} with no types, unchecked: ${report.unresolved.join(", ")}.`);
+  }
   if (report.unmapped.length > 0) {
     const shown = report.unmapped.slice(0, 10).map((u) => `${u.package} (${u.calls})`).join(", ");
     const more = report.unmapped.length > 10 ? `, and ${report.unmapped.length - 10} more (see --json)` : "";
@@ -43,6 +46,7 @@ export function toJson(report: Report, cwd = process.cwd()): string {
       diagnostics: report.diagnostics.map((d) => ({ ...d, file: relative(d.file, cwd) })),
       unsafe: report.unsafe.map((u) => ({ ...u, file: relative(u.file, cwd) })),
       unmapped: report.unmapped.map((u) => ({ ...u, file: relative(u.file, cwd) })),
+      unresolved: report.unresolved,
     },
     null,
     2,

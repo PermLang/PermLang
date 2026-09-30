@@ -20,6 +20,7 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
 ```
 
 > **Status: pre-release (v0.1, milestone M5).** Not ready for production use.
+> New here? Start with [docs/getting-started.md](docs/getting-started.md).
 
 ## What works so far
 

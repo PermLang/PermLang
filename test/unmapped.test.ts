@@ -47,3 +47,23 @@ describe("packages without adapters", () => {
     expect(run().unmapped.map((u) => u.package)).not.toContain("zod");
   });
 });
+
+describe("imports whose types can't be found", () => {
+  const unresolvedFile = path.join(dir, "unresolved.ts");
+  const report = (options: CheckOptions = {}) => checkFiles([unresolvedFile], options);
+
+  it("reports each one, since nothing called from it can be checked", () => {
+    const d = report().diagnostics.filter((x) => x.code === "PERM007");
+    expect(d.map((x) => `${x.severity} ${x.capability} ${x.line}`)).toEqual([
+      "warning node:child_process-missing-types 3",
+      "warning no-such-package 4",
+    ]);
+    expect(d[0]!.message).toMatch(/types can't be found/);
+    expect(report().unresolved).toEqual(["no-such-package", "node:child_process-missing-types"]);
+  });
+
+  it("follows the unmapped policy", () => {
+    expect(report({ unmapped: "error" }).diagnostics.filter((x) => x.code === "PERM007").every((x) => x.severity === "error")).toBe(true);
+    expect(report({ unmapped: "trust" }).diagnostics.filter((x) => x.code === "PERM007")).toEqual([]);
+  });
+});
