@@ -5,6 +5,34 @@ published.
 
 ## Unreleased (v0.1.0)
 
+### Fixed (pre-release review)
+
+An independent review before release found ways to reach capabilities with no
+diagnostic. Each now has a regression fixture in `fixtures/m6/`:
+
+- The `Function` constructor reached without naming it (`.constructor(...)`,
+  `Function.apply`, `Reflect.construct(Function)`, values typed `Function`): PERM004.
+- `.call`/`.apply`/`.bind` on a capability function (`fetch.call(...)`).
+- URL templates whose port or userinfo came from a substitution could redirect
+  to another host.
+- `WebSocket`, `EventSource`, `navigator.sendBeacon`, `XMLHttpRequest`,
+  `net.Socket#connect`, `http.ClientRequest`, `dgram`, `cluster`, `inspector`.
+- Node's `http.request(url, { hostname })` options overriding the URL's host
+  (new adapter placeholder `{host:N+}`).
+- `process["env"]`.
+- Setters, destructured getters, `obj["key"]` getters.
+- Implicit calls: `await` (`then`), templates and string `+` (`toString`,
+  `valueOf`, `Symbol.toPrimitive`), `for...of`, spreads, array destructuring.
+- Exported code treated as private: `export default { ... }`, exported class
+  expressions, namespaces, objects returned by exported functions.
+- Casts trusted as values: string values are now traced (literals, consts, enum
+  members, `as const` objects), never taken from a type.
+- `permlang diff` now takes source paths (`diff <base> [paths...]`); the Action
+  passes its `args`, doesn't glob-expand them, and doesn't fail on forks or when
+  a comment can't be posted.
+- `diff --lock` with an absolute path; a config file that isn't an object now
+  exits 2.
+
 ### Added
 
 - **License: Apache 2.0** (`LICENSE`, `NOTICE`).

@@ -53,7 +53,7 @@ export function createUnit(
     file: sourceFile.getFilePath(),
     name: unitName(node),
     line: Node.isSourceFile(node) ? 1 : node.getStartLineNumber(),
-    exported: Node.isSourceFile(node) || exports.has(exportOwner(node)),
+    exported: isExported(node, exports),
     own: Node.isSourceFile(node) || isClass(node) ? undefined : readPermAnnotation(functionComments(jsDocsOf(node)), sourceFile, vocabulary),
     module,
     uses: [],
@@ -128,6 +128,11 @@ export function unitNodeForSymbol(symbol: MorphSymbol): Node | undefined {
   return undefined;
 }
 
+/** Every unit a symbol refers to: a property with both a getter and a setter has two. */
+export function unitNodesForSymbol(symbol: MorphSymbol): Node[] {
+  return [...new Set(symbol.getDeclarations().map(unitNodeForDeclaration).filter((n): n is Node => n !== undefined))];
+}
+
 export function unitNodeForDeclaration(d: Node): Node | undefined {
   const sf = d.getSourceFile();
   if (sf.isDeclarationFile() || isInNodeModules(sf)) return undefined;
@@ -147,7 +152,7 @@ export function isInNodeModules(sf: SourceFile): boolean {
 
 function unitName(node: Node): string {
   if (Node.isSourceFile(node)) return "<module>";
-  if (isClass(node)) return `${node.getName() ?? "default"}.constructor`;
+  if (isClass(node)) return `${className(node)}.constructor`;
   if (Node.isConstructorDeclaration(node)) return `${ownerName(node)}.constructor`;
   if (Node.isFunctionDeclaration(node)) return node.getName() ?? "default";
   if (Node.isVariableDeclaration(node)) return node.getName();
@@ -163,21 +168,28 @@ function unitName(node: Node): string {
   return "<anonymous>";
 }
 
-/** The class or object-holding variable a member belongs to. */
+/**
+ * What a member belongs to: its class, or the declaration holding its object
+ * literal or class expression (`const api = {...}`, `export const C = class {...}`,
+ * `export default {...}`).
+ */
 function owner(member: Node): Node | undefined {
   const parent = member.getParent();
-  if (parent && (Node.isClassDeclaration(parent) || Node.isClassExpression(parent))) return parent;
-  if (parent && Node.isObjectLiteralExpression(parent)) {
+  if (!parent) return undefined;
+  if (Node.isClassDeclaration(parent)) return parent;
+  if (Node.isClassExpression(parent) || Node.isObjectLiteralExpression(parent)) {
     const holder = parent.getParent();
-    if (holder && Node.isVariableDeclaration(holder)) return holder;
+    if (holder && (Node.isVariableDeclaration(holder) || Node.isExportAssignment(holder))) return holder;
+    return Node.isClassExpression(parent) ? parent : undefined;
   }
   return undefined;
 }
 
 function ownerName(member: Node): string {
   const o = owner(member);
-  if (o && (Node.isClassDeclaration(o) || Node.isClassExpression(o))) return o.getName() ?? "default";
+  if (o && (Node.isClassDeclaration(o) || Node.isClassExpression(o))) return className(o);
   if (o && Node.isVariableDeclaration(o)) return o.getName();
+  if (o && Node.isExportAssignment(o)) return "default";
   return "<anonymous>";
 }
 
@@ -185,6 +197,36 @@ function ownerName(member: Node): string {
 function exportOwner(node: Node): Node {
   if (Node.isFunctionDeclaration(node) || Node.isVariableDeclaration(node)) return node;
   return owner(node) ?? node;
+}
+
+/**
+ * Whether a unit can be reached from outside its file. Beyond what the file
+ * exports directly: members of exported namespaces, and members of an object
+ * literal a function creates and hands back (`return { get: () => fetch(...) }`),
+ * which escape with that function.
+ */
+function isExported(node: Node, exports: ReadonlySet<Node>): boolean {
+  if (Node.isSourceFile(node)) return true;
+  const decisive = exportOwner(node);
+  if (exports.has(decisive) || exportedThroughNamespace(decisive)) return true;
+  const parent = node.getParent();
+  if (parent && Node.isObjectLiteralExpression(parent) && owner(node) === undefined) {
+    const creator = enclosingUnitNode(parent);
+    return !Node.isSourceFile(creator) && isExported(creator, exports);
+  }
+  return false;
+}
+
+/** `export namespace Api { export function ping() {} }`, at any depth. */
+function exportedThroughNamespace(node: Node): boolean {
+  const statement = Node.isVariableDeclaration(node) ? node.getVariableStatement() : node;
+  if (!statement || !Node.isExportable(statement) || !statement.hasExportKeyword()) return false;
+  const block = statement.getParent();
+  const namespace = block?.getParent();
+  if (!block || !Node.isModuleBlock(block) || !namespace || !Node.isModuleDeclaration(namespace)) return false;
+  const outer = namespace.getParent();
+  if (outer && Node.isSourceFile(outer)) return namespace.hasExportKeyword();
+  return exportedThroughNamespace(namespace);
 }
 
 function jsDocsOf(node: Node): JSDoc[] {
@@ -205,4 +247,10 @@ export function exportedDeclarations(sourceFile: SourceFile): Set<Node> {
     for (const d of resolved.getDeclarations()) out.add(d);
   }
   return out;
+}
+
+/** A class's name, or for `const C = class {...}`, the variable's. */
+function className(cls: ClassDeclaration | ClassExpression): string {
+  const holder = cls.getParent();
+  return cls.getName() ?? (holder && Node.isVariableDeclaration(holder) ? holder.getName() : "default");
 }

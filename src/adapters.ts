@@ -30,7 +30,7 @@ import { containerName, hostOf, literalString } from "./detect/shared.js";
 interface Template {
   name: string;
   /** A literal scope, or a placeholder filled from the call's arguments. */
-  arg?: string | { kind: "host" | "arg"; index: number };
+  arg?: string | { kind: "host" | "arg"; index: number; overridable?: boolean };
 }
 
 export interface Adapter {
@@ -55,7 +55,7 @@ export class AdapterError extends Error {
 }
 
 const FIELDS = new Set(["$schema", "permlang", "package", "defines", "default", "functions"]);
-const PLACEHOLDER = /^\{(host|arg):(\d+)\}$/;
+const PLACEHOLDER = /^\{(host|arg):(\d+)(\+)?\}$/;
 const TEMPLATE = /^([^()]+)(?:\((.*)\))?$/;
 
 /** @perm fs.read */
@@ -159,12 +159,16 @@ function parseTemplate(text: string, vocabulary: ReadonlySet<string>): Template 
   const [, name, arg] = match as unknown as [string, string, string | undefined];
   const placeholder = arg === undefined ? undefined : PLACEHOLDER.exec(arg.trim());
   if (arg !== undefined && arg.includes("{") && !placeholder) {
-    return { error: "has an invalid placeholder; use {host:N} or {arg:N}" };
+    return { error: "has an invalid placeholder; use {host:N}, {host:N+}, or {arg:N}" };
   }
   // Validate the rest with the same grammar as @perm, standing a value in for any placeholder.
   const { errors } = parsePermList(placeholder ? `${name}(x)` : text, vocabulary);
   if (errors.length > 0) return { error: errors[0]!.reason };
-  if (placeholder) return { name, arg: { kind: placeholder[1] as "host" | "arg", index: Number(placeholder[2]) } };
+  if (placeholder) {
+    const kind = placeholder[1] as "host" | "arg";
+    if (placeholder[3] && kind !== "host") return { error: "can't use +: only {host:N+} can be overridden by later arguments" };
+    return { name, arg: { kind, index: Number(placeholder[2]), ...(placeholder[3] ? { overridable: true } : {}) } };
+  }
   return arg === undefined ? { name } : { name, arg: arg.trim() };
 }
 
@@ -200,8 +204,28 @@ export class AdapterIndex {
 function instantiate(t: Template, args: readonly Node[]): Capability {
   if (t.arg === undefined || typeof t.arg === "string") return t.arg === undefined ? { name: t.name } : { name: t.name, arg: t.arg };
   const arg = args[t.arg.index];
-  const value = t.arg.kind === "host" ? hostOf(arg) : literalString(arg);
+  let value = t.arg.kind === "host" ? hostOf(arg) : literalString(arg);
+  // {host:N+}: a later options argument can replace the host, as in Node's
+  // http.request(url, { hostname }). Options that might carry one make it unknown.
+  if (t.arg.overridable) {
+    for (const later of args.slice(t.arg.index + 1)) {
+      const override = hostOverride(later);
+      if (override !== null) value = override;
+    }
+  }
   return value === undefined ? { name: t.name, dynamic: true } : { name: t.name, arg: value };
+}
+
+/** The host an options argument sets: a string; undefined if it may set one that can't be known; null if it can't set one. */
+function hostOverride(arg: Node): string | undefined | null {
+  if (arg.getType().getCallSignatures().length > 0) return null; // a callback
+  if (!Node.isObjectLiteralExpression(arg)) return arg.getType().isObject() ? undefined : null;
+  if (arg.getProperties().some((p) => Node.isSpreadAssignment(p))) return undefined;
+  const setsHost = arg.getProperties().some((p) => {
+    const name = "getName" in p ? (p as { getName(): string }).getName() : undefined;
+    return name === "hostname" || name === "host" || name === "url";
+  });
+  return setsHost ? hostOf(arg) : null;
 }
 
 /** The package a declaration belongs to: an ambient `declare module "x"`, else its node_modules folder. */

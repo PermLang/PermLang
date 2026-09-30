@@ -32,7 +32,7 @@ export function declarationCapabilities(
  * specifier is let through by `requiresCapabilityModule`.
  */
 export function runsArbitraryCode(declaration: Node): boolean {
-  if (isGlobalLibFunction(declaration, "eval")) return true;
+  if (isGlobalLibFunction(declaration, "eval") || isGlobalLibFunction(declaration, "Function")) return true;
   if (!declaration.getSourceFile().isDeclarationFile()) return false;
   const isSignature = Node.isCallSignatureDeclaration(declaration) || Node.isConstructSignatureDeclaration(declaration);
   if (!isSignature) return false;

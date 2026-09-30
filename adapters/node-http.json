@@ -1,9 +1,25 @@
 {
   "permlang": 1,
-  "package": ["http", "https", "http2"],
+  "package": [
+    "http",
+    "https",
+    "http2"
+  ],
   "functions": {
-    "request": ["net({host:0})"],
-    "get": ["net({host:0})"],
-    "connect": ["net({host:0})"]
+    "request": [
+      "net({host:0+})"
+    ],
+    "get": [
+      "net({host:0+})"
+    ],
+    "connect": [
+      "net({host:0})"
+    ],
+    "ClientRequest.constructor": [
+      "net({host:0+})"
+    ],
+    "Agent.createConnection": [
+      "net({host:0})"
+    ]
   }
 }
