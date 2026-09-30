@@ -1,4 +1,4 @@
-// Functions without @perm are reported but not failed in M1 (strictness levels come later).
+// An exported function without @perm fails at the default level, development (M5).
 export async function getWeather() {
-  return fetch("https://api.weather.example/today"); // expect: warning PERM003 net(api.weather.example)
+  return fetch("https://api.weather.example/today"); // expect: error PERM003 net(api.weather.example)
 }

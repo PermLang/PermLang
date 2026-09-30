@@ -4,11 +4,13 @@
 // reach, across files. Declared permissions are the unit's own @perm tags plus
 // its file's @module @perm tags.
 
+import path from "node:path";
 import { Project, ts, type Node } from "ts-morph";
 import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
 import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
 import { Hierarchy } from "./dispatch.js";
+import { buildLock, lockDrift, type LockFile } from "./lock.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
   createUnit,
@@ -29,9 +31,10 @@ export interface Diagnostic {
   severity: Severity;
   /**
    * PERM001 undeclared capability, PERM002 invalid annotation, PERM003 missing
-   * annotation, PERM004 unverifiable code (eval, computed calls on sensitive objects, ...).
+   * annotation, PERM004 unverifiable code (eval, computed calls on sensitive objects, ...),
+   * PERM005 permissions that differ from permlang.lock.json.
    */
-  code: "PERM001" | "PERM002" | "PERM003" | "PERM004";
+  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005";
   file: string;
   line: number;
   column: number;
@@ -53,6 +56,8 @@ export interface FunctionReport {
   annotated: boolean;
   declared: string[];
   actual: string[];
+  /** For each actual capability: the units on the way to it, then the call that uses it. */
+  via: Record<string, string[]>;
 }
 
 /** A function whose checks are suppressed by @perm-unsafe. Always reported. */
@@ -70,9 +75,23 @@ export interface Report {
   unsafe: UnsafeReport[];
 }
 
+/**
+ * How strictly annotations are enforced (design doc §7). An out-of-date lock
+ * file fails at every level: it is the review gate, not an annotation rule.
+ *   sketch       permissions are inferred and reported; nothing else fails
+ *   development  exported functions and entry points must declare what they reach (default)
+ *   production   every function must be covered by function- or module-level @perm
+ */
+export type Strictness = "sketch" | "development" | "production";
+
+export const STRICTNESS_LEVELS: readonly Strictness[] = ["sketch", "development", "production"];
+
 export interface CheckOptions {
   /** Team adapter manifests, loaded before (and taking precedence over) the built-in ones. */
   adapters?: readonly string[];
+  strictness?: Strictness;
+  /** The committed lock file to compare against; keys are relative to its directory. */
+  lock?: { file: string; contents: LockFile };
 }
 
 const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
@@ -85,21 +104,30 @@ const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   skipLibCheck: true,
 };
 
+// These read source files through ts-morph too. ts-morph has no adapter, so that
+// read isn't detected (design doc decision D1); fs.read covers it anyway.
+
+/** @perm fs.read */
 export function checkFiles(files: readonly string[], options: CheckOptions = {}): Report {
   const project = new Project({ compilerOptions: DEFAULT_COMPILER_OPTIONS });
   project.addSourceFilesAtPaths([...files]);
   return checkProject(project, options);
 }
 
+/** @perm fs.read */
 export function checkTsConfig(tsConfigFilePath: string, options: CheckOptions = {}): Report {
   return checkProject(new Project({ tsConfigFilePath }), options);
 }
 
-/** @throws AdapterError when an adapter manifest is invalid. */
+/**
+ * @throws AdapterError when an adapter manifest is invalid.
+ * @perm fs.read
+ */
 export function checkProject(project: Project, options: CheckOptions = {}): Report {
   const loaded = loadAdapters(options.adapters ?? []);
   if (loaded.errors.length > 0) throw new AdapterError(loaded.errors);
   const adapters = new AdapterIndex(loaded.adapters);
+  const strictness = options.strictness ?? "development";
 
   const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
   const units = new Map<Node, Unit>();
@@ -136,7 +164,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     const reached = reach.get(unit)!;
     if (!isAnnotated(unit) && reached.size === 0) continue;
     functions.push(summarize(unit, reach));
-    diagnostics.push(...diagnose(unit, edgesFrom.get(unit) ?? [], reach));
+    diagnostics.push(...diagnose(unit, edgesFrom.get(unit) ?? [], reach, strictness));
   }
 
   const unsafe = [...units.values()].flatMap((u) =>
@@ -144,12 +172,21 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   );
   unsafe.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
-  return { files: sourceFiles.length, functions, diagnostics: dedupe(diagnostics), unsafe };
+  // Sketch reports everything but fails nothing.
+  const checked = strictness === "sketch" ? diagnostics.map((d) => ({ ...d, severity: "warning" as const })) : diagnostics;
+  const report: Report = { files: sourceFiles.length, functions, diagnostics: checked, unsafe };
+  if (options.lock) {
+    const root = path.dirname(options.lock.file);
+    report.diagnostics.push(...lockDrift(options.lock.contents, buildLock(report, root), report, options.lock.file));
+  }
+  report.diagnostics = dedupe(report.diagnostics);
+  return report;
 }
 
 // --- diagnostics -------------------------------------------------------------
 
 function summarize(unit: Unit, reach: Reach): FunctionReport {
+  const via = Object.fromEntries([...reach.get(unit)!.keys()].map((key) => [key, pathTo(reach, unit, key)]));
   return {
     file: unit.file,
     name: unit.name,
@@ -157,14 +194,16 @@ function summarize(unit: Unit, reach: Reach): FunctionReport {
     annotated: isAnnotated(unit),
     declared: [...new Set(declaredCapabilities(unit).map(formatCapability))],
     actual: [...reach.get(unit)!.keys()],
+    via,
   };
 }
 
-function diagnose(unit: Unit, edges: readonly Edge[], reach: Reach): Diagnostic[] {
+function diagnose(unit: Unit, edges: readonly Edge[], reach: Reach, strictness: Strictness): Diagnostic[] {
   const out: Diagnostic[] = (unit.own?.errors ?? []).map((e) => annotationError(unit.file, unit.name, e));
 
   if (!isAnnotated(unit)) {
-    if (unit.exported) out.push(...missingAnnotation(unit, reach));
+    // development: exported functions and top-level code must declare; production: everything.
+    if (unit.exported || strictness === "production") out.push(...missingAnnotation(unit, reach));
     return out;
   }
   // @perm-unsafe suppresses this unit's own checks. Its callers still see what it reaches.
@@ -243,15 +282,15 @@ function unverifiable(unit: Unit, site: Use | Edge, verb: string, path: string[]
   };
 }
 
-/** One warning per capability an exported, unannotated unit reaches, at the first place it does. */
+/** One error per capability an unannotated unit reaches, at the first place it does. */
 function missingAnnotation(unit: Unit, reach: Reach): Diagnostic[] {
   return [...reach.get(unit)!].map(([key, p]) => {
     const site = p.edge ?? p.use;
     const path = p.edge ? [p.edge.to.name, ...pathTo(reach, p.edge.to, key)] : [];
-    if (key === UNVERIFIABLE) return unverifiable(unit, site, p.edge ? "calls" : p.use.verb, path, "warning");
+    if (key === UNVERIFIABLE) return unverifiable(unit, site, p.edge ? "calls" : p.use.verb, path, "error");
     const via = path.length > 0 ? `, reaching ${path.join(" → ")},` : "";
     return {
-      severity: "warning",
+      severity: "error",
       code: "PERM003",
       file: unit.file,
       line: site.line,

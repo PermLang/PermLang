@@ -7,10 +7,10 @@
 //   - behind an index signature (arrays, Record<string, Fn>), the functions
 //     can't be known, so the call is unverifiable.
 
-import { Node, type ElementAccessExpression, type Symbol as MorphSymbol, type Type } from "ts-morph";
+import { Node, type ElementAccessExpression, type ObjectLiteralExpression, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import { declarationCapabilities } from "./functions.js";
-import { unwrapExpression, type CallLike } from "./shared.js";
+import { resolveAlias, unwrapExpression, type CallLike } from "./shared.js";
 
 export type ComputedTarget =
   | { kind: "resolved" }
@@ -35,6 +35,24 @@ export function classifyComputedCall(access: ElementAccessExpression, adapters: 
   const objectType = object.getType();
   if (objectType.isAny() || objectType.isUnknown()) return { kind: "unknown" };
 
+  // A key union of string literals narrows the members; any other string key allows all of them.
+  const allowed = keyType.isUnion() && keyType.getUnionTypes().every((t) => t.isStringLiteral())
+    ? new Set(keyType.getUnionTypes().map((t) => String(t.getLiteralValue())))
+    : undefined;
+
+  // `const x: Record<string, Fn> = { a: ..., b: ... }`: the type hides the members,
+  // but the initializer lists them. (Adding members later is a known limit; an
+  // empty initializer means members can only come that way, so it isn't trusted.)
+  const literal = constObjectLiteral(object);
+  if (literal && literal.getProperties().length > 0) {
+    if (literal.getProperties().some((p) => storesCapabilityFunction(p, adapters))) return { kind: "sensitive" };
+    const members = literal
+      .getProperties()
+      .map((p) => p.getSymbol())
+      .filter((s): s is MorphSymbol => s !== undefined && (!allowed || allowed.has(s.getName())));
+    return { kind: "members", members };
+  }
+
   const callable = callableMembers(objectType, access);
   if (callable.some((m) => isSensitive(m, adapters))) return { kind: "sensitive" };
 
@@ -43,12 +61,32 @@ export function classifyComputedCall(access: ElementAccessExpression, adapters: 
   const index = objectType.getStringIndexType();
   if (index && index.getCallSignatures().length > 0) return { kind: "unknown" };
 
-  // A union of literal keys narrows the members; any other string key allows all of them.
-  const allowed = keyType.isUnion() && keyType.getUnionTypes().every((t) => t.isStringLiteral())
-    ? new Set(keyType.getUnionTypes().map((t) => String(t.getLiteralValue())))
-    : undefined;
   const members = callable.filter((m) => !allowed || allowed.has(m.getName()));
   return members.length > 0 ? { kind: "members", members } : { kind: "unknown" };
+}
+
+/** The object literal a `const` was initialized with, if it has no spreads (so its members are all listed). */
+function constObjectLiteral(expression: Node): ObjectLiteralExpression | undefined {
+  const target = unwrapExpression(expression);
+  if (!Node.isIdentifier(target)) return undefined;
+  const declaration = target.getSymbol()?.getDeclarations()[0];
+  if (!declaration || !Node.isVariableDeclaration(declaration)) return undefined;
+  if (declaration.getVariableStatement()?.getDeclarationKind() !== "const") return undefined;
+  const init = declaration.getInitializer();
+  const literal = init && unwrapExpression(init);
+  if (!literal || !Node.isObjectLiteralExpression(literal)) return undefined;
+  return literal.getProperties().some((p) => Node.isSpreadAssignment(p)) ? undefined : literal;
+}
+
+/** `{ read: readFileSync }` or `{ fetch }`: a member that is a capability function itself. */
+function storesCapabilityFunction(property: Node, adapters: AdapterIndex): boolean {
+  const symbol = Node.isShorthandPropertyAssignment(property)
+    ? property.getValueSymbol()
+    : Node.isPropertyAssignment(property)
+      ? property.getInitializer()?.getSymbol()
+      : undefined;
+  if (!symbol) return false;
+  return resolveAlias(symbol).getDeclarations().some((d) => declarationCapabilities(d, [], adapters).length > 0);
 }
 
 function callableMembers(type: Type, at: Node): MorphSymbol[] {

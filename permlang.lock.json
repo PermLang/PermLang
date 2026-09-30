@@ -1,0 +1,67 @@
+{
+  "permlang": 1,
+  "functions": {
+    "src/adapters.ts#builtinAdapterPaths": [
+      "fs.read"
+    ],
+    "src/adapters.ts#loadAdapters": [
+      "fs.read"
+    ],
+    "src/check.ts#checkFiles": [
+      "fs.read"
+    ],
+    "src/check.ts#checkProject": [
+      "fs.read"
+    ],
+    "src/check.ts#checkTsConfig": [
+      "fs.read"
+    ],
+    "src/cli.ts#<module>": [
+      "exec",
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)",
+      "fs.write"
+    ],
+    "src/cli.ts#analyze": [
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)"
+    ],
+    "src/cli.ts#check": [
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)"
+    ],
+    "src/cli.ts#diff": [
+      "exec",
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)"
+    ],
+    "src/cli.ts#expand": [
+      "fs.read"
+    ],
+    "src/cli.ts#lock": [
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)",
+      "fs.write"
+    ],
+    "src/cli.ts#lockAt": [
+      "exec"
+    ],
+    "src/cli.ts#main": [
+      "exec",
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)",
+      "fs.write"
+    ],
+    "src/cli.ts#readConfig": [
+      "fs.read",
+      "fs.read(permlang.config.json)"
+    ]
+  },
+  "unsafe": {}
+}

@@ -1,0 +1,22 @@
+name: PermLang
+
+# PermLang checks its own source with its own GitHub Action, and comments the
+# permission diff on pull requests.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./
+        with:
+          args: src
