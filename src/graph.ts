@@ -10,11 +10,12 @@
 //   - a class's implicit constructor running its base constructor;
 //   - importing a module, which runs its top-level code.
 
-import { Node, SyntaxKind, type Identifier, type SourceFile } from "ts-morph";
+import { Node, SyntaxKind, ts, type Identifier, type SourceFile } from "ts-morph";
 import type { AdapterIndex } from "./adapters.js";
 import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js";
 import { classifyComputedCall, computedCallee } from "./detect/computed.js";
-import { callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
+import { isRequire } from "./detect/functions.js";
+import { argumentsOf, callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
 import type { Hierarchy } from "./dispatch.js";
 import { constructorUnitNode, enclosingUnitNode, unitNodeForDeclaration, unitNodeForSymbol, type Unit, type Use } from "./units.js";
 
@@ -79,6 +80,12 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     }
 
     const declaration = resolvedDeclaration(call);
+    // require("./x") runs that file's top level, like an import.
+    if (declaration && isRequire(declaration)) {
+      const specifier = literalString(argumentsOf(call)[0]);
+      if (specifier?.startsWith(".")) add(call, resolveModule(sourceFile, specifier), call, text);
+      return;
+    }
     if (declaration) {
       add(call, unitNodeForDeclaration(declaration), call, text);
       for (const impl of ctx.hierarchy.implementations(declaration)) add(call, impl, call, text);
@@ -128,6 +135,13 @@ function valueUnit(declaration: Node): Node | undefined {
   if (!Node.isPropertyAssignment(declaration)) return undefined;
   const symbol = declaration.getInitializer()?.getSymbol();
   return symbol ? unitNodeForSymbol(resolveAlias(symbol)) : undefined;
+}
+
+/** The project source file a relative specifier resolves to from `from`, using the project's module resolution. */
+function resolveModule(from: SourceFile, specifier: string): Node | undefined {
+  const options = from.getProject().getCompilerOptions();
+  const resolved = ts.resolveModuleName(specifier, from.getFilePath(), options, ts.sys).resolvedModule?.resolvedFileName;
+  return resolved ? from.getProject().getSourceFile(resolved) : undefined;
 }
 
 /** The source file a module specifier (an import() argument) resolves to. */

@@ -58,6 +58,7 @@ const FIELDS = new Set(["$schema", "permlang", "package", "defines", "default", 
 const PLACEHOLDER = /^\{(host|arg):(\d+)\}$/;
 const TEMPLATE = /^([^()]+)(?:\((.*)\))?$/;
 
+/** @perm fs.read */
 export function builtinAdapterPaths(): string[] {
   const dir = fileURLToPath(new URL("../adapters", import.meta.url));
   return readdirSync(dir)
@@ -66,7 +67,10 @@ export function builtinAdapterPaths(): string[] {
     .map((f) => path.join(dir, f));
 }
 
-/** Loads the built-in adapters plus `extra` (listed first, so a team's adapter wins). */
+/**
+ * Loads the built-in adapters plus `extra` (listed first, so a team's adapter wins).
+ * @perm fs.read
+ */
 export function loadAdapters(extra: readonly string[]): { adapters: Adapter[]; errors: string[] } {
   const adapters: Adapter[] = [];
   const errors: string[] = [];
@@ -170,6 +174,10 @@ export class AdapterIndex {
   private readonly byPackage = new Map<string, Adapter[]>();
   readonly vocabulary: ReadonlySet<string>;
 
+  hasPackage(name: string): boolean {
+    return this.byPackage.has(packageName(name));
+  }
+
   constructor(adapters: readonly Adapter[]) {
     for (const a of adapters) this.byPackage.set(a.package, [...(this.byPackage.get(a.package) ?? []), a]);
     this.vocabulary = new Set([...BUILTIN_VOCABULARY, ...adapters.flatMap((a) => a.defines)]);
@@ -199,7 +207,10 @@ function instantiate(t: Template, args: readonly Node[]): Capability {
 /** The package a declaration belongs to: an ambient `declare module "x"`, else its node_modules folder. */
 export function packageOf(declaration: Node): string | undefined {
   for (const a of declaration.getAncestors()) {
-    if (Node.isModuleDeclaration(a) && Node.isStringLiteral(a.getNameNode())) return packageName(a.getNameNode().getText().slice(1, -1));
+    if (!Node.isModuleDeclaration(a) || !Node.isStringLiteral(a.getNameNode())) continue;
+    const name = a.getNameNode().getText().slice(1, -1);
+    // `declare module "../index"` augments a file in the same package (lodash does this).
+    if (!name.startsWith(".")) return packageName(name);
   }
   const parts = declaration.getSourceFile().getFilePath().split("/");
   const i = parts.lastIndexOf("node_modules");
@@ -210,7 +221,7 @@ export function packageOf(declaration: Node): string | undefined {
   return first;
 }
 
-function packageName(specifier: string): string {
+export function packageName(specifier: string): string {
   const bare = specifier.replace(/^node:/, "");
   const parts = bare.split("/");
   return bare.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0]!;

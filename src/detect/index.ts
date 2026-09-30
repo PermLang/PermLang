@@ -10,7 +10,7 @@ import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { classifyComputedCall, computedCallee } from "./computed.js";
 import { envUses } from "./env.js";
 import { fetchCapability, isUnresolvedFetch } from "./fetch.js";
-import { declarationCapabilities, isTimer } from "./functions.js";
+import { declarationCapabilities, isRequire, isTimer, requiresCapabilityModule } from "./functions.js";
 import { argumentsOf, callText, literalString, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 import { valueUses } from "./values.js";
 
@@ -53,6 +53,9 @@ function callCapabilities(call: CallLike, adapters: AdapterIndex): Capability[] 
   const declaration = resolvedDeclaration(call);
   if (declaration) {
     if (isTimer(declaration) && evaluatesString(argumentsOf(call)[0])) return unverifiable;
+    if (isRequire(declaration)) {
+      return requiresCapabilityModule(literalString(argumentsOf(call)[0]), adapters) ? unverifiable : [];
+    }
     return declarationCapabilities(declaration, argumentsOf(call), adapters);
   }
   if (Node.isCallExpression(call) && isUnresolvedFetch(call)) return [fetchCapability(call.getArguments())];
