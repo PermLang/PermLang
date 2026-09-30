@@ -11,7 +11,7 @@ import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
 import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
-import { unmappedPackages, type UnmappedPackage } from "./unmapped.js";
+import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
   createUnit,
@@ -34,9 +34,10 @@ export interface Diagnostic {
    * PERM001 undeclared capability, PERM002 invalid annotation, PERM003 missing
    * annotation, PERM004 unverifiable code (eval, computed calls on sensitive objects, ...),
    * PERM005 permissions that differ from permlang.lock.json, PERM006 calls into a
-   * package with no adapter (what it touches isn't checked).
+   * package with no adapter (what it touches isn't checked), PERM007 an import
+   * whose types can't be found (nothing called from it is checked).
    */
-  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006";
+  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006" | "PERM007";
   file: string;
   line: number;
   column: number;
@@ -77,6 +78,8 @@ export interface Report {
   unsafe: UnsafeReport[];
   /** Packages called with no adapter, most calls first. PermLang trusts them (D1). */
   unmapped: UnmappedPackage[];
+  /** Imported modules whose types can't be found, so nothing called from them is checked. */
+  unresolved: string[];
 }
 
 /**
@@ -204,9 +207,37 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   }
   const unmapped = unmappedUses.map(({ package: pkg, calls, file, line }) => ({ package: pkg, calls, file, line }));
 
+  // Imports with no types: nothing called from them resolves, so the same policy applies.
+  const unresolved = unresolvedImports(sourceFiles);
+  if (policy !== "trust") {
+    for (const u of unresolved) {
+      diagnostics.push({
+        severity: policy === "error" ? "error" : "warning",
+        code: "PERM007",
+        file: u.file,
+        line: u.line,
+        column: 1,
+        function: "<module>",
+        capability: u.specifier,
+        call: "",
+        message: `imports ${u.specifier}, whose types can't be found, so nothing called from it is checked.`,
+        fix: /^node:|^(fs|child_process|http|https|net|path|os|crypto)$/.test(u.specifier)
+          ? "install @types/node."
+          : `install its types (the package itself, or @types/${u.specifier.replace(/^@/, "").replace("/", "__")}).`,
+      });
+    }
+  }
+
   // Sketch reports everything but fails nothing.
   const checked = strictness === "sketch" ? diagnostics.map((d) => ({ ...d, severity: "warning" as const })) : diagnostics;
-  const report: Report = { files: sourceFiles.length, functions, diagnostics: checked, unsafe, unmapped };
+  const report: Report = {
+    files: sourceFiles.length,
+    functions,
+    diagnostics: checked,
+    unsafe,
+    unmapped,
+    unresolved: unresolved.map((u) => u.specifier).sort(),
+  };
   if (options.lock) {
     const root = path.dirname(options.lock.file);
     report.diagnostics.push(...lockDrift(options.lock.contents, buildLock(report, root), report, options.lock.file));

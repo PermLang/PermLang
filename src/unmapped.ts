@@ -64,3 +64,33 @@ function newTargetDeclaration(expression: Node): Node | undefined {
   const symbol = expression.getSymbol();
   return symbol ? resolveAlias(symbol).getDeclarations()[0] : undefined;
 }
+
+export interface UnresolvedImport {
+  specifier: string;
+  file: string;
+  line: number;
+  node: Node;
+}
+
+// Non-code imports that bundlers handle; TypeScript doesn't resolve them without declarations.
+const ASSET = /\.(css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|json|md|mdx|txt|wasm|html)(\?.*)?$/i;
+
+/**
+ * Imports whose types can't be found (a missing @types package, say). Nothing
+ * called from them can be resolved, so without this their calls would pass
+ * silently. First import of each specifier, in file order.
+ */
+export function unresolvedImports(sourceFiles: readonly SourceFile[]): UnresolvedImport[] {
+  const found = new Map<string, UnresolvedImport>();
+  for (const sourceFile of sourceFiles) {
+    for (const decl of [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations()]) {
+      const specifierNode = decl.getModuleSpecifier();
+      const specifier = decl.getModuleSpecifierValue();
+      if (!specifierNode || specifier === undefined || decl.isTypeOnly() || ASSET.test(specifier) || found.has(specifier)) continue;
+      // A file, or an ambient `declare module "x"` (including wildcards like "*.svg").
+      if (decl.getModuleSpecifierSourceFile() || specifierNode.getSymbol()) continue;
+      found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: decl.getStartLineNumber(), node: decl });
+    }
+  }
+  return [...found.values()];
+}
