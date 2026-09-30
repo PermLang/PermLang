@@ -1,0 +1,10 @@
+{
+  "permlang": 1,
+  "package": "dgram",
+  "default": [
+    "net"
+  ],
+  "functions": {
+    "createSocket": []
+  }
+}

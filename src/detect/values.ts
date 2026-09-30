@@ -41,8 +41,10 @@ function referenceExpression(id: Identifier): Node | undefined {
   const parent = id.getParent();
   if (!parent) return undefined;
   if (Node.isPropertyAccessExpression(parent)) {
-    // `a.b`: the reference is through `b` (the whole access); `a` alone is just an object.
-    return parent.getNameNode() === id ? parent : undefined;
+    // `a.b`: the reference is through `b` (the whole access); `a` alone is just an object,
+    // except in `fetch.call(...)`, `fetch.apply(...)`, `fetch.bind(...)`, which invoke `a`.
+    if (parent.getNameNode() === id) return parent;
+    return /^(call|apply|bind)$/.test(parent.getName()) ? id : undefined;
   }
   // Declaration names, parameter names, property names, labels.
   if ("getNameNode" in parent && (parent as { getNameNode(): Node }).getNameNode() === id) return undefined;
