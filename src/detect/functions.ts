@@ -7,8 +7,10 @@ import type { AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { fetchCapability, isGlobalFetch } from "./fetch.js";
 import { fsCapabilities, fsFunctionName } from "./fs.js";
+import { drizzleCapabilities } from "./drizzle.js";
 import { prismaCapabilities } from "./prisma.js";
 import { containerName, isGlobalLibFunction, type CallLike } from "./shared.js";
+import { sqlCapabilities } from "./sql.js";
 
 export function declarationCapabilities(
   declaration: Node,
@@ -20,8 +22,10 @@ export function declarationCapabilities(
   if (runsArbitraryCode(declaration)) return [{ name: UNVERIFIABLE }];
   const fs = fsFunctionName(declaration);
   if (fs !== undefined) return fsCapabilities(fs, args);
-  const db = prismaCapabilities(declaration, call);
-  if (db.length > 0) return db;
+  for (const database of [prismaCapabilities, sqlCapabilities, drizzleCapabilities]) {
+    const db = database(declaration, call);
+    if (db.length > 0) return db;
+  }
   return adapters.forDeclaration(declaration, args);
 }
 
