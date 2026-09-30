@@ -36,10 +36,16 @@ export function callText(call: CallLike): string {
   return `${prefix}${call.getExpression().getText()}(${shown})`.replace(/\s+/g, " ");
 }
 
-/** A string argument's literal value; undefined when it is computed. */
+/**
+ * A string argument's value when it is known statically: a literal, or an
+ * expression whose type is a single string literal (`const PATH = "a.json"`).
+ * Undefined when it is computed.
+ */
 export function literalString(arg: Node | undefined): string | undefined {
-  if (arg && (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg))) return arg.getLiteralValue();
-  return undefined;
+  if (!arg) return undefined;
+  if (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg)) return arg.getLiteralValue();
+  const type = arg.getType();
+  return type.isStringLiteral() ? String(type.getLiteralValue()) : undefined;
 }
 
 /** The declaration of the signature a call resolves to: the overload, method, or call signature actually used. */

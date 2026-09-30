@@ -1,0 +1,96 @@
+name: PermLang
+description: Check what each function can touch, and comment the permission diff on pull requests.
+author: PermLang
+
+inputs:
+  args:
+    description: Arguments for `permlang check`, such as source paths or `--project tsconfig.json`.
+    required: false
+    default: ""
+  strictness:
+    description: sketch, development, or production. Overrides permlang.config.json.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory containing the code, permlang.config.json, and permlang.lock.json.
+    required: false
+    default: "."
+  comment:
+    description: Post the permission diff as a pull-request comment (updated in place on later pushes).
+    required: false
+    default: "true"
+  github-token:
+    description: "Token for posting the comment. Needs `pull-requests: write` permission."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: The exit code of `permlang check` (0 no errors, 1 permission errors, 2 configuration error).
+    value: ${{ steps.check.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: Build PermLang
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
+
+    - name: Check permissions
+      id: check
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PERMLANG: ${{ github.action_path }}/dist/cli.js
+        STRICTNESS: ${{ inputs.strictness }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        set +e
+        extra=()
+        [ -n "$STRICTNESS" ] && extra+=(--strictness "$STRICTNESS")
+        # ARGS is split on spaces on purpose, like a command line.
+        node "$PERMLANG" check $ARGS "${extra[@]}"
+        echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Comment the permission diff
+      if: github.event_name == 'pull_request' && inputs.comment == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        PERMLANG: ${{ github.action_path }}/dist/cli.js
+        GH_TOKEN: ${{ inputs.github-token }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        ARGS: ${{ inputs.args }}
+      run: |
+        if [ ! -f permlang.lock.json ]; then
+          echo "No permlang.lock.json; run \`permlang lock\` and commit it to get a permission diff."
+          exit 0
+        fi
+        git fetch --no-tags --depth=1 origin "$BASE_SHA"
+        # The diff's "reached through" paths come from analyzing the checked-out code.
+        project=()
+        for a in $ARGS; do case "$a" in --project|-p) next=1 ;; *) [ -n "$next" ] && project=(--project "$a") && next= ;; esac; done
+        node "$PERMLANG" diff "$BASE_SHA" --format markdown "${project[@]}" > "$RUNNER_TEMP/permlang-diff.md"
+        body="$(cat "$RUNNER_TEMP/permlang-diff.md")"
+        existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate \
+          --jq '.[] | select(.body | startswith("<!-- permlang-diff -->")) | .id' | head -1)
+        if [ -n "$existing" ]; then
+          gh api --method PATCH "repos/$REPO/issues/comments/$existing" -f body="$body" > /dev/null
+        else
+          gh api --method POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+        fi
+        cat "$RUNNER_TEMP/permlang-diff.md" >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail on permission errors
+      shell: bash
+      env:
+        CODE: ${{ steps.check.outputs.exit-code }}
+      run: exit "$CODE"

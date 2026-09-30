@@ -5,10 +5,10 @@ interface Hooks {
   onSave(): unknown;
 }
 const hooks = {} as Hooks;
-hooks.onSave = () => fetch("https://late.example/"); // expect: warning PERM003 net(late.example)
+hooks.onSave = () => fetch("https://late.example/"); // expect: error PERM003 net(late.example)
 
 export let handler = () => undefined as unknown;
-handler = () => fetch("https://reassigned.example/"); // expect: warning PERM003 net(reassigned.example)
+handler = () => fetch("https://reassigned.example/"); // expect: error PERM003 net(reassigned.example)
 
 /** @perm env(MODE) */
 export function save() {
