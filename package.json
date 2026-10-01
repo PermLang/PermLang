@@ -1,6 +1,6 @@
 {
   "name": "permlang",
-  "version": "0.1.0-dev",
+  "version": "0.1.0",
   "description": "The permission diff for AI-written TypeScript. Declare what each function can touch; the build fails when code exceeds it.",
   "keywords": [
     "permissions",
@@ -21,7 +21,6 @@
     "url": "https://github.com/PermLang/permlang/issues"
   },
   "license": "Apache-2.0",
-  "private": true,
   "type": "module",
   "bin": {
     "permlang": "dist/cli.js"

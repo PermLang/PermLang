@@ -197,7 +197,7 @@ function workflowFile(args: Args): string {
     "    runs-on: ubuntu-latest",
     "    steps:",
     "      - uses: actions/checkout@v7",
-    `      - uses: PermLang/permlang@main${withArgs}`,
+    `      - uses: PermLang/permlang@v0${withArgs}`,
     "",
   ].join("\n");
 }
