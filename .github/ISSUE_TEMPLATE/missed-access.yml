@@ -1,0 +1,42 @@
+name: Missed access
+description: Your code reaches the network, files, a database, env vars, or processes, and PermLang didn't report it.
+labels: ["missed access"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **If this lets code get past PermLang on purpose, please report it privately instead**, through the [Security tab](https://github.com/PermLang/permlang/security) (see [SECURITY.md](https://github.com/PermLang/permlang/blob/main/SECURITY.md)).
+
+        Check the [known limits](https://github.com/PermLang/permlang/blob/main/docs/reference.md#known-limits) first. Ideas for closing one of those are welcome here.
+  - type: textarea
+    id: code
+    attributes:
+      label: Code
+      description: The smallest code that reaches something without a diagnostic. Remove anything private.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What PermLang should report
+      description: For example `net(api.example.com)` or `fs.write(./data)`.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What PermLang reported instead
+      render: text
+  - type: input
+    id: library
+    attributes:
+      label: Library involved, if any
+      placeholder: e.g. got, knex, @aws-sdk/client-s3
+  - type: input
+    id: version
+    attributes:
+      label: PermLang version
+      placeholder: "0.1.0"
+    validations:
+      required: true
