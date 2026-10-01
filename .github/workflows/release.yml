@@ -1,0 +1,55 @@
+name: Release
+
+# Publishes to npm when a GitHub release is published. Uses npm's trusted
+# publishing (OIDC), so no token is stored in the repository: the package's npm
+# settings must list this repository and workflow as a trusted publisher.
+# See docs/releasing.md.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # move the v0 tag the Action is used by
+      id-token: write # npm trusted publishing and provenance
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Check the release matches package.json
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          private=$(node -p "require('./package.json').private === true")
+          if [ "$TAG" != "v$version" ]; then echo "::error::Release tag $TAG doesn't match package.json version $version."; exit 1; fi
+          if [ "$private" = "true" ]; then echo "::error::package.json is still marked private."; exit 1; fi
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Publish
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          # The first version is published by hand (docs/releasing.md); don't fail on it.
+          if npm view "permlang@$version" version > /dev/null 2>&1; then echo "permlang@$version is already on npm."; exit 0; fi
+          npm publish --access public
+      - name: Point the v0 tag at this release
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$TAG" in v0.*) ;; *) echo "Not a v0 release; leaving the v0 tag alone."; exit 0 ;; esac
+          git tag -f v0 "$GITHUB_SHA"
+          git push -f origin v0
