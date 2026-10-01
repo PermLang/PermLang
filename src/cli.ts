@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { AdapterError } from "./adapters.js";
+import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
 import {
   STRICTNESS_LEVELS,
   UNMAPPED_POLICIES,
@@ -23,12 +23,15 @@ import {
 import { formatDiffMarkdown, formatDiffText, type ViaPaths } from "./diff.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { formatText, toJson } from "./report.js";
+import { checkSpecs, formatSpecResults } from "./spec/check.js";
+import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
 
 const USAGE = `Usage:
   permlang init  [paths...] [options]    set up: a sketch-level config and a first lock file
   permlang check [paths...] [options]    check permissions (and the lock file, if there is one)
   permlang lock  [paths...] [options]    write permlang.lock.json from the current code
   permlang diff  [base-ref] [paths...]   permission changes since base-ref (default HEAD)
+  permlang spec  [paths...] [options]    check .perm specs against the code (phase 2 groundwork)
 
 Which files: paths, or --project <tsconfig.json>. With neither, ./tsconfig.json
 if present, else ./src.
@@ -45,6 +48,7 @@ Options:
   --head <ref>                    diff: compare against this commit instead of the working tree
   --format <text|markdown|json>   diff: output format (default: text)
   --workflow                      init: also add .github/workflows/permlang.yml
+  --spec <file.perm>              spec: check this spec (repeatable; default: every .perm file here)
 
 permlang.config.json:
   { "strictness": "sketch", "unmapped": "warn", "adapters": ["./permlang/adapters/acme-sms.json"] }
@@ -67,6 +71,7 @@ interface Args {
   lock?: string;
   noLock: boolean;
   workflow: boolean;
+  specs: string[];
   json: boolean;
   head?: string;
   format: string;
@@ -84,6 +89,7 @@ function main(argv: string[]): number {
     if (command === "check") return check(args);
     if (command === "lock") return lock(args);
     if (command === "diff") return diff(args);
+    if (command === "spec") return spec(args);
     throw new UsageError(`Unknown command "${command}".\n\n${USAGE}`);
   } catch (e) {
     if (e instanceof UsageError || e instanceof AdapterError || e instanceof LockError) {
@@ -95,7 +101,7 @@ function main(argv: string[]): number {
 }
 
 function parseArgs(rest: string[]): Args {
-  const args: Args = { paths: [], adapters: [], noLock: false, workflow: false, json: false, format: "text" };
+  const args: Args = { paths: [], adapters: [], specs: [], noLock: false, workflow: false, json: false, format: "text" };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
     const value = () => {
@@ -106,6 +112,7 @@ function parseArgs(rest: string[]): Args {
     if (arg === "--json") args.json = true;
     else if (arg === "--no-lock") args.noLock = true;
     else if (arg === "--workflow") args.workflow = true;
+    else if (arg === "--spec") args.specs.push(value());
     else if (arg === "--project" || arg === "-p") args.project = value();
     else if (arg === "--config") args.config = value();
     else if (arg === "--adapter") args.adapters.push(value());
@@ -202,6 +209,37 @@ function check(args: Args): number {
   const report = analyze(args, lock);
   console.log(args.json ? toJson(report) : formatText(report));
   return report.diagnostics.some((d) => d.severity === "error") ? 1 : 0;
+}
+
+/** Checks .perm specs' permissions against the code that implements them (phase 2 groundwork). */
+function spec(args: Args): number {
+  const files = args.specs.length > 0 ? args.specs : findSpecFiles(".");
+  const vocabulary = new AdapterIndex(loadAdapters([...args.adapters, ...readConfig(args.config).adapters]).adapters).vocabulary;
+  const specs: Spec[] = [];
+  const errors: SpecError[] = [];
+  for (const file of files) {
+    if (!existsSync(file)) throw new UsageError(`Not found: ${file}`);
+    const parsed = parseSpecs(readFileSync(file, "utf8"), path.resolve(file), vocabulary);
+    specs.push(...parsed.specs);
+    errors.push(...parsed.errors);
+  }
+  const results = checkSpecs(specs, analyze(args, undefined));
+
+  if (args.json) {
+    console.log(JSON.stringify({ errors, results: results.map(({ spec: s, ...r }) => ({ spec: s.name, file: s.file, ...r })) }, null, 2));
+  } else {
+    for (const e of errors) console.log(`${path.relative(process.cwd(), e.file).replaceAll("\\", "/")}:${e.line} error SPEC001: ${e.message}`);
+    if (errors.length > 0) console.log("");
+    console.log(formatSpecResults(results));
+  }
+  const failed = errors.length > 0 || results.some((r) => r.diagnostics.some((d) => d.severity === "error"));
+  return failed ? 1 : 0;
+}
+
+function findSpecFiles(root: string): string[] {
+  return readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((f) => f.endsWith(".perm") && !f.split(/[\\/]/).some((part) => part === "node_modules" || part.startsWith(".")))
+    .map((f) => path.join(root, f));
 }
 
 function lock(args: Args): number {
