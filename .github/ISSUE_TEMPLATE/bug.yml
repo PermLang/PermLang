@@ -1,0 +1,30 @@
+name: Bug
+description: A crash, a wrong exit code, a confusing message, or a problem with setup or the GitHub Action.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and output
+      description: The command you ran and its full output, including any stack trace.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: PermLang version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Node version, and TypeScript version.
+      placeholder: e.g. macOS 15, Node 22, TypeScript 5.9

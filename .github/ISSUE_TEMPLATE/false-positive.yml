@@ -1,0 +1,37 @@
+name: False positive
+description: PermLang reported access that your code can't actually perform.
+labels: ["false positive"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks! A small code sample that reproduces it is the most helpful thing you can include.
+  - type: textarea
+    id: code
+    attributes:
+      label: Code
+      description: The smallest code that shows the problem. Remove anything private.
+      render: ts
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: What PermLang reported
+      description: Paste the diagnostic, for example `src/a.ts:3:9 error PERM001 ...`.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it's wrong
+      description: Why can't this code reach what PermLang says it reaches?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PermLang version
+      placeholder: "0.1.0"
+    validations:
+      required: true
