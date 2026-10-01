@@ -65,17 +65,26 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
     model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
     SQL (`$queryRaw`, `$executeRaw`, ...) needs bare `db.read` and `db.write`.
   - `db`: **Drizzle**. The table is the name given to `pgTable` / `mysqlTable` /
-    `sqliteTable`: `db.insert(auditLog)`, with `auditLog = pgTable("audit_log", ...)`,
-    needs `db.write(audit_log)`. `.from()` and joins read. `db.query.<key>.findMany()`
-    reads `<key>` and each `with` relation. `db.execute()` is raw SQL.
+    `sqliteTable`: `db.insert(auditLog)`, with `const auditLog = pgTable("audit_log", ...)`,
+    needs `db.write(audit_log)`. `pgSchema("s").table("t")` is `s.t`, and `alias(t)`
+    is `t`. A name PermLang can't read (computed, from `pgTableCreator`, or held in a
+    `let`) could be any table. `.from()` and joins read. `db.query.<key>.findMany()`
+    reads `<key>` and each `with` relation, nested ones included; options that
+    aren't written out could load any. `db.execute()` is raw SQL, and `migrate()`
+    can touch any table.
   - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
     `postgres`, `@neondatabase/serverless`, `@vercel/postgres`). When the query
     is literal text, its tables are read out of it: `SELECT ... FROM leads JOIN
     teams` needs `db.read(leads), db.read(teams)`. Tagged templates (`` sql`...` ``)
-    count, because their substitutions are bound parameters. SQL built with string
-    concatenation or a template passed to `query()` can touch any table, and needs
-    bare `db.read` and `db.write`. Schema-qualified names are declared as written
-    (`db.read(public.users)`).
+    count, because their substitutions are bound parameters, unless a substitution
+    is itself SQL (a postgres.js fragment or `sql(name)` helper). The reader fails
+    closed: it names tables only for a single `SELECT`, `INSERT`, `UPDATE`, or
+    `DELETE` it fully understands. Anything else (`WITH`, `UNION`, DDL, `COPY`,
+    `PRAGMA`, dialect-specific quoting or comments, more than one statement) can
+    touch any table, as can SQL built with string concatenation or a template passed
+    to `query()`; these need bare `db.read` and `db.write`. So does any client
+    method PermLang doesn't know, so new APIs can't pass silently. Schema-qualified
+    names are declared as written (`db.read(public.users)`).
 - **Adapter manifests (M3).** JSON files mapping a library's functions to
   capabilities, including app-level ones such as `payments.refund`. Built-in
   adapters in [`adapters/`](adapters) cover axios, Stripe, nodemailer, and the Node
@@ -116,7 +125,10 @@ document each miss. These misses are documented as fixtures in
 [`fixtures/m4/limits/`](fixtures/m4/limits) and [`fixtures/m6/limits/`](fixtures/m6/limits).
 Each one's test fails once the miss is fixed, so the list can't go stale.
 
-- Values typed `any`: nothing called on them can be resolved.
+- Values typed `any`: nothing called on them can be resolved. Imports whose
+  types can't be found, including packages shimmed with `declare module "x";`,
+  are reported (PERM007), whether reached by `import`, `import x = require()`,
+  or a literal `import()`.
 - `Proxy` traps, which can return a capability function for any property.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that

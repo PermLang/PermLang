@@ -95,11 +95,34 @@ describe("permlang diff", () => {
     const via = { "src/leads.ts#handleLead": { "net(api.data-broker.io)": ["scoreLead", 'axios.post("https://api.data-broker.io/v2/enrich", ...)'] } };
     const md = formatDiffMarkdown(diffLocks(base, head), via);
     expect(md).toContain("<!-- permlang-diff -->");
-    expect(md).toContain("`handleLead`");
-    expect(md).toContain("`+ net(api.data-broker.io)`");
-    expect(md).toContain("scoreLead → axios.post");
+    expect(md).toContain("<code>handleLead</code>");
+    expect(md).toContain("<code>+ net(api.data-broker.io)</code>");
+    expect(md).toContain("scoreLead → axios.post(&quot;https://api.data-broker.io/v2/enrich&quot;, ...)");
     expect(md).toContain("@perm-unsafe");
     expect(md).toMatch(/2 functions gain access/);
+  });
+
+  // Found in the second review: capability text went into the comment unescaped, so
+  // `fs.read(/a\` | | |\n\n<!--)` could close the cell and open an HTML comment that
+  // hides every row after it, along with the approval footer.
+  it("escapes text from code, so a crafted capability can't hide rows", () => {
+    const evil = "fs.read(/a` | | |\n\n<!--)";
+    const sneaky: LockFile = {
+      permlang: 1,
+      functions: { "src/a.ts#f": [evil, "fs.read(/root/.ssh/id_rsa)"], "src/b.ts#g`|<x>": ["net"] },
+      unsafe: { "src/c.ts#h": "reason with `backticks` | pipes <!-- and a comment" },
+    };
+    const md = formatDiffMarkdown(diffLocks(undefined, sneaky), { "src/a.ts#f": { [evil]: ["<!-- x", "a|b"] } });
+    // Everything except PermLang's own marker and footer comes from code.
+    const body = md.replace("<!-- permlang-diff -->", "").split("\n").filter((l) => !l.startsWith("<sub>Approving")).join("\n");
+    expect(body).not.toContain("<!--");
+    expect(body).not.toMatch(/`/);
+    expect(md).toContain("fs.read(/root/.ssh/id&#95;rsa)"); // GitHub renders the entity as id_rsa
+    expect(md).toContain("Approving this change approves the access above");
+    // One table row per capability: the crafted one didn't break the table.
+    const rows = md.split("\n").filter((l) => l.startsWith("| <code>+ "));
+    expect(rows).toHaveLength(3);
+    for (const row of rows) expect(row.split(/(?<!\\)\|/).length).toBe(5);
   });
 
   it("says so when nothing changed", () => {

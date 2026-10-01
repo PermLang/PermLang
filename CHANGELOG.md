@@ -33,6 +33,33 @@ diagnostic. Each now has a regression fixture in `fixtures/m6/`:
 - `diff --lock` with an absolute path; a config file that isn't an object now
   exits 2.
 
+### Fixed (second review)
+
+A second independent review found more ways to get a wrong answer with no
+diagnostic. Regression fixtures are in `fixtures/m8/`:
+
+- The SQL table reader was rewritten to fail closed. It gave confident wrong
+  answers for comma joins, quotes and comments inside names, MySQL `/*! */`
+  comments, dollar quoting, and multiple statements. It now names tables only
+  for statements it fully understands; anything else needs bare `db.read` and
+  `db.write`.
+- postgres.js fragments and helpers in a template (`${sql(table)}`, a
+  fragment passed in) were read as bound values.
+- Database client methods PermLang didn't list (`copyFrom`, `pragma`,
+  `backup`, `sql.file`, ...) passed silently. They are now unknown database
+  access; `loadExtension` is unverifiable (PERM004).
+- Drizzle table names were guessed from variable names when the real name
+  couldn't be read. Nested `with` relations and `migrate()` were missed.
+- Text from code in the PR comment could inject Markdown or HTML; it is now
+  escaped.
+- Specs: an indented `perm` header was silently read as content, a second
+  `implements:` replaced the first, and paths were matched case-insensitively
+  on Linux.
+- PERM007 missed `import x = require("x")`, literal `import("x")`, and
+  packages shimmed with `declare module "x";`, whose calls are all `any`.
+- The Action's hash step failed on macOS runners (no `sha256sum`), and could
+  update a comment that wasn't its own.
+
 ### Added
 
 - **Specs (phase 2 groundwork).** A `.perm` file format for rules, examples, and

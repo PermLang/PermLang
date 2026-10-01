@@ -4,7 +4,7 @@
 // in every report instead of passing silently. Packages that touch nothing
 // PermLang tracks are declared pure in adapters/pure.json.
 
-import { Node, type SourceFile } from "ts-morph";
+import { Node, SyntaxKind, type NoSubstitutionTemplateLiteral, type SourceFile, type StringLiteral } from "ts-morph";
 import { packageOf, type AdapterIndex } from "./adapters.js";
 import { resolveAlias, resolvedDeclaration } from "./detect/shared.js";
 import { SQL_PACKAGES } from "./detect/sql.js";
@@ -84,14 +84,53 @@ const ASSET = /\.(css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|json|m
 export function unresolvedImports(sourceFiles: readonly SourceFile[]): UnresolvedImport[] {
   const found = new Map<string, UnresolvedImport>();
   for (const sourceFile of sourceFiles) {
-    for (const decl of [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations()]) {
-      const specifierNode = decl.getModuleSpecifier();
-      const specifier = decl.getModuleSpecifierValue();
-      if (!specifierNode || specifier === undefined || decl.isTypeOnly() || ASSET.test(specifier) || found.has(specifier)) continue;
-      // A file, or an ambient `declare module "x"` (including wildcards like "*.svg").
-      if (decl.getModuleSpecifierSourceFile() || specifierNode.getSymbol()) continue;
-      found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: decl.getStartLineNumber(), node: decl });
+    for (const { specifierNode, node } of moduleReferences(sourceFile)) {
+      const specifier = specifierNode.getLiteralValue();
+      if (ASSET.test(specifier) || HANDLED.has(bareName(specifier)) || found.has(specifier) || resolves(specifierNode, node)) continue;
+      found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: node.getStartLineNumber(), node });
     }
   }
   return [...found.values()];
+}
+
+/**
+ * "@scope/pkg/sub" → "@scope/pkg", "pkg/sub" → "pkg". Packages with built-in detection
+ * aren't reported: the trial found the generated Prisma client importing untyped runtime files.
+ */
+function bareName(specifier: string): string {
+  return specifier.split("/").slice(0, specifier.startsWith("@") ? 2 : 1).join("/");
+}
+
+/** Every place a file names a module: import and export declarations, `import x = require("x")`, and `import("x")`. */
+function moduleReferences(sourceFile: SourceFile): { specifierNode: StringLiteral | NoSubstitutionTemplateLiteral; node: Node }[] {
+  const references: { specifierNode: StringLiteral | NoSubstitutionTemplateLiteral; node: Node }[] = [];
+  for (const decl of [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations()]) {
+    const specifierNode = decl.getModuleSpecifier();
+    if (specifierNode && !decl.isTypeOnly()) references.push({ specifierNode, node: decl });
+  }
+  sourceFile.forEachDescendant((node) => {
+    if (Node.isImportEqualsDeclaration(node) && !node.isTypeOnly()) {
+      const reference = node.getModuleReference();
+      const expression = Node.isExternalModuleReference(reference) ? reference.getExpression() : undefined;
+      if (expression && Node.isStringLiteral(expression)) references.push({ specifierNode: expression, node });
+    } else if (Node.isCallExpression(node) && node.getExpression().getKind() === SyntaxKind.ImportKeyword) {
+      // Only a literal specifier can be checked; a computed one is reported as unverifiable elsewhere.
+      const [argument] = node.getArguments();
+      if (argument && (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument))) references.push({ specifierNode: argument, node });
+    }
+  });
+  return references;
+}
+
+/**
+ * Whether the specifier reaches real types: a file, or an ambient `declare module "x" { … }`
+ * (including wildcards like "*.svg"). A shorthand `declare module "x";` with no body types
+ * everything in it `any`, which hides its calls just as a missing package does.
+ */
+function resolves(specifierNode: Node, node: Node): boolean {
+  // A file with no imports or exports has no module symbol, but still resolves.
+  if ((Node.isImportDeclaration(node) || Node.isExportDeclaration(node)) && node.getModuleSpecifierSourceFile()) return true;
+  const declarations = specifierNode.getSymbol()?.getDeclarations() ?? [];
+  if (declarations.length === 0) return false;
+  return declarations.some((d) => !Node.isModuleDeclaration(d) || d.hasBody() || d.getName().includes("*"));
 }
