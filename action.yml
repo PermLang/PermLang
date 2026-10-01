@@ -40,8 +40,9 @@ runs:
     # The build is cached, keyed on PermLang's own sources, so only the first run
     # for each PermLang version installs and compiles. (hashFiles() only works inside
     # the workspace, and the action's files are outside it, so the key is computed here.)
-    # Restore and save are separate steps: a composite action's nested post steps
-    # didn't run, so actions/cache's automatic save never happened.
+    # actions/cache rejects paths containing `.` segments, and github.action_path is
+    # `<workspace>/./` when the action runs from its own repository (`uses: ./`), so
+    # the cached paths use the directory's resolved absolute path.
     - name: Compute build cache key
       id: build-key
       shell: bash
@@ -49,14 +50,15 @@ runs:
       run: |
         hash=$(cat package-lock.json tsconfig.json tsconfig.build.json $(find src -name '*.ts' | sort) | sha256sum | cut -c1-16)
         echo "key=permlang-build-${{ runner.os }}-node22-$hash" >> "$GITHUB_OUTPUT"
+        echo "dir=$(pwd -P)" >> "$GITHUB_OUTPUT"
 
     - name: Restore the build
       id: build-cache
       uses: actions/cache/restore@v6
       with:
         path: |
-          ${{ github.action_path }}/node_modules
-          ${{ github.action_path }}/dist
+          ${{ steps.build-key.outputs.dir }}/node_modules
+          ${{ steps.build-key.outputs.dir }}/dist
         key: ${{ steps.build-key.outputs.key }}
 
     - name: Build PermLang
@@ -70,8 +72,8 @@ runs:
       uses: actions/cache/save@v6
       with:
         path: |
-          ${{ github.action_path }}/node_modules
-          ${{ github.action_path }}/dist
+          ${{ steps.build-key.outputs.dir }}/node_modules
+          ${{ steps.build-key.outputs.dir }}/dist
         key: ${{ steps.build-key.outputs.key }}
 
     - name: Check permissions
