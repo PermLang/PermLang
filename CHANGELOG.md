@@ -2,6 +2,12 @@
 
 All notable changes to PermLang.
 
+## 0.1.1 (2026-10-01)
+
+### Added
+
+- `permlang --version` (or `-v`) prints the version.
+
 ## 0.1.0 (2026-10-01)
 
 The first release.

@@ -27,6 +27,7 @@ import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
 
 const USAGE = `Usage:
+  permlang --version                     print the version
   permlang init  [paths...] [options]    set up: a sketch-level config and a first lock file
   permlang check [paths...] [options]    check permissions (and the lock file, if there is one)
   permlang lock  [paths...] [options]    write permlang.lock.json from the current code
@@ -82,6 +83,12 @@ function main(argv: string[]): number {
   if (command === undefined || command === "--help" || command === "-h") {
     console.log(USAGE);
     return command === undefined ? 2 : 0;
+  }
+  if (command === "--version" || command === "-v") {
+    // package.json sits one level above both src/ and dist/.
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
+    console.log(pkg.version);
+    return 0;
   }
   try {
     const args = parseArgs(rest);
