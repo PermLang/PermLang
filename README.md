@@ -273,9 +273,30 @@ npm run permlang -- check fixtures/m1 --no-lock    # run the checker from source
 npm run permlang -- check src --json               # JSON report of declared vs. actual permissions
 npm run permlang -- lock src                       # write permlang.lock.json
 npm run permlang -- diff origin/main               # permission changes since main
+npm run permlang -- spec src                       # check .perm specs against the code
 ```
 
 Exit codes: `0` no errors, `1` permission errors, `2` usage or configuration error.
+
+## Specs (phase 2 groundwork)
+
+A `.perm` spec describes one piece of logic in one file: rules, examples, and the
+permissions its implementation may use.
+
+```
+perm process_refund(order: Order, reason: Text) -> RefundResult
+  implements: src/refunds.ts#processRefund
+  must:
+    never refund more than the amount paid
+  examples:
+    order(paid: $120, 5 days ago) -> refunded($120)
+  perms:
+    db.read(orders), db.write(refunds), payments.refund
+```
+
+`permlang spec src` checks each spec's `perms:` against what the implementation
+actually reaches. Rules and examples are parsed and reported as not yet verified.
+See [docs/spec-format.md](docs/spec-format.md).
 
 ## Real-world trial
 

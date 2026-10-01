@@ -1,0 +1,23 @@
+# The example from the PermLang concept overview.
+
+perm process_refund(order: Order, reason: Text) -> RefundResult
+  implements: src/refunds.ts#processRefund
+
+  must:
+    refund only orders paid within the last 30 days
+    never refund more than the amount paid
+    refunds over $500 require manager approval
+
+  examples:
+    order(paid: $120, 5 days ago) -> refunded($120)
+    order(paid: $120, 45 days ago) -> denied("outside 30-day window")
+
+  perms:
+    db.read(orders), db.write(refunds)
+    email.send
+
+perm notify_team(message: Text)
+  implements: src/refunds.ts#notifyTeam
+
+  perms:
+    email.send

@@ -44,6 +44,9 @@
     "src/cli.ts#expand": [
       "fs.read"
     ],
+    "src/cli.ts#findSpecFiles": [
+      "fs.read"
+    ],
     "src/cli.ts#init": [
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
@@ -73,6 +76,14 @@
     "src/cli.ts#readConfig": [
       "fs.read",
       "fs.read(permlang.config.json)"
+    ],
+    "src/cli.ts#spec": [
+      "fs.read",
+      "fs.read(permlang.config.json)",
+      "fs.read(tsconfig.json)"
+    ],
+    "src/spec/parse.ts#parseSpecs": [
+      "fs.read"
     ]
   },
   "unsafe": {}

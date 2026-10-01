@@ -28,6 +28,9 @@ import {
 
 export type Severity = "error" | "warning";
 
+/** Spec diagnostics: SPEC001 invalid spec, SPEC002 implementation not found, SPEC003 reaches beyond the spec, SPEC004 unused permission. */
+export type SpecCode = "SPEC001" | "SPEC002" | "SPEC003" | "SPEC004";
+
 export interface Diagnostic {
   severity: Severity;
   /**
@@ -37,7 +40,7 @@ export interface Diagnostic {
    * package with no adapter (what it touches isn't checked), PERM007 an import
    * whose types can't be found (nothing called from it is checked).
    */
-  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006" | "PERM007";
+  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006" | "PERM007" | SpecCode;
   file: string;
   line: number;
   column: number;
@@ -80,6 +83,8 @@ export interface Report {
   unmapped: UnmappedPackage[];
   /** Imported modules whose types can't be found, so nothing called from them is checked. */
   unresolved: string[];
+  /** Every function analyzed, including those that reach nothing (which `functions` leaves out). */
+  units: { file: string; name: string; line: number }[];
 }
 
 /**
@@ -237,6 +242,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     unsafe,
     unmapped,
     unresolved: unresolved.map((u) => u.specifier).sort(),
+    units: [...units.values()].map((u) => ({ file: u.file, name: u.name, line: u.line })),
   };
   if (options.lock) {
     const root = path.dirname(options.lock.file);
