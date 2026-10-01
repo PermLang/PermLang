@@ -37,7 +37,28 @@ runs:
       with:
         node-version: 22
 
+    # The build is cached, keyed on PermLang's own sources, so only the first run
+    # for each PermLang version installs and compiles. (hashFiles() only works inside
+    # the workspace, and the action's files are outside it, so the key is computed here.)
+    - name: Compute build cache key
+      id: build-key
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: |
+        hash=$(cat package-lock.json tsconfig.json tsconfig.build.json $(find src -name '*.ts' | sort) | sha256sum | cut -c1-16)
+        echo "key=permlang-build-${{ runner.os }}-node22-$hash" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the build
+      id: build-cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ${{ github.action_path }}/node_modules
+          ${{ github.action_path }}/dist
+        key: ${{ steps.build-key.outputs.key }}
+
     - name: Build PermLang
+      if: steps.build-cache.outputs.cache-hit != 'true'
       shell: bash
       working-directory: ${{ github.action_path }}
       run: npm ci --ignore-scripts --no-audit --no-fund && npm run build
