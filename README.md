@@ -99,9 +99,8 @@ every pull request. Commit all three. The [getting started guide](docs/getting-s
 walks through the rest in about ten minutes.
 
 > [!NOTE]
-> **PermLang is pre-release (v0.1).** It's feature-complete and in peer review
-> before its first release. Until it's published, install it from a checkout
-> of this repository, as the guide describes.
+> **This is PermLang's first release (v0.1).** Feedback, false positives, and
+> missed access are all welcome as [issues](https://github.com/PermLang/permlang/issues).
 
 ## What it can't see (yet)
 

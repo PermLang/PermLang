@@ -53,7 +53,7 @@ describe("permlang init", () => {
   it("adds the GitHub workflow on request, with the same source selection", () => {
     permlang("init", "src", "--workflow");
     const workflow = readFileSync(path.join(dir, ".github", "workflows", "permlang.yml"), "utf8");
-    expect(workflow).toContain("uses: PermLang/permlang@main");
+    expect(workflow).toContain("uses: PermLang/permlang@v0");
     expect(workflow).toContain("args: src");
     expect(workflow).toContain("pull-requests: write");
   });

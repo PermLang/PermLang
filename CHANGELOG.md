@@ -1,9 +1,10 @@
 # Changelog
 
-All notable changes to PermLang. The project is pre-release; v0.1.0 has not been
-published.
+All notable changes to PermLang.
 
-## Unreleased (v0.1.0)
+## 0.1.0 (2026-10-01)
+
+The first release.
 
 ### Fixed (pre-release review)
 

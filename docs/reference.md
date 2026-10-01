@@ -98,8 +98,6 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **Strictness levels, a lock file, a permission diff for pull requests, and a
   GitHub Action.** See below.
 
-Not yet: the peer review and the first public release.
-
 ### Known limits
 
 Design doc §12 asks the checker to catch the whole adversarial suite, or to
@@ -246,15 +244,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: PermLang/permlang@main
+      - uses: PermLang/permlang@v0
         with:
           args: src            # or --project tsconfig.json
 ```
 
 The Action runs `permlang check`, fails the build on errors, and posts the
-permission diff as a pull-request comment, updating it on later pushes. The
-repository is private for now, so the Action can only be used from repositories
-in the PermLang organization. This repository runs it on itself (see
+permission diff as a pull-request comment, updating it on later pushes. This repository runs it on itself (see
 `.github/workflows/permlang.yml` and `permlang.lock.json`).
 
 ## Usage

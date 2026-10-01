@@ -4,17 +4,11 @@ This takes an existing TypeScript project from nothing to a pull-request check
 that shows new access, in about ten minutes. You don't need to annotate
 anything to start.
 
-> PermLang is pre-release. The repository and GitHub Action are private to the
-> PermLang organization for now.
-
 ## 1. Install
 
 ```bash
 npm install --save-dev permlang
 ```
-
-Until the first release is published, install from a checkout of the repository
-instead: run `npm pack` there, then `npm install --save-dev ./permlang-0.1.0-dev.tgz`.
 
 PermLang reads your code through the TypeScript compiler. It needs the same
 types your build uses:
