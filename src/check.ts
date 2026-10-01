@@ -206,7 +206,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         capability: u.package,
         call: "",
         message: `${unit.name} calls into ${u.package} (${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}), which has no adapter, so what it touches isn't checked.`,
-        fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see README).`,
+        fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see docs/reference.md).`,
       });
     }
   }

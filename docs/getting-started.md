@@ -53,7 +53,7 @@ Look at three things:
 
 - **Packages with no adapter.** PermLang can't see what these touch, so it
   trusts them. Each gets one warning (PERM006). For each one, either add an
-  adapter (see the README's "Adapter manifests") or declare it pure. A small
+  adapter (see [Adapter manifests](reference.md#adapter-manifests)) or declare it pure. A small
   team adapter file, listed under `"adapters"` in `permlang.config.json`, does
   either.
 - **Unverifiable code** (PERM004): `eval`, `new Function`, computed calls on
@@ -108,5 +108,5 @@ Set `"unmapped": "error"` to require every package to be mapped or declared pure
 
 ## Reference
 
-- Capabilities and matching rules, adapters, and known limits: [README](../README.md)
+- Capabilities and matching rules, adapters, and known limits: [Reference](reference.md)
 - What PermLang found on real projects: [trial report](trial-2026-09.md)
