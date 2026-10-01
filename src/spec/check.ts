@@ -71,8 +71,13 @@ function parseCapability(text: string): Capability {
   return m && m[2] !== undefined ? { name: m[1]!, arg: m[2] } : { name: text };
 }
 
+// Windows and macOS file systems ignore case by default; Linux's don't, where
+// src/Refunds.ts and src/refunds.ts are different files.
+const CASE_INSENSITIVE = process.platform === "win32" || process.platform === "darwin";
+
 function normalize(file: string): string {
-  return path.resolve(file).replaceAll("\\", "/").toLowerCase();
+  const resolved = path.resolve(file).replaceAll("\\", "/");
+  return CASE_INSENSITIVE ? resolved.toLowerCase() : resolved;
 }
 
 /** The report text for `permlang spec`, in the shape of the concept overview's example. */

@@ -6,6 +6,12 @@ declare module "drizzle-orm/pg-core" {
   }
   export const pgTable: (name: string, columns: Record<string, unknown>) => PgTable;
   export function text(name?: string): unknown;
+  export class PgSchema {
+    table(name: string, columns: Record<string, unknown>): PgTable;
+  }
+  export function pgSchema(name: string): PgSchema;
+  export function pgTableCreator(customize: (name: string) => string): typeof pgTable;
+  export function alias<T extends PgTable>(table: T, name: string): T;
 
   // Like the real typings, joins are function-typed properties, not methods.
   type PgSelectJoinFn = (table: PgTable, on: unknown) => PgSelect;
@@ -41,6 +47,11 @@ declare module "drizzle-orm/pg-core" {
 declare module "drizzle-orm/node-postgres" {
   import type { PgDatabase } from "drizzle-orm/pg-core";
   export function drizzle(url: string): PgDatabase;
+}
+
+declare module "drizzle-orm/node-postgres/migrator" {
+  import type { PgDatabase } from "drizzle-orm/pg-core";
+  export function migrate(db: PgDatabase, config: { migrationsFolder: string }): Promise<void>;
 }
 
 declare module "drizzle-orm" {

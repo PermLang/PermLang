@@ -46,8 +46,8 @@ describe("permlang diff", () => {
 
     const { code, out } = permlang("diff", "HEAD", "my lib", "--format", "markdown");
     expect(code).toBe(0);
-    expect(out).toContain("`+ net(data-broker.io)`");
-    expect(out).toContain("fetch(\"https://data-broker.io/\")");
+    expect(out).toContain("<code>+ net(data-broker.io)</code>");
+    expect(out).toContain("fetch(&quot;https://data-broker.io/&quot;)");
   });
 
   it("still prints the diff when the code can't be analyzed for paths", () => {

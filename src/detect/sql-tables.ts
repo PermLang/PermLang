@@ -1,108 +1,311 @@
 // Table names read out of a literal SQL statement, for raw-SQL database clients.
 //
-// This is deliberately conservative: it recognizes the tables of one ordinary
-// statement (SELECT, INSERT, UPDATE, DELETE, and table DDL). Anything it can't be
-// sure of (several statements, procedures, dynamic SQL) is reported as unknown,
-// and unknown SQL needs bare db.read and db.write.
+// This fails closed. It gives a definite answer only for one SELECT, INSERT,
+// UPDATE, or DELETE in shapes it fully understands, and `undefined` (unknown) for
+// everything else, which then needs bare db.read and db.write. A pattern-based
+// version gave confident wrong answers for comma joins, quotes inside identifiers,
+// MySQL comments, and more (found in review); this one tokenizes first, so quotes
+// and comments are handled exactly once, and rejects whatever it doesn't expect.
 
 export interface SqlTables {
   read: string[];
   write: string[];
 }
 
-const IDENT_PART = String.raw`(?:"[^"]+"|\x60[^\x60]+\x60|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
-const IDENT = `${IDENT_PART}(?:\\s*\\.\\s*${IDENT_PART})*`;
-
-const STATEMENTS = /^(select|with|insert|update|delete|replace|merge|create|drop|alter|truncate|values)\b/i;
-
-const WRITES = [
-  /\binsert\s+(?:or\s+\w+\s+)?into\s+/gi,
-  /\breplace\s+into\s+/gi,
-  /\bmerge\s+into\s+/gi,
-  /\bupdate\s+(?:only\s+)?/gi,
-  /\bdelete\s+from\s+(?:only\s+)?/gi,
-  /\btruncate\s+(?:table\s+)?/gi,
-  /\bcreate\s+(?:(?:global\s+|local\s+)?(?:temp|temporary)\s+|unlogged\s+)?table\s+(?:if\s+not\s+exists\s+)?/gi,
-  /\bdrop\s+table\s+(?:if\s+exists\s+)?/gi,
-  /\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?/gi,
-];
-
-// The name must end at a word boundary before the "not a function call" check, or the
-// engine backtracks to a shorter match: `generate_series(` would match as `generate_serie`.
-const READ = new RegExp(`\\b(?:from|join)\\s+(?:only\\s+|lateral\\s+)?(${IDENT})(?![\\w$."\\x60\\]])(?!\\s*\\()`, "gi");
+class Unknown extends Error {}
+const unknown = (): never => {
+  throw new Unknown();
+};
 
 /** Undefined when the statement can't be analyzed with confidence. */
 export function sqlTables(sql: string): SqlTables | undefined {
-  const text = stripCommentsAndStrings(sql);
-  if (text === undefined) return undefined;
-  const statements = text.split(";").map((s) => s.trim()).filter(Boolean);
-  if (statements.length !== 1) return statements.length === 0 ? { read: [], write: [] } : undefined;
-  const statement = statements[0]!;
-  if (!STATEMENTS.test(statement)) return undefined;
+  try {
+    return analyze(tokenize(sql));
+  } catch (e) {
+    if (e instanceof Unknown) return undefined;
+    throw e;
+  }
+}
 
-  const ctes = new Set(
-    [...statement.matchAll(new RegExp(`(?:\\bwith\\s+(?:recursive\\s+)?|,\\s*)(${IDENT})\\s+as\\s*\\(`, "gi"))].map((m) => normalize(m[1]!)),
-  );
+// --- tokens ------------------------------------------------------------------
 
+type Token =
+  | { kind: "word"; text: string; upper: string } // a bare word: keyword or name
+  | { kind: "ident"; text: string } // a quoted identifier: "x", `x`, [x]
+  | { kind: "string" }
+  | { kind: "number" }
+  | { kind: "param" } // $1, ?, :name, @name
+  | { kind: "punct"; text: string };
+
+function tokenize(sql: string): Token[] {
+  const tokens: Token[] = [];
+  let i = 0;
+  const at = (k = 0) => sql[i + k] ?? "";
+  while (i < sql.length) {
+    const c = at();
+    if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") {
+      i++;
+    } else if (c === "-" && at(1) === "-") {
+      while (i < sql.length && at() !== "\n") i++;
+    } else if (c === "/" && at(1) === "*") {
+      // MySQL runs /*! ... */ as SQL; nesting differs by dialect.
+      if (at(2) === "!" || at(2) === "+") unknown();
+      const end = sql.indexOf("*/", i + 2);
+      if (end === -1 || sql.slice(i + 2, end).includes("/*")) unknown();
+      i = end + 2;
+    } else if (c === "#") {
+      unknown(); // a MySQL comment, or a Postgres operator: dialect-dependent
+    } else if (c === "'") {
+      // Prefixed strings (E'...', U&'...') and backslashes change escaping by dialect.
+      const prev = tokens[tokens.length - 1];
+      if (prev?.kind === "word" && /^(E|U&)$/i.test(prev.text) && sql[i - 1] !== " ") unknown();
+      const end = endOfQuoted(sql, i, "'", "'");
+      if (sql.slice(i + 1, end - 1).includes("\\")) unknown();
+      i = end;
+      tokens.push({ kind: "string" });
+    } else if (c === '"' || c === "`") {
+      const end = endOfQuoted(sql, i, c, c);
+      tokens.push({ kind: "ident", text: sql.slice(i + 1, end - 1).replaceAll(c + c, c) });
+      i = end;
+    } else if (c === "[") {
+      const end = sql.indexOf("]", i + 1);
+      if (end === -1) unknown();
+      tokens.push({ kind: "ident", text: sql.slice(i + 1, end) });
+      i = end + 1;
+    } else if (c === "$") {
+      const m = /^\$\d+/.exec(sql.slice(i));
+      if (!m) unknown(); // $tag$ dollar quoting
+      tokens.push({ kind: "param" });
+      i += m![0].length;
+    } else if (c === "?" || ((c === ":" || c === "@") && /[A-Za-z_]/.test(at(1)))) {
+      i++;
+      while (/[A-Za-z0-9_]/.test(at())) i++;
+      tokens.push({ kind: "param" });
+    } else if (/[A-Za-z_]/.test(c)) {
+      const m = /^[A-Za-z_][A-Za-z0-9_$]*/.exec(sql.slice(i))!;
+      tokens.push({ kind: "word", text: m[0], upper: m[0].toUpperCase() });
+      i += m[0].length;
+    } else if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(at(1)))) {
+      const m = /^[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?/.exec(sql.slice(i))!;
+      tokens.push({ kind: "number" });
+      i += m[0].length;
+    } else if ("(),.;=<>!+-*/%|&^~:".includes(c)) {
+      tokens.push({ kind: "punct", text: c });
+      i++;
+    } else {
+      unknown(); // non-ASCII names, odd whitespace, anything unexpected
+    }
+  }
+  return tokens;
+}
+
+/** The index after a quoted run starting at `start`; a doubled quote is an escaped quote. */
+function endOfQuoted(sql: string, start: number, open: string, close: string): number {
+  let i = start + open.length;
+  while (i < sql.length) {
+    if (sql[i] === close) {
+      if (sql[i + 1] === close) i += 2;
+      else return i + 1;
+    } else {
+      i++;
+    }
+  }
+  return unknown();
+}
+
+// --- grammar -----------------------------------------------------------------
+
+// Keywords that can hide a table or a write, or whose shape isn't analyzed.
+const REJECT = new Set(["UNION", "INTERSECT", "EXCEPT", "WITH", "WINDOW", "LATERAL", "OUTFILE", "DUMPFILE", "TABLE", "INTO", "USING"]);
+// Words that end a FROM clause.
+const CLAUSE_END = new Set(["WHERE", "GROUP", "HAVING", "ORDER", "LIMIT", "OFFSET", "FOR", "RETURNING", "SET", "ON"]);
+const JOIN_WORDS = new Set(["NATURAL", "LEFT", "RIGHT", "FULL", "OUTER", "INNER", "CROSS", "JOIN", "STRAIGHT_JOIN"]);
+// Words that can't be a table alias.
+const RESERVED = new Set([...CLAUSE_END, ...JOIN_WORDS, ...REJECT, "USING", "SELECT", "FROM", "VALUES", "AND", "OR", "NOT", "AS", "WHEN", "THEN", "ELSE", "END", "CONFLICT", "DUPLICATE"]);
+// Calls known not to touch other tables, files, or state. Anything else is unknown.
+const PURE_CALLS = new Set([
+  "COUNT", "SUM", "AVG", "MIN", "MAX", "COALESCE", "NULLIF", "GREATEST", "LEAST", "IFNULL", "NVL", "IF",
+  "LOWER", "UPPER", "LENGTH", "CHAR_LENGTH", "TRIM", "LTRIM", "RTRIM", "SUBSTRING", "SUBSTR", "CONCAT",
+  "CONCAT_WS", "REPLACE", "POSITION", "LEFT", "RIGHT", "EXTRACT", "DATE_TRUNC", "DATE_PART", "NOW",
+  "ABS", "ROUND", "FLOOR", "CEIL", "CEILING", "MOD", "POWER", "SQRT", "CAST", "TO_CHAR", "TO_DATE",
+  "TO_TIMESTAMP", "DATE", "JSON_BUILD_OBJECT", "JSONB_BUILD_OBJECT", "JSON_AGG", "JSONB_AGG",
+  "ARRAY_AGG", "STRING_AGG", "GROUP_CONCAT", "ROW_NUMBER", "RANK", "DENSE_RANK",
+  // Syntax that takes parentheses.
+  "IN", "EXISTS", "ANY", "ALL", "SOME", "VALUES", "ARRAY", "ROW", "OVER", "FILTER", "CONFLICT",
+]);
+// A "(" after these is grouping or a subquery, not a call: SELECT (SELECT ...), AND (a OR b).
+const GROUPING_KEYWORDS = new Set([
+  "SELECT", "WHERE", "AND", "OR", "NOT", "ON", "WHEN", "THEN", "ELSE", "CASE", "BY", "HAVING", "AS",
+  "DISTINCT", "IS", "LIKE", "ILIKE", "BETWEEN", "SET", "RETURNING", "LIMIT", "OFFSET",
+]);
+// FROM inside these calls is part of the call: EXTRACT(YEAR FROM d).
+const CALLS_WITH_FROM = new Set(["EXTRACT", "SUBSTRING", "TRIM", "OVERLAY", "POSITION"]);
+
+function analyze(all: Token[]): SqlTables {
+  // One statement, with an optional trailing semicolon.
+  let tokens = all;
+  const semi = tokens.findIndex((t) => t.kind === "punct" && t.text === ";");
+  if (semi !== -1) {
+    if (tokens.slice(semi + 1).length > 0) unknown();
+    tokens = tokens.slice(0, semi);
+  }
+  if (tokens.length === 0) return { read: [], write: [] };
+
+  const match = matchParens(tokens);
+  const read: string[] = [];
   const write: string[] = [];
-  const writeStarts = new Set<number>();
-  for (const pattern of WRITES) {
-    for (const m of statement.matchAll(pattern)) {
-      const rest = statement.slice(m.index + m[0].length);
-      const name = new RegExp(`^(${IDENT})`).exec(rest)?.[1];
-      if (name) {
-        write.push(normalize(name));
-        writeStarts.add(m.index + m[0].length);
+  const word = (i: number) => (tokens[i]?.kind === "word" ? (tokens[i] as { upper: string }).upper : undefined);
+  const isPunct = (i: number, text: string) => tokens[i]?.kind === "punct" && (tokens[i] as { text: string }).text === text;
+
+  /** A possibly qualified table name at i; returns [name, next index]. */
+  const tableName = (i: number, columnList = false): [string, number] => {
+    const parts: string[] = [];
+    for (;;) {
+      const t = tokens[i];
+      if (t?.kind === "ident") parts.push(t.text);
+      else if (t?.kind === "word" && !RESERVED.has(t.upper)) parts.push(t.text);
+      else unknown();
+      i++;
+      if (isPunct(i, ".")) i++;
+      else break;
+    }
+    if (isPunct(i, "(") && !columnList) unknown(); // a table function (INSERT's column list is fine)
+    return [parts.join("."), i];
+  };
+
+  /** An optional alias, `AS x` or `x`, possibly with a column list. */
+  const alias = (i: number): number => {
+    if (word(i) === "AS") i++;
+    const t = tokens[i];
+    if (t?.kind === "ident" || (t?.kind === "word" && !RESERVED.has(t.upper))) {
+      i++;
+      if (isPunct(i, "(")) i = match[i]! + 1;
+    } else if (tokens[i - 1] && word(i - 1) === "AS") {
+      unknown();
+    }
+    return i;
+  };
+
+  /** One FROM or JOIN item: a table or a parenthesized subquery. */
+  const factor = (i: number, end: number): number => {
+    if (word(i) === "ONLY") i++;
+    if (isPunct(i, "(")) {
+      const close = match[i]!;
+      if (word(i + 1) !== "SELECT") unknown();
+      scan(i + 1, close, undefined);
+      return alias(close + 1);
+    }
+    const [name, next] = tableName(i);
+    if (next > end) unknown();
+    read.push(name);
+    return alias(next);
+  };
+
+  /** A FROM clause starting at i; returns the index of whatever ends it. */
+  const fromClause = (i: number, end: number): number => {
+    i = factor(i, end);
+    while (i < end) {
+      const w = word(i);
+      if (isPunct(i, ",")) {
+        i = factor(i + 1, end);
+      } else if (w && JOIN_WORDS.has(w)) {
+        while (word(i) && word(i) !== "JOIN" && word(i) !== "STRAIGHT_JOIN" && JOIN_WORDS.has(word(i)!)) i++;
+        if (word(i) !== "JOIN" && word(i) !== "STRAIGHT_JOIN") unknown();
+        i = factor(i + 1, end);
+        if (word(i) === "USING") {
+          if (!isPunct(i + 1, "(")) unknown();
+          i = match[i + 1]! + 1;
+        }
+      } else if (w === "ON") {
+        // The join condition runs to the next join, comma, or clause at this depth.
+        let j = i + 1;
+        while (j < end && !isPunct(j, ",") && !(word(j) && (JOIN_WORDS.has(word(j)!) || (CLAUSE_END.has(word(j)!) && word(j) !== "ON")))) {
+          j = isPunct(j, "(") ? match[j]! + 1 : j + 1;
+        }
+        scan(i + 1, j, undefined);
+        i = j;
+      } else if (w && CLAUSE_END.has(w)) {
+        return i;
+      } else {
+        unknown();
       }
     }
-  }
+    return i;
+  };
 
-  const read: string[] = [];
-  for (const m of statement.matchAll(READ)) {
-    const before = statement.slice(0, m.index);
-    const nameStart = m.index + m[0].length - m[1]!.length;
-    if (writeStarts.has(nameStart)) continue; // `DELETE FROM t` is a write
-    if (/\bis\s+(?:not\s+)?distinct\s*$/i.test(before)) continue; // `a IS DISTINCT FROM b`
-    if (/\b(?:extract|substring|trim|overlay|position)\s*\([^()]*$/i.test(before)) continue; // EXTRACT(YEAR FROM d)
-    const name = normalize(m[1]!);
-    if (!ctes.has(name)) read.push(name);
-  }
-
-  return { read: unique(read), write: unique(write) };
-}
-
-/** Removes comments and string literals, keeping quoted identifiers. Undefined for dollar-quoted bodies. */
-function stripCommentsAndStrings(sql: string): string | undefined {
-  if (/\$\w*\$/.test(sql)) return undefined; // DO $$ ... $$: a procedural body
-  let out = "";
-  for (let i = 0; i < sql.length; i++) {
-    const c = sql[i]!;
-    const next = sql[i + 1];
-    if (c === "-" && next === "-") {
-      while (i < sql.length && sql[i] !== "\n") i++;
-      out += " ";
-    } else if (c === "/" && next === "*") {
-      const end = sql.indexOf("*/", i + 2);
-      i = end === -1 ? sql.length : end + 1;
-      out += " ";
-    } else if (c === "'") {
-      i++;
-      while (i < sql.length && !(sql[i] === "'" && sql[i + 1] !== "'")) i += sql[i] === "'" ? 2 : 1;
-      out += "''";
-    } else {
-      out += c;
+  /** Checks tokens [start, end) at one depth; `call` is the function whose arguments these are. */
+  const scan = (start: number, end: number, call: string | undefined): void => {
+    for (let i = start; i < end; i++) {
+      const t = tokens[i]!;
+      if (t.kind === "punct" && t.text === "(") {
+        const prev = tokens[i - 1];
+        const name = prev?.kind === "word" && !GROUPING_KEYWORDS.has(prev.upper) ? prev.upper : undefined;
+        if (name !== undefined && !PURE_CALLS.has(name)) unknown();
+        scan(i + 1, match[i]!, name);
+        i = match[i]!;
+        continue;
+      }
+      if (t.kind !== "word") continue;
+      if (REJECT.has(t.upper) || JOIN_WORDS.has(t.upper) && t.upper !== "LEFT" && t.upper !== "RIGHT") {
+        unknown();
+      }
+      if (t.upper === "FROM") {
+        if (call !== undefined && CALLS_WITH_FROM.has(call)) continue;
+        if (word(i - 1) === "DISTINCT" && (word(i - 2) === "IS" || word(i - 3) === "IS")) continue;
+        i = fromClause(i + 1, end) - 1;
+      }
     }
+  };
+
+  const first = word(0);
+  let i = 1;
+  if (first === "SELECT") {
+    scan(1, tokens.length, undefined);
+  } else if (first === "INSERT" || first === "REPLACE") {
+    while (word(i) && ["LOW_PRIORITY", "DELAYED", "HIGH_PRIORITY", "IGNORE"].includes(word(i)!)) i++;
+    if (word(i) === "OR") i += 2; // INSERT OR REPLACE / IGNORE / ABORT (SQLite)
+    if (word(i) === "INTO") i++;
+    const [name, next] = tableName(i, true);
+    write.push(name);
+    i = next;
+    if (word(i) === "AS") i = alias(i);
+    if (isPunct(i, "(")) i = match[i]! + 1; // column list
+    scan(i, tokens.length, undefined);
+  } else if (first === "UPDATE") {
+    while (word(i) && ["LOW_PRIORITY", "IGNORE", "ONLY"].includes(word(i)!)) i++;
+    const [name, next] = tableName(i);
+    write.push(name);
+    i = alias(next);
+    if (word(i) !== "SET") unknown(); // UPDATE a, b SET ... (MySQL multi-table)
+    scan(i, tokens.length, undefined);
+  } else if (first === "DELETE") {
+    while (word(i) && ["LOW_PRIORITY", "QUICK", "IGNORE"].includes(word(i)!)) i++;
+    if (word(i) !== "FROM") unknown(); // DELETE t FROM ... (MySQL multi-table)
+    i++;
+    if (word(i) === "ONLY") i++;
+    const [name, next] = tableName(i);
+    write.push(name);
+    scan(alias(next), tokens.length, undefined);
+  } else {
+    unknown();
   }
-  return out;
+
+  return { read: [...new Set(read)], write: [...new Set(write)] };
 }
 
-function normalize(name: string): string {
-  return name
-    .split(/\s*\.\s*/)
-    .map((part) => part.replace(/^["`[]|["`\]]$/g, ""))
-    .join(".");
-}
-
-function unique(names: string[]): string[] {
-  return [...new Set(names)];
+function matchParens(tokens: Token[]): (number | undefined)[] {
+  const match: (number | undefined)[] = [];
+  const stack: number[] = [];
+  tokens.forEach((t, i) => {
+    if (t.kind !== "punct") return;
+    if (t.text === "(") stack.push(i);
+    else if (t.text === ")") {
+      const open = stack.pop();
+      if (open === undefined) unknown();
+      match[open!] = i;
+      match[i] = open;
+    }
+  });
+  if (stack.length > 0) unknown();
+  return match;
 }

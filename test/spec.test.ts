@@ -45,6 +45,10 @@ describe("parsing .perm files", () => {
     ["perm x()\n  must:\n    be good\n", /no perms: section/],
     ["  perms:\n    net\n", /before any "perm"/],
     ["perm (broken\n", /malformed perm header/],
+    // Found in the second review: a later implements: replaced an earlier one, and an
+    // indented header was swallowed, so a spec could pass without checking its function.
+    ["perm x()\n  implements: src/x.ts#dangerous\n  perms:\n    net\n  implements: src/x.ts#safe\n", /more than one implements/],
+    ["perm a()\n  implements: src/x.ts#dangerous\n  must:\n    be good\n  perm b()\n  perms:\n    net\n", /must start at the beginning/],
   ])("reports %j", (text, reason) => {
     const { errors } = parseSpecs(text, "bad.perm");
     expect(errors.map((e) => `${e.line}: ${e.message}`).join("\n")).toMatch(reason);

@@ -33,23 +33,23 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths): string {
     lines.push("| New access | Where it happens | Now reachable from |", "| --- | --- | --- |");
     for (const [capability, functions] of byCapability(gaining)) {
       const origin = shortestPath(capability, functions, via);
-      const where = origin ? `\`${origin.fn.name}\`<br><sub>${escapeCell(origin.path.join(" → "))}</sub>` : "";
-      const reachable = functions.map((f) => `\`${f.name}\`${f.status === "added" ? " (new)" : ""}`).join(", ");
-      lines.push(`| \`+ ${capability}\` | ${where} | ${reachable} |`);
+      const where = origin ? `${code(origin.fn.name)}<br><sub>${text(origin.path.join(" → "))}</sub>` : "";
+      const reachable = functions.map((f) => `${code(f.name)}${f.status === "added" ? " (new)" : ""}`).join(", ");
+      lines.push(`| ${code(`+ ${capability}`)} | ${where} | ${reachable} |`);
     }
     lines.push("");
   }
 
   if (diff.unsafeAdded.length > 0) {
-    lines.push("**New `@perm-unsafe` overrides** (checks suppressed):", "");
-    for (const u of diff.unsafeAdded) lines.push(`- \`${u.key}\`: ${escapeCell(u.reason)}`);
+    lines.push("**New <code>@perm-unsafe</code> overrides** (checks suppressed):", "");
+    for (const u of diff.unsafeAdded) lines.push(`- ${code(u.key)}: ${text(u.reason)}`);
     lines.push("");
   }
 
   if (losing.length > 0 || diff.unsafeRemoved.length > 0) {
     lines.push("<details><summary>Removed access</summary>", "");
-    for (const f of losing) lines.push(`- \`${f.name}\` (${f.file}): ${f.removed.map((c) => `\`- ${c}\``).join(", ")}`);
-    for (const u of diff.unsafeRemoved) lines.push(`- \`${u.key}\`: @perm-unsafe removed`);
+    for (const f of losing) lines.push(`- ${code(f.name)} (${text(f.file)}): ${f.removed.map((c) => code(`- ${c}`)).join(", ")}`);
+    for (const u of diff.unsafeRemoved) lines.push(`- ${code(u.key)}: @perm-unsafe removed`);
     lines.push("", "</details>", "");
   }
 
@@ -92,6 +92,28 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-function escapeCell(text: string): string {
-  return text.replaceAll("|", "\\|").replaceAll("\n", " ");
+/**
+ * Text that comes from code (capabilities, names, paths, reasons) is escaped for
+ * both HTML and markdown. A capability like fs.read(/a` | |\n<!--) must not be able
+ * to end a code span, split a table cell, or open an HTML comment that hides the
+ * rows after it, because reviewers approve what the comment shows.
+ */
+function text(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("`", "&#96;")
+    .replaceAll("|", "&#124;")
+    .replaceAll("*", "&#42;")
+    .replaceAll("_", "&#95;")
+    .replaceAll("[", "&#91;")
+    .replaceAll("]", "&#93;")
+    .replaceAll("\\", "&#92;")
+    .replace(/[\r\n]+/g, " ");
+}
+
+function code(value: string): string {
+  return `<code>${text(value)}</code>`;
 }
