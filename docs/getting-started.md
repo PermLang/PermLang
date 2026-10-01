@@ -23,6 +23,9 @@ types your build uses:
   invisible. PermLang reports any import whose types it can't find (PERM007).
 - **A generated Prisma client**, if you use Prisma: run `prisma generate` first,
   or database access is invisible.
+- **Real types for your dependencies.** A shim like `declare module "jsonwebtoken";`
+  types everything from that package `any`, so its calls are invisible too.
+  PermLang reports each one (PERM007); installing the package's types fixes it.
 
 ## 2. Set up
 

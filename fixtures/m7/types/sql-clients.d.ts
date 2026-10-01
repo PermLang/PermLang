@@ -8,6 +8,7 @@ declare module "pg" {
   }
   export interface PoolClient {
     query(text: string, values?: unknown[]): Promise<unknown>;
+    copyFrom(text: string): unknown;
     release(): void;
   }
 }
@@ -29,14 +30,24 @@ declare module "better-sqlite3" {
     constructor(file: string);
     prepare(source: string): Statement;
     exec(source: string): this;
+    pragma(source: string): unknown;
+    loadExtension(path: string): this;
+    backup(destination: string): Promise<unknown>;
+    close(): this;
   }
   export default Database;
 }
 
 declare module "postgres" {
+  export interface Helper {
+    readonly value: unknown;
+  }
   interface Sql {
     (strings: TemplateStringsArray, ...values: unknown[]): Promise<unknown[]>;
+    (name: string): Helper;
     unsafe(query: string): Promise<unknown[]>;
+    file(path: string): Promise<unknown[]>;
+    end(): Promise<void>;
   }
   function postgres(url?: string): Sql;
   export default postgres;

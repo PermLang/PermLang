@@ -62,6 +62,11 @@ describe("imports whose types can't be found", () => {
     expect(report().unresolved).toEqual(["no-such-package", "node:child_process-missing-types"]);
   });
 
+  it("covers import = require, dynamic import(), and `declare module` shims", () => {
+    const more = checkFiles([path.join(dir, "unresolved-more.ts"), path.join(dir, "shims.d.ts")], {});
+    expect(more.unresolved).toEqual(["shimmed-package", "untyped-dynamic", "untyped-require"]);
+  });
+
   it("follows the unmapped policy", () => {
     expect(report({ unmapped: "error" }).diagnostics.filter((x) => x.code === "PERM007").every((x) => x.severity === "error")).toBe(true);
     expect(report({ unmapped: "trust" }).diagnostics.filter((x) => x.code === "PERM007")).toEqual([]);
