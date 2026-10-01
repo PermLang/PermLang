@@ -100,6 +100,12 @@ export function parseSpecs(text: string, file: string, vocabulary?: ReadonlySet<
       return;
     }
 
+    // An indented header would otherwise be read as content and hide a spec.
+    if (HEADER.test(trimmed)) {
+      fail(line, 'a "perm" header must start at the beginning of the line');
+      return;
+    }
+
     // A section header sits at the block's first indentation; its content is indented further.
     const heading = SECTION.exec(trimmed);
     if (heading && (sectionIndent === -1 || indent <= sectionIndent)) {
@@ -128,6 +134,7 @@ export function parseSpecs(text: string, file: string, vocabulary?: ReadonlySet<
     if (name === "implements") {
       const m = /^(.+)#([A-Za-z_$][\w$.<>]*)$/.exec(value);
       if (!m) fail(line, `implements must be path#function, e.g. src/refunds.ts#processRefund; found "${value}"`);
+      else if (target.implements) fail(line, `perm ${target.name} has more than one implements: line; a spec checks one function`);
       else target.implements = { file: m[1]!.trim(), symbol: m[2]!, line };
     } else if (name === "must") {
       target.must.push({ text: value, line });

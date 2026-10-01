@@ -12,7 +12,7 @@ const sql = postgres("postgres://localhost/app");
 export async function cleanup(table: string, id: string) {
   await pool.query("DELETE FROM sessions WHERE expires < now()"); // expect: error PERM001 db.write(sessions)
   await mysql.execute("SELECT * FROM orders"); // expect: error PERM001 db.read(orders)
-  sqlite.exec("DROP TABLE IF EXISTS staging"); // expect: error PERM001 db.write(staging)
+  sqlite.exec("DROP TABLE IF EXISTS staging"); // expect: error PERM001 db.read expect: error PERM001 db.write
   await sql`UPDATE leads SET seen = true WHERE id = ${id}`; // expect: error PERM001 db.write(leads)
   // SQL built from strings can touch any table, and is how injection happens.
   await pool.query(`SELECT * FROM ${table}`); // expect: error PERM001 db.read expect: error PERM001 db.write
