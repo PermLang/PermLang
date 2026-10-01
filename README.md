@@ -19,16 +19,17 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
   -> add net(data-broker.io) to @perm, or remove the call.
 ```
 
-> **Status: pre-release (v0.1, milestone M5).** Not ready for production use.
+> **Status: pre-release (v0.1).** Feature-complete for v0.1 and awaiting an external
+> security review. Not ready for production use.
 > New here? Start with [docs/getting-started.md](docs/getting-started.md).
 
-## What works so far
+## What it checks
 
-- **Annotations (M1).** `@perm` tags in JSDoc on functions, methods, constructors,
+- **Annotations.** `@perm` tags in JSDoc on functions, methods, constructors,
   accessors, and function-valued `const`s and properties.
-- **Direct calls (M1).** The global `fetch` and Node's `fs` / `fs/promises`
+- **Direct calls.** The global `fetch` and Node's `fs` / `fs/promises`
   (including `node:` imports, renamed imports, and `fs.promises.*`).
-- **Propagation (M2).** A function's actual permissions include everything its
+- **Propagation.** A function's actual permissions include everything its
   callees use, across files, through re-exports, recursion, class methods,
   constructors, object methods, and functions passed as callbacks. Violations
   show the path:
@@ -38,7 +39,7 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
     but its declared permissions do not include fs.write(./public/dump.json).
   ```
 
-- **Module-level permissions (M2).** A top-of-file JSDoc tagged `@module` (or
+- **Module-level permissions.** A top-of-file JSDoc tagged `@module` (or
   `@file` / `@fileoverview`) applies its `@perm` to every function in the file:
 
   ```ts
@@ -49,10 +50,11 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
    */
   ```
 
-- **Warnings.** An exported function with no `@perm` gets a warning (not an
-  error) for each capability it reaches. Private helpers need no annotation;
-  their callers must cover what they use.
-- **All v0.1 capabilities (M3).**
+- **Missing annotations.** At the default strictness, an exported function
+  with no `@perm` is an error (PERM003) for each capability it reaches. Private
+  helpers need no annotation; their callers must cover what they use. See
+  [Strictness levels](#strictness-levels).
+- **All v0.1 capabilities.**
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
     (`const env = process.env; env.KEY`). Spreading or enumerating the
@@ -85,17 +87,16 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
     to `query()`; these need bare `db.read` and `db.write`. So does any client
     method PermLang doesn't know, so new APIs can't pass silently. Schema-qualified
     names are declared as written (`db.read(public.users)`).
-- **Adapter manifests (M3).** JSON files mapping a library's functions to
+- **Adapter manifests.** JSON files mapping a library's functions to
   capabilities, including app-level ones such as `payments.refund`. Built-in
-  adapters in [`adapters/`](adapters) cover axios, Stripe, nodemailer, and the Node
-  modules above. They were checked against the real axios, stripe@22, and
-  @types/nodemailer typings. Library calls resolve by signature, so aliasing a
-  method (`const post = axios.post`) doesn't hide it.
-- **Escape hatch (M3).** `@perm-unsafe reason:"..."` suppresses one function's
+  adapters in [`adapters/`](adapters) cover HTTP clients, Stripe, email, Redis,
+  Kafka, queues, AI SDKs, and more (see [below](#adapter-manifests)). Library
+  calls resolve by signature, so aliasing a method (`const post = axios.post`)
+  doesn't hide it.
+- **Escape hatch.** `@perm-unsafe reason:"..."` suppresses one function's
   own checks. Every use is listed in the report. Callers still have to cover
   what the function reaches.
-
-- **Adversarial coverage (M4).** Tricks that try to hide access are caught:
+- **Adversarial coverage.** Tricks that try to hide access are caught:
   - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
     `paths.forEach(unlinkSync)`, `send.call(...)` (a `const` alias is fine,
     because calls through it resolve to the original);
@@ -107,16 +108,16 @@ src/leads.ts:9:9 error PERM001: handleLead calls fetch("https://data-broker.io/e
     member the key allows;
   - importing a module, which runs its top-level code (static and literal
     `import()`).
-- **Unverifiable code (M4, PERM004).** Code whose effects can't be determined is
+- **Unverifiable code (PERM004).** Code whose effects can't be determined is
   an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
   `require()`, `import(variable)`, `vm`, `new Worker`, and computed calls on
   sensitive objects (`fs[method]()`, `globalThis[name]()`) or behind an index
   signature (`table[name]()`). The only way to accept it is `@perm-unsafe`,
   which also stops it from failing the function's callers.
+- **Strictness levels, a lock file, a permission diff for pull requests, and a
+  GitHub Action.** See below.
 
-- **Strictness levels, lock file, permission diff, GitHub Action (M5).** See below.
-
-Not yet: the external review and open-source release (M6). See the design doc for the full plan.
+Not yet: the external review and the open-source release.
 
 ### Known limits
 
@@ -337,15 +338,18 @@ other. Every fixture file must be a module (have an import or export).
 src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
-src/detect/         direct uses: fetch, fs, env, Prisma, adapter-mapped calls, values, unverifiable code
+src/detect/         direct uses: fetch, fs, env, Prisma, Drizzle, SQL, adapter-mapped calls, values, unverifiable code
 src/dispatch.ts     implementations reachable through interfaces and base classes
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
+src/unmapped.ts     packages with no adapter, and imports with no types
 src/check.ts        comparing declared vs. actual per unit
 src/lock.ts         permlang.lock.json: build, read, compare
 src/diff.ts         the permission diff, as text or a pull-request comment
 src/report.ts       text and JSON output
 src/cli.ts          the permlang command
+src/index.ts        the library API
+src/spec/           .perm specs: parsing and checking
 ```
 
 ## Prior art
