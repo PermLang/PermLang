@@ -2,7 +2,7 @@
 // git repository whose code isn't in ./src.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,5 +75,12 @@ describe("configuration errors", () => {
     const { code, out } = permlang("check", "my lib");
     expect(code).toBe(2);
     expect(out).toMatch(/permlang\.config\.json.*object/);
+  });
+});
+
+describe("permlang --version", () => {
+  it("prints the package version", () => {
+    const { version } = JSON.parse(readFileSync(path.join(repo, "package.json"), "utf8")) as { version: string };
+    for (const flag of ["--version", "-v"]) expect(permlang(flag)).toEqual({ code: 0, out: `${version}\n` });
   });
 });
