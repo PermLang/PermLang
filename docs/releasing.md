@@ -5,7 +5,7 @@ The npm package is `permlang`, owned by the npm user `parkweb`, with the
 
 ## Before the first release
 
-1. The external security review is done, and its findings are fixed.
+1. The peer review is done, and its findings are fixed.
 2. A trademark search for "PermLang" is done.
 3. A release PR is merged that:
    - sets `"version": "0.1.0"` and removes `"private": true` from `package.json`;

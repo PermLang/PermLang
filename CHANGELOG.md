@@ -7,7 +7,7 @@ published.
 
 ### Fixed (pre-release review)
 
-An independent review before release found ways to reach capabilities with no
+An internal review before release found ways to reach capabilities with no
 diagnostic. Each now has a regression fixture in `fixtures/m6/`:
 
 - The `Function` constructor reached without naming it (`.constructor(...)`,
@@ -35,7 +35,7 @@ diagnostic. Each now has a regression fixture in `fixtures/m6/`:
 
 ### Fixed (second review)
 
-A second independent review found more ways to get a wrong answer with no
+A second internal review found more ways to get a wrong answer with no
 diagnostic. Regression fixtures are in `fixtures/m8/`:
 
 - The SQL table reader was rewritten to fail closed. It gave confident wrong
