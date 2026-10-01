@@ -98,7 +98,7 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **Strictness levels, a lock file, a permission diff for pull requests, and a
   GitHub Action.** See below.
 
-Not yet: the external review and the open-source release.
+Not yet: the peer review and the first public release.
 
 ### Known limits
 
@@ -143,7 +143,7 @@ Wildcards (`*`) are not allowed. A capability without an argument (`net`,
 `fs.read`) allows any scope. It is required when the host or path can't be
 determined statically, for example `fetch(url)` or a template path like
 `` `./data/${name}` ``. *(Provisional: this answers open question 1 in the design
-doc and is subject to expert review.)*
+doc and may change after review.)*
 
 ## Adapter manifests
 
