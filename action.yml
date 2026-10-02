@@ -26,6 +26,10 @@ inputs:
     description: "Token for posting the comment. Needs `pull-requests: write` permission."
     required: false
     default: ${{ github.token }}
+  sarif:
+    description: "Also upload the findings to GitHub code scanning (the Security tab). Needs `security-events: write` permission."
+    required: false
+    default: "false"
 
 outputs:
   exit-code:
@@ -89,14 +93,26 @@ runs:
         PERMLANG: ${{ github.action_path }}/dist/cli.js
         STRICTNESS: ${{ inputs.strictness }}
         ARGS: ${{ inputs.args }}
+        SARIF: ${{ inputs.sarif }}
       run: |
         set +e
         set -f  # ARGS is split on spaces, like a command line, but never glob-expanded.
         extra=()
         [ -n "$STRICTNESS" ] && extra+=(--strictness "$STRICTNESS")
+        [ "$SARIF" = "true" ] && extra+=(--sarif "$RUNNER_TEMP/permlang.sarif")
         # Annotations put each problem on its line in the pull request's "Files changed" tab.
         node "$PERMLANG" check $ARGS "${extra[@]}" --github-annotations
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
+
+    - name: Upload to code scanning
+      if: inputs.sarif == 'true'
+      # Best effort, like the comment: a missing permission or a fork's read-only token
+      # mustn't fail the job. The check result decides that.
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+      with:
+        sarif_file: ${{ runner.temp }}/permlang.sarif
+        category: permlang
 
     - name: Comment the permission diff
       if: github.event_name == 'pull_request' && inputs.comment == 'true'

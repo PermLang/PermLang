@@ -23,7 +23,7 @@ import {
 } from "./check.js";
 import { formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockDiff, type LockFile } from "./lock.js";
-import { formatAnnotations, formatText, toJson } from "./report.js";
+import { formatAnnotations, formatText, toJson, toSarif } from "./report.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
 
@@ -48,6 +48,7 @@ Options:
   --no-lock                       check: don't compare against the lock file
   --json                          check: print the JSON report
   --github-annotations            check: also print a GitHub Actions annotation per diagnostic
+  --sarif <file>                  check: also write the findings as SARIF, for GitHub code scanning
   --head <ref>                    diff: compare against this commit instead of the working tree
   --format <text|markdown|json>   diff: output format (default: text)
   --workflow                      init: also add .github/workflows/permlang.yml
@@ -77,8 +78,14 @@ interface Args {
   specs: string[];
   json: boolean;
   githubAnnotations: boolean;
+  sarif?: string;
   head?: string;
   format: string;
+}
+
+/** This package's version. package.json sits one level above both src/ and dist/. */
+function packageVersion(): string {
+  return (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
 }
 
 function main(argv: string[]): number {
@@ -88,9 +95,7 @@ function main(argv: string[]): number {
     return command === undefined ? 2 : 0;
   }
   if (command === "--version" || command === "-v") {
-    // package.json sits one level above both src/ and dist/.
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
-    console.log(pkg.version);
+    console.log(packageVersion());
     return 0;
   }
   if (rest.includes("--help") || rest.includes("-h")) {
@@ -125,6 +130,7 @@ function parseArgs(rest: string[]): Args {
     };
     if (arg === "--json") args.json = true;
     else if (arg === "--github-annotations") args.githubAnnotations = true;
+    else if (arg === "--sarif") args.sarif = value();
     else if (arg === "--no-lock") args.noLock = true;
     else if (arg === "--workflow") args.workflow = true;
     else if (arg === "--spec") args.specs.push(value());
@@ -242,7 +248,10 @@ function check(args: Args): number {
   const report = analyze(args, lock);
   console.log(args.json ? toJson(report) : formatText(report));
   // In GitHub Actions, each diagnostic then shows on its line in the pull request.
-  if (args.githubAnnotations && report.diagnostics.length > 0) console.log(formatAnnotations(report, process.env.GITHUB_WORKSPACE ?? process.cwd()));
+  const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
+  if (args.githubAnnotations && report.diagnostics.length > 0) console.log(formatAnnotations(report, root));
+  // Written even with no findings, so code scanning closes alerts for fixed problems.
+  if (args.sarif) writeFileSync(args.sarif, `${toSarif(report, root, packageVersion())}\n`);
   return report.diagnostics.some((d) => d.severity === "error") ? 1 : 0;
 }
 

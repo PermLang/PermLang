@@ -128,6 +128,20 @@ describe("permlang check --github-annotations", () => {
   });
 });
 
+describe("permlang check --sarif", () => {
+  it("writes the findings as SARIF, with paths from the repository root", () => {
+    const { code } = permlang("check", "my lib", "--no-lock", "--sarif", "permlang.sarif");
+    expect(code).toBe(1);
+    const sarif = JSON.parse(readFileSync(path.join(dir, "permlang.sarif"), "utf8")) as {
+      runs: { results: { ruleId: string; locations: { physicalLocation: { artifactLocation: { uri: string }; region: { startLine: number } } }[] }[] }[];
+    };
+    const [result] = sarif.runs[0]!.results;
+    expect(result!.ruleId).toBe("PERM003");
+    expect(result!.locations[0]!.physicalLocation.artifactLocation.uri).toBe("my lib/app.ts");
+    expect(result!.locations[0]!.physicalLocation.region.startLine).toBe(2);
+  });
+});
+
 describe("help", () => {
   it("prints usage for a subcommand's --help instead of an unknown-option error", () => {
     for (const command of ["check", "lock", "diff", "init", "spec"]) {

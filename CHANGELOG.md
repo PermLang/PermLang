@@ -2,6 +2,21 @@
 
 All notable changes to PermLang.
 
+## 0.2.3 (2026-10-02)
+
+### Added
+
+- Findings can go to GitHub code scanning, appearing in the repository's
+  **Security** tab next to CodeQL's. On the command line, use
+  `permlang check --sarif <file>`. In the Action, set `sarif: true`; the
+  workflow needs `security-events: write`.
+- The reference lists every diagnostic code and what it means.
+
+### Changed
+
+- The Action's own steps, and this repository's workflows, run GitHub Actions
+  pinned to exact commits.
+
 ## 0.2.2 (2026-10-02)
 
 The changes below were tagged as 0.2.1, but that release stopped before
