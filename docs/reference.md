@@ -264,8 +264,17 @@ it. From then on:
   `permlang lock` is run and committed. With `--head <ref>`, it compares two
   committed lock files.
 
+  The diff also lists **new dependencies**: packages the change adds to
+  `./package.json`, in `dependencies` or `devDependencies`. For each one, it says
+  what PermLang sees (checked by an adapter, declared pure, detected directly, or
+  **not checked** because it has no adapter) and lists its `preinstall`,
+  `install`, and `postinstall` scripts when it's installed. It's there for review:
+  a new package doesn't fail the check, although calls into one with no adapter
+  get a `PERM006` warning.
+
 `--format markdown` produces the pull-request comment; `--format json` is for
-tools, and includes `unrecorded`: the access the lock doesn't record yet, or `null`.
+tools, and includes `unrecorded` (the access the lock doesn't record yet, or
+`null`) and `dependencies`.
 
 The check compares against `./permlang.lock.json` whenever it exists. When
 checking other files from the same folder (like the fixtures here), pass

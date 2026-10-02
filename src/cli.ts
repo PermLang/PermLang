@@ -21,6 +21,7 @@ import {
   type Strictness,
   type UnmappedPolicy,
 } from "./check.js";
+import { addedDependencies, type DependencyChange, type PackageJson } from "./deps.js";
 import { formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockDiff, type LockFile } from "./lock.js";
 import { formatAnnotations, formatText, toJson, toSarif } from "./report.js";
@@ -334,8 +335,9 @@ function diff(args: Args): number {
   }
 
   const changes = diffLocks(baseLock, headLock);
-  const notes: DiffNotes = { unrecorded: unrecorded !== undefined, lockFile: path.basename(lockFile) };
-  if (args.format === "json") console.log(JSON.stringify({ base, head: args.head ?? "working tree", ...changes, via, unrecorded: unrecorded ?? null }, null, 2));
+  const dependencies = dependencyChanges(base, args);
+  const notes: DiffNotes = { unrecorded: unrecorded !== undefined, lockFile: path.basename(lockFile), dependencies };
+  if (args.format === "json") console.log(JSON.stringify({ base, head: args.head ?? "working tree", ...changes, via, unrecorded: unrecorded ?? null, dependencies }, null, 2));
   else console.log(args.format === "markdown" ? formatDiffMarkdown(changes, via, notes) : formatDiffText(changes, via, notes));
   return 0;
 }
@@ -369,18 +371,50 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
 
 /** The lock file as committed at `ref`, or undefined if it didn't exist there. */
 function lockAt(ref: string, lockFile: string): LockFile | undefined {
+  const found = fileAt(ref, lockFile);
+  return found && parseLock(found.text, found.spec);
+}
+
+/** A file's contents at a commit, or undefined when it doesn't exist there. */
+function fileAt(ref: string, file: string): { text: string; spec: string } | undefined {
   // git resolves `ref:./path` relative to the working directory, so an absolute path is made relative.
-  const relative = path.relative(process.cwd(), path.resolve(lockFile)).replaceAll("\\", "/");
+  const relative = path.relative(process.cwd(), path.resolve(file)).replaceAll("\\", "/");
   const spec = `${ref}:./${relative}`;
-  let text: string;
   try {
-    text = execFileSync("git", ["show", spec], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    return { text: execFileSync("git", ["show", spec], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), spec };
   } catch (e) {
     const stderr = String((e as { stderr?: unknown }).stderr ?? "");
     if (/does not exist|exists on disk, but not in/.test(stderr)) return undefined;
-    throw new UsageError(`Can't read ${lockFile} at ${ref}: ${stderr.trim() || (e as Error).message}`);
+    throw new UsageError(`Can't read ${file} at ${ref}: ${stderr.trim() || (e as Error).message}`);
   }
-  return parseLock(text, spec);
+}
+
+/**
+ * Packages the change adds to ./package.json, for review. Best effort: a missing or
+ * unreadable package.json means no dependency section, never a failed diff.
+ */
+function dependencyChanges(base: string, args: Args): DependencyChange[] {
+  const parse = (text: string | undefined): PackageJson | undefined => {
+    if (text === undefined) return undefined;
+    try {
+      return JSON.parse(text) as PackageJson;
+    } catch {
+      return undefined;
+    }
+  };
+  try {
+    const head = parse(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
+    if (!head) return [];
+    const adapters = new AdapterIndex(loadAdapters([...args.adapters, ...readConfig(args.config).adapters]).adapters);
+    const installed = (name: string) => {
+      const file = path.join("node_modules", name, "package.json");
+      return existsSync(file) ? parse(readFileSync(file, "utf8")) : undefined;
+    };
+    return addedDependencies(parse(fileAt(base, "package.json")?.text), head, adapters, installed);
+  } catch (e) {
+    if (e instanceof UsageError) return [];
+    throw e;
+  }
 }
 
 function viaPaths(report: Report, root: string): ViaPaths {

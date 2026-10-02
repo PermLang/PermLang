@@ -20,6 +20,11 @@ export interface UnmappedPackage {
 /** Packages with built-in detection instead of an adapter, or that stand for the language itself. */
 const HANDLED = new Set(["fs", "module", "@prisma/client", ".prisma", "drizzle-orm", ...SQL_PACKAGES, "node", "typescript"]);
 
+/** A package PermLang detects directly, without an adapter (Prisma, Drizzle, SQL clients, ...). */
+export function isDetectedPackage(name: string): boolean {
+  return HANDLED.has(name);
+}
+
 export interface UnmappedUse extends UnmappedPackage {
   /** Where the first call is, so its diagnostic can name the function. */
   node: Node;

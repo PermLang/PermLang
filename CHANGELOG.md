@@ -2,6 +2,16 @@
 
 All notable changes to PermLang.
 
+## 0.2.4 (2026-10-02)
+
+### Added
+
+- The permission diff and pull-request comment list **new dependencies**: each
+  package the change adds to `package.json`, what PermLang sees of it (an
+  adapter, declared pure, detected directly, or not checked), and its install
+  scripts. A package added in a pull request can do anything its code does; now
+  reviewers see it next to the new access. It doesn't fail the check.
+
 ## 0.2.3 (2026-10-02)
 
 ### Added
