@@ -22,6 +22,7 @@
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
       "fs.read(package-lock.json)",
+      "fs.read(package.json)",
       "fs.read(permlang.config.json)",
       "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
@@ -41,14 +42,24 @@
       "fs.read(tsconfig.json)",
       "fs.write"
     ],
+    "src/cli.ts#dependencyChanges": [
+      "exec",
+      "fs.read",
+      "fs.read(package.json)",
+      "fs.read(permlang.config.json)"
+    ],
     "src/cli.ts#diff": [
       "exec",
       "fs.read",
+      "fs.read(package.json)",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
     ],
     "src/cli.ts#expand": [
       "fs.read"
+    ],
+    "src/cli.ts#fileAt": [
+      "exec"
     ],
     "src/cli.ts#findSpecFiles": [
       "fs.read"
@@ -69,6 +80,9 @@
       "fs.read(pnpm-lock.yaml)",
       "fs.read(yarn.lock)"
     ],
+    "src/cli.ts#installed": [
+      "fs.read"
+    ],
     "src/cli.ts#lock": [
       "fs.read",
       "fs.read(permlang.config.json)",
@@ -84,6 +98,7 @@
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
       "fs.read(package-lock.json)",
+      "fs.read(package.json)",
       "fs.read(permlang.config.json)",
       "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",

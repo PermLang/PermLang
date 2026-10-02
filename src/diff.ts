@@ -2,6 +2,7 @@
 // for a pull-request comment (markdown) or a terminal (text). New access comes
 // first, with the path to the line that causes it when that is known.
 
+import type { DependencyChange } from "./deps.js";
 import type { FunctionChange, LockDiff } from "./lock.js";
 
 /** For each lock key, each capability's path: units on the way, then the call. */
@@ -10,8 +11,18 @@ export type ViaPaths = Record<string, Record<string, string[]>>;
 /** Marks PermLang's comment so the GitHub Action updates it instead of adding another. */
 export const COMMENT_MARKER = "<!-- permlang-diff -->";
 
-/** Whether the code reaches access the lock file doesn't record yet, and which lock file. */
-export type DiffNotes = { unrecorded?: boolean; lockFile?: string };
+/**
+ * Whether the code reaches access the lock file doesn't record yet, which lock file, and the
+ * packages the change adds (shown for review; they don't fail the check).
+ */
+export type DiffNotes = { unrecorded?: boolean; lockFile?: string; dependencies?: DependencyChange[] };
+
+const KNOWN: Record<DependencyChange["known"], string> = {
+  adapter: "Checked by an adapter",
+  pure: "Declared pure",
+  detected: "Detected directly",
+  unknown: "**Not checked**: no adapter",
+};
 
 function unrecordedSentence(notes: DiffNotes, lock: string): string {
   return `This change reaches access that ${lock} doesn't record yet, so the check fails. To approve it, run \`permlang lock\` and commit ${lock}.`;
@@ -26,8 +37,9 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
   const losing = diff.functions.filter((f) => f.removed.length > 0);
 
   if (gaining.length === 0 && losing.length === 0 && diff.unsafeAdded.length === 0 && diff.unsafeRemoved.length === 0) {
-    lines.push("No permission changes.");
-    return lines.join("\n");
+    lines.push("No permission changes.", "");
+    lines.push(...dependencySection(notes.dependencies));
+    return lines.join("\n").trimEnd();
   }
 
   const counts = [
@@ -63,8 +75,22 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
     lines.push("", "</details>", "");
   }
 
+  lines.push(...dependencySection(notes.dependencies));
   lines.push("<sub>Approving this change approves the access above. Details: `permlang check`.</sub>");
   return lines.join("\n");
+}
+
+/** New packages, with what PermLang knows about each and the scripts that run on install. */
+function dependencySection(deps: readonly DependencyChange[] | undefined): string[] {
+  if (!deps || deps.length === 0) return [];
+  const heading = deps.length === 1 ? "1 new dependency" : `${deps.length} new dependencies`;
+  const lines = [`**${heading}**`, "", "| Package | What PermLang sees | Install scripts |", "| --- | --- | --- |"];
+  for (const d of deps) {
+    const scripts = d.installScripts === undefined ? "<sub>not installed here</sub>" : d.installScripts.length === 0 ? "none" : d.installScripts.map((x) => code(x)).join("<br>");
+    lines.push(`| ${code(`+ ${d.name}`)} ${text(d.version)}${d.dev ? " <sub>(dev)</sub>" : ""} | ${KNOWN[d.known]} | ${scripts} |`);
+  }
+  lines.push("");
+  return lines;
 }
 
 export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes = {}): string {
@@ -81,7 +107,16 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   for (const u of diff.unsafeAdded) out.push(`${u.key}\n  + @perm-unsafe: ${u.reason}`);
   for (const u of diff.unsafeRemoved) out.push(`${u.key}\n  - @perm-unsafe`);
   const changed = out.length > (notes.unrecorded ? 1 : 0);
-  return changed ? out.join("\n\n") : [...out, "No permission changes."].join("\n\n");
+  if (!changed) out.push("No permission changes.");
+  if (notes.dependencies && notes.dependencies.length > 0) {
+    const rows = notes.dependencies.map((d) => {
+      const known = { adapter: "checked by an adapter", pure: "declared pure", detected: "detected directly", unknown: "not checked: no adapter" }[d.known];
+      const scripts = d.installScripts === undefined ? "" : d.installScripts.length === 0 ? "" : `; install scripts: ${d.installScripts.join(", ")}`;
+      return `  + ${d.name} ${d.version}${d.dev ? " (dev)" : ""}: ${known}${scripts}`;
+    });
+    out.push(["New dependencies", ...rows].join("\n"));
+  }
+  return out.join("\n\n");
 }
 
 function byCapability(changes: readonly FunctionChange[]): Map<string, FunctionChange[]> {
