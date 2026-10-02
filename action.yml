@@ -1,6 +1,9 @@
 name: PermLang
 description: Check what each function can touch, and comment the permission diff on pull requests.
 author: PermLang
+branding:
+  icon: shield
+  color: blue
 
 inputs:
   args:

@@ -7,6 +7,7 @@
 [![npm](https://img.shields.io/npm/v/permlang)](https://www.npmjs.com/package/permlang)
 [![CI](https://github.com/PermLang/permlang/actions/workflows/ci.yml/badge.svg)](https://github.com/PermLang/permlang/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/PermLang/PermLang/badge)](https://scorecard.dev/viewer/?uri=github.com/PermLang/PermLang)
 
 A safety check for TypeScript projects. It notices when a change makes your code
 contact a new server, read or write files, use a secret, or change your database,
