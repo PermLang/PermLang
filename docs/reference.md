@@ -102,13 +102,30 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 
 Design doc §12 asks the checker to catch the whole adversarial suite, or to
 document each miss. These misses are documented as fixtures in
-[`fixtures/m4/limits/`](../fixtures/m4/limits) and [`fixtures/m6/limits/`](../fixtures/m6/limits).
-Each one's test fails once the miss is fixed, so the list can't go stale.
+[`fixtures/m4/limits/`](../fixtures/m4/limits) and [`fixtures/m6/limits/`](../fixtures/m6/limits),
+and as "known misses" in the adversarial suite
+([`test/adversarial.test.ts`](../test/adversarial.test.ts)), which also lists
+the harmless code that must stay silent. Each miss's test fails once it's fixed,
+so the list can't go stale.
 
-- Values typed `any`: nothing called on them can be resolved. Imports whose
-  types can't be found, including packages shimmed with `declare module "x";`,
-  are reported (PERM007), whether reached by `import`, `import x = require()`,
-  or a literal `import()`.
+- Values typed `any`: nothing called on them can be resolved. Where a value
+  with known capabilities becomes `any`, the escape itself is checked:
+  - A member read off a cast is looked up on the original type and reported as
+    the access it is: `(globalThis as any).fetch(url)`,
+    `(childProcess as any)["exec"](cmd)`, `(process as any).env.KEY`. Casts to
+    `Record<string, any>` and through `unknown` count too.
+  - A capability module that escapes any other way (stored, passed, or returned as
+    `any`, or read with a computed key) is unverifiable (PERM004).
+  - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
+    and `(require as any)(...)` are still `require`.
+
+  Two things stay unchecked. A global object stored as `any`
+  (`const w = window as any; w.fetch(url)`) isn't followed: that cast is common
+  and almost always harmless, so it isn't reported. And a value that was `any`
+  from the start, such as an untyped parameter, has nothing to trace. Imports
+  whose types can't be found, including packages shimmed with
+  `declare module "x";`, are reported (PERM007), whether reached by `import`,
+  `import x = require()`, or a literal `import()`.
 - `Proxy` traps, which can return a capability function for any property.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that

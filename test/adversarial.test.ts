@@ -53,6 +53,27 @@ const caught: Record<string, string> = {
   b07_unknown_cast: "export async function t(u: string) { return (fetch as unknown as (u: string) => Promise<Response>)(u); }",
   b08_proxy_typed: "const p = new Proxy({} as { go: typeof fetch }, { get: () => fetch });\nexport function t(u: string) { return p.go(u); }",
   b10_window: "export async function t(u: string) { return window.fetch(u); }",
+  a08_settimeout_string: "export function t() { (setTimeout as any)(\"require(\\\"child_process\\\").exec(\\\"ls\\\")\", 0); }",
+  a21_namespace_bracket: "import * as cp from \"node:child_process\";\nexport function t() { return (cp as any)[\"exec\"](\"ls\"); }",
+  a31_window_self: "export async function t(u: string) { return (self as any).fetch(u); }",
+  b03_globalthis_any_dot: "export async function t(u: string) { return (globalThis as any).fetch(u); }",
+  b04_any_var: "export async function t(u: string) { const x: any = fetch; return x(u); }",
+  b06_any_require: "declare const require: any;\nexport function t() { return require(\"child_process\").exec(\"ls\"); }",
+  b09_any_module: "import * as cp from \"node:child_process\";\nconst m: any = cp;\nexport function t() { return m.exec(\"ls\"); }",
+  b11_ts_ignore: "export async function t(u: string) {\n  // @ts-ignore\n  return globalThis.fetchh ? 0 : (globalThis as Record<string, any>).fetch(u);\n}",
+  c01_any_param: "import * as cp from \"node:child_process\";\nfunction use(m: any) { return m.exec(\"ls\"); }\nexport function t() { return use(cp); }",
+  c02_let_assign: "import * as cp from \"node:child_process\";\nexport function t() { let m: any; m = cp; return m.exec(\"ls\"); }",
+  c03_require_cast: "export function t() { return (require as any)(\"child_process\").exec(\"ls\"); }",
+  c04_unknown_shape_global: "export async function t(u: string) { return (globalThis as unknown as { fetch(u: string): Promise<unknown> }).fetch(u); }",
+  c05_unknown_shape_module: "import * as cp from \"node:child_process\";\nexport function t() { return (cp as unknown as { exec(c: string): void }).exec(\"ls\"); }",
+  c06_process_env_any: "export function t() { return (process as any).env.SECRET; }",
+  c07_window_computed_call: "export function t(k: string, u: string) { return (window as any)[k](u); }",
+  c08_return_module_as_any: "import * as cp from \"node:child_process\";\nfunction get(): any { return cp; }\nexport function t() { return get().exec(\"ls\"); }",
+  c09_fs_promises_any: "import fs from \"node:fs\";\nexport async function t() { return (fs as any).promises.rm(\"./data\"); }",
+  c11_module_cast_stored: "import * as cp from \"node:child_process\";\nexport function t() { const m = cp as any; return m.exec(\"ls\"); }",
+  c12_nested_global_env: "export function t() { return (globalThis as any).process.env.SECRET; }",
+  c13_module_unknown_member: "import fs from \"node:fs\";\nexport function t() { return (fs as any).someNewWrite(\"./x\"); }",
+  c14_module_computed_read: "import * as cp from \"node:child_process\";\nexport function t(k: string) { const run = (cp as any)[k]; return run(\"ls\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -70,25 +91,14 @@ const silent: Record<string, string> = {
   fp11_spy_on: "declare function spyOn(o: object, k: string): void;\nexport function t() { spyOn(globalThis as any, \"fetch\"); }",
   fp12_window_assign: "export function t() { Object.assign(window as any, { appVersion: \"1\" }); }",
   fp13_own_interface: "interface WindowOrWorkerGlobalScope { fetch(key: string): string }\ndeclare const cache: WindowOrWorkerGlobalScope;\nexport function t(k: string) { return cache.fetch(k); }",
+  b05_any_param: "export async function t(f: any, u: string) { return f(u); }",
+  fp14_window_computed_read: "export function t(k: string) { return (window as any)[k]; }",
+  fp15_harmless_module_any: "import * as path from \"node:path\";\nexport function t() { const p: any = path; return p.join(\"a\", \"b\"); }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
-  a08_settimeout_string: { why: "setTimeout with a string evaluates code in browsers; not treated as eval", code: "export function t() { (setTimeout as any)(\"require(\\\"child_process\\\").exec(\\\"ls\\\")\", 0); }" },
   a20_proxy: { why: "Proxy traps (documented limit)", code: "const p = new Proxy({}, { get: () => fetch });\nexport function t(u: string) { return (p as any).anything(u); }" },
-  a21_namespace_bracket: { why: "cast to any (documented limit)", code: "import * as cp from \"node:child_process\";\nexport function t() { return (cp as any)[\"exec\"](\"ls\"); }" },
-  a31_window_self: { why: "cast to any (documented limit)", code: "export async function t(u: string) { return (self as any).fetch(u); }" },
-  b03_globalthis_any_dot: { why: "cast to any (documented limit)", code: "export async function t(u: string) { return (globalThis as any).fetch(u); }" },
-  b04_any_var: { why: "typed any (documented limit)", code: "export async function t(u: string) { const x: any = fetch; return x(u); }" },
-  b05_any_param: { why: "parameter typed any: nothing to trace in this function", code: "export async function t(f: any, u: string) { return f(u); }" },
-  b06_any_require: { why: "require typed any (documented limit)", code: "declare const require: any;\nexport function t() { return require(\"child_process\").exec(\"ls\"); }" },
-  b09_any_module: { why: "capability module stored in an any variable (documented limit)", code: "import * as cp from \"node:child_process\";\nconst m: any = cp;\nexport function t() { return m.exec(\"ls\"); }" },
-  c01_any_param: { why: "a capability module passed into a parameter typed any", code: "import * as cp from \"node:child_process\";\nfunction use(m: any) { return m.exec(\"ls\"); }\nexport function t() { return use(cp); }" },
-  c02_let_assign: { why: "a capability module assigned to a let typed any", code: "import * as cp from \"node:child_process\";\nexport function t() { let m: any; m = cp; return m.exec(\"ls\"); }" },
-  c03_require_cast: { why: "require cast to any", code: "export function t() { return (require as any)(\"child_process\").exec(\"ls\"); }" },
-  c04_unknown_shape_global: { why: "a global cast through unknown to a hand-written type", code: "export async function t(u: string) { return (globalThis as unknown as { fetch(u: string): Promise<unknown> }).fetch(u); }" },
-  c05_unknown_shape_module: { why: "a capability module cast through unknown to a hand-written type", code: "import * as cp from \"node:child_process\";\nexport function t() { return (cp as unknown as { exec(c: string): void }).exec(\"ls\"); }" },
-  c06_process_env_any: { why: "process cast to any before reading env", code: "export function t() { return (process as any).env.SECRET; }" },
-  b11_ts_ignore: { why: "cast to Record<string, any> (documented limit)", code: "export async function t(u: string) {\n  // @ts-ignore\n  return globalThis.fetchh ? 0 : (globalThis as Record<string, any>).fetch(u);\n}" },
+  c10_global_alias_any: { why: "a global stored as any, then a capability called through it (left silent: `const w = window as any` is common and harmless)", code: "export async function t(u: string) { const w = window as any; return w.fetch(u); }" },
 };
 
 const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
@@ -115,6 +125,14 @@ const errorsIn = (name: string) =>
 
 describe("caught", () => {
   for (const name of Object.keys(caught)) it(name, () => expect(errorsIn(name).length).toBeGreaterThan(0));
+});
+
+// A named member read through a cast is reported once, as the access it is, not also as hidden.
+describe("reported as the access it is", () => {
+  const capabilities = (name: string) => errorsIn(name).map((d) => d.capability);
+  it("a21_namespace_bracket", () => expect(capabilities("a21_namespace_bracket")).toEqual(["exec"]));
+  it("c06_process_env_any", () => expect(capabilities("c06_process_env_any")).toEqual(["env(SECRET)"]));
+  it("a31_window_self", () => expect(capabilities("a31_window_self")).toEqual(["net"]));
 });
 
 describe("silent", () => {

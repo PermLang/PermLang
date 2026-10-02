@@ -9,9 +9,10 @@ import type { AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { classifyComputedCall, computedCallee } from "./computed.js";
 import { envUses } from "./env.js";
+import { anyEscapes } from "./escapes.js";
 import { fetchCapability, isUnresolvedFetch } from "./fetch.js";
 import { declarationCapabilities, isRequire, isTimer, requiresCapabilityModule } from "./functions.js";
-import { argumentsOf, callText, literalString, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
+import { argumentsOf, callText, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 import { valueUses } from "./values.js";
 import { webCapabilities } from "./web.js";
 
@@ -32,7 +33,7 @@ export function detectInFile(sourceFile: SourceFile, adapters: AdapterIndex): De
     const call = callText(node);
     found.push({ node, uses: capabilities.map((capability) => ({ capability, call, verb: "calls" })) });
   });
-  found.push(...envUses(sourceFile), ...valueUses(sourceFile, adapters));
+  found.push(...envUses(sourceFile), ...valueUses(sourceFile, adapters), ...anyEscapes(sourceFile, adapters));
   return found;
 }
 
@@ -55,6 +56,11 @@ function callCapabilities(call: CallLike, adapters: AdapterIndex): Capability[] 
   // `(() => {}).constructor("code")()` is eval without naming either.
   if (!Node.isTaggedTemplateExpression(call) && isFunctionTyped(call.getExpression())) return unverifiable;
 
+  // Types erased with `any`: `declare const require: any`, or `(setTimeout as any)("code")`.
+  if (isAnyTypedRequire(call)) return requiresCapabilityModule(literalString(argumentsOf(call)[0]), adapters) ? unverifiable : [];
+  const erased = erasedCallee(call);
+  if (erased && isTimer(erased) && evaluatesString(argumentsOf(call)[0])) return unverifiable;
+
   const declaration = resolvedDeclaration(call);
   const web = webCapabilities(call, declaration);
   if (web.length > 0) return web;
@@ -67,6 +73,27 @@ function callCapabilities(call: CallLike, adapters: AdapterIndex): Capability[] 
   }
   if (Node.isCallExpression(call) && isUnresolvedFetch(call)) return [fetchCapability(call.getArguments())];
   return [];
+}
+
+/** The declaration under a callee cast to `any`: `(setTimeout as any)`. */
+function erasedCallee(call: CallLike): Node | undefined {
+  if (Node.isTaggedTemplateExpression(call)) return undefined;
+  const written = call.getExpression();
+  const callee = unwrapExpression(written);
+  if (callee === written || !Node.isIdentifier(callee)) return undefined;
+  const symbol = callee.getSymbol();
+  return symbol ? resolveAlias(symbol).getDeclarations()[0] : undefined;
+}
+
+/**
+ * `declare const require: any; require("child_process")` or `(require as any)("child_process")`:
+ * still require, with its types erased.
+ */
+function isAnyTypedRequire(call: CallLike): boolean {
+  if (!Node.isCallExpression(call)) return false;
+  const written = call.getExpression();
+  const callee = unwrapExpression(written);
+  return Node.isIdentifier(callee) && callee.getText() === "require" && (callee.getType().isAny() || callee !== written);
 }
 
 /** An expression of the global `Function` interface type, which has no call signatures to resolve. */

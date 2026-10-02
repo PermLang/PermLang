@@ -182,6 +182,12 @@ export class AdapterIndex {
     return this.byPackage.has(packageName(name));
   }
 
+  /** A package declared pure: every adapter for it maps everything to nothing (adapters/pure.json). */
+  isPure(name: string): boolean {
+    const adapters = this.byPackage.get(packageName(name));
+    return adapters !== undefined && adapters.every((a) => (a.default ?? []).length === 0 && [...a.functions.values()].every((t) => t.length === 0));
+  }
+
   constructor(adapters: readonly Adapter[]) {
     for (const a of adapters) this.byPackage.set(a.package, [...(this.byPackage.get(a.package) ?? []), a]);
     this.vocabulary = new Set([...BUILTIN_VOCABULARY, ...adapters.flatMap((a) => a.defines)]);

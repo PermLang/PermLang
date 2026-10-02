@@ -2,6 +2,34 @@
 
 All notable changes to PermLang.
 
+## 0.2.0 (2026-10-02)
+
+This release can fail builds that passed before: code that hides a capability
+behind `any` is now reported.
+
+### Added
+
+- Capabilities hidden behind `any` are checked where they escape, while the type
+  checker still knows what the value was:
+  - A member read off a cast is looked up on the original type and reported as
+    the access it is, with its host or key: `(self as any).fetch(url)`,
+    `(cp as any)["exec"]("ls")`, `(process as any).env.KEY`. This also applies to
+    `as Record<string, any>` and to casts through `unknown`
+    (`x as unknown as { exec(): void }`).
+  - A capability module (`node:child_process`, `node:fs`, ...) that escapes some
+    other way is unverifiable (PERM004): stored as `any`, passed to a parameter
+    typed `any`, returned as `any`, read with a computed key, or a member its types
+    don't declare.
+  - `const f: any = fetch` counts as using `fetch`. `declare const require: any`,
+    `(require as any)(...)`, and `(setTimeout as any)("code")` are checked like
+    their typed forms.
+- Harmless casts stay silent: a global object (`window`, `globalThis`, `process`)
+  stored or passed as `any` (`const w = window as any`), members that aren't
+  capabilities (`(window as any).dataLayer`, `(process as any).exit()`),
+  replacing a member (`(globalThis as any).fetch = mock`), and pure modules such
+  as `node:path`. On Umami (1,338 files, 278 `as any` casts, dependencies
+  installed), this adds no findings.
+
 ## 0.1.2 (2026-10-02)
 
 ### Fixed

@@ -4,7 +4,8 @@
 //
 // Not counted: calling it (that's a call), `typeof fetch`, imports and exports,
 // type positions, and `const f = fetch` (calls through a const alias resolve to
-// the original by signature, so they're checked where they happen).
+// the original by signature, so they're checked where they happen; `const f: any
+// = fetch` erases the signature, so it does count).
 
 import { Node, SyntaxKind, type Identifier, type SourceFile } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
@@ -63,9 +64,12 @@ function isExempt(site: Node): boolean {
     return !/^(call|apply|bind)$/.test(parent.getName());
   }
   if (Node.isTypeOfExpression(parent)) return true;
-  // A const alias: calls through it resolve by signature.
+  // A const alias: calls through it resolve by signature. Not when an annotation erases the
+  // signature (`const f: any = fetch`): nothing called through it can be resolved, so the
+  // reference itself is the use.
   if (Node.isVariableDeclaration(parent) && parent.getInitializer() === site && Node.isIdentifier(parent.getNameNode())) {
-    return parent.getVariableStatement()?.getDeclarationKind() === "const";
+    const keepsSignature = parent.getType().getCallSignatures().length > 0;
+    return parent.getVariableStatement()?.getDeclarationKind() === "const" && keepsSignature;
   }
   for (const a of site.getAncestors()) {
     if (Node.isTypeNode(a) || Node.isImportDeclaration(a) || Node.isExportDeclaration(a) || Node.isExportAssignment(a)) {
