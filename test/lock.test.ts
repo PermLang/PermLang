@@ -53,6 +53,10 @@ describe("lock file", () => {
       "error unannotated net(helper.example)",
       "warning gone exec",
     ]);
+    // New access points at the line that reaches it (`return helper();`), not the function's first
+    // line, so a pull-request annotation lands on the change.
+    const added = report.diagnostics.find((d) => d.code === "PERM005" && d.severity === "error")!;
+    expect(`${added.line}:${added.column}`).toBe("8:10");
   });
 
   it("passes when the lock matches", () => {

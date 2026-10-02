@@ -17,11 +17,15 @@
       "fs.read"
     ],
     "src/cli.ts#<module>": [
+      "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
+      "fs.read(package-lock.json)",
       "fs.read(permlang.config.json)",
+      "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
+      "fs.read(yarn.lock)",
       "fs.write",
       "fs.write(.github/workflows/permlang.yml)"
     ],
@@ -31,6 +35,7 @@
       "fs.read(tsconfig.json)"
     ],
     "src/cli.ts#check": [
+      "env(GITHUB_WORKSPACE)",
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
@@ -50,10 +55,18 @@
     "src/cli.ts#init": [
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
+      "fs.read(package-lock.json)",
       "fs.read(permlang.config.json)",
+      "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
+      "fs.read(yarn.lock)",
       "fs.write",
       "fs.write(.github/workflows/permlang.yml)"
+    ],
+    "src/cli.ts#installSteps": [
+      "fs.read(package-lock.json)",
+      "fs.read(pnpm-lock.yaml)",
+      "fs.read(yarn.lock)"
     ],
     "src/cli.ts#lock": [
       "fs.read",
@@ -65,11 +78,15 @@
       "exec"
     ],
     "src/cli.ts#main": [
+      "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
+      "fs.read(package-lock.json)",
       "fs.read(permlang.config.json)",
+      "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
+      "fs.read(yarn.lock)",
       "fs.write",
       "fs.write(.github/workflows/permlang.yml)"
     ],
@@ -81,6 +98,11 @@
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
+    ],
+    "src/cli.ts#workflowFile": [
+      "fs.read(package-lock.json)",
+      "fs.read(pnpm-lock.yaml)",
+      "fs.read(yarn.lock)"
     ],
     "src/spec/parse.ts#parseSpecs": [
       "fs.read"

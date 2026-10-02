@@ -91,7 +91,8 @@ runs:
         set -f  # ARGS is split on spaces, like a command line, but never glob-expanded.
         extra=()
         [ -n "$STRICTNESS" ] && extra+=(--strictness "$STRICTNESS")
-        node "$PERMLANG" check $ARGS "${extra[@]}"
+        # Annotations put each problem on its line in the pull request's "Files changed" tab.
+        node "$PERMLANG" check $ARGS "${extra[@]}" --github-annotations
         echo "exit-code=$?" >> "$GITHUB_OUTPUT"
 
     - name: Comment the permission diff

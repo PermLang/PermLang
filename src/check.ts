@@ -64,6 +64,8 @@ export interface FunctionReport {
   actual: string[];
   /** For each actual capability: the units on the way to it, then the call that uses it. */
   via: Record<string, string[]>;
+  /** For each actual capability: where in this function it's reached (a direct use, or the call leading to it). */
+  sites: Record<string, { line: number; column: number }>;
 }
 
 /** A function whose checks are suppressed by @perm-unsafe. Always reported. */
@@ -264,6 +266,10 @@ function summarize(unit: Unit, reach: Reach): FunctionReport {
     declared: [...new Set(declaredCapabilities(unit).map(formatCapability))],
     actual: [...reach.get(unit)!.keys()],
     via,
+    sites: Object.fromEntries([...reach.get(unit)!].map(([key, p]) => {
+      const site = p.edge ?? p.use;
+      return [key, { line: site.line, column: site.column }];
+    })),
   };
 }
 

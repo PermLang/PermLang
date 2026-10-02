@@ -232,9 +232,10 @@ it. From then on:
 
 - **`permlang check` fails when the code reaches something the lock doesn't
   record** (PERM005), at every strictness level, sketch included. New access
-  can't land without the lock changing, so it always shows up in review.
-  Access that was removed is a warning: the lock is stale, but nothing new can
-  happen.
+  can't land without the lock changing, so it always shows up in review. The
+  error points at the line that reaches the new access, such as the new `fetch`
+  or the call into a helper that makes it. Access that was removed is a warning:
+  the lock is stale, but nothing new can happen.
 - **`permlang diff <base-ref> [paths...]` shows what changed since `base-ref`**, one row per
   new capability, with where it happens and which functions can now reach it:
 
@@ -268,13 +269,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - run: npm ci --ignore-scripts   # or pnpm / yarn; see below
       - uses: PermLang/permlang@v0
         with:
           args: src            # or --project tsconfig.json
 ```
 
+**Install dependencies before the Action.** PermLang reads code through the
+TypeScript compiler, so it needs your dependencies' types, `@types/node` above
+all. Without them, file, process, and environment access are invisible, and the
+check reports `PERM007` warnings instead of what the code does.
+`permlang init --workflow` writes this step for npm, pnpm, or yarn, based on
+your lockfile. Install scripts aren't needed for types; if you generate code,
+such as with `prisma generate`, run that too.
+
 The Action runs `permlang check`, fails the build on errors, and posts the
-permission diff as a pull-request comment, updating it on later pushes. This repository runs it on itself (see
+permission diff as a pull-request comment, updating it on later pushes. Each
+problem also appears as an annotation on its line in the pull request's
+**Files changed** tab, and in the check's summary. GitHub shows up to 10 error
+and 10 warning annotations per step; the full list is in the log and the
+comment. This repository runs it on itself (see
 `.github/workflows/permlang.yml` and `permlang.lock.json`).
 
 `@v0` follows the latest 0.x release. A minor release (0.2, 0.3, ...) can
@@ -290,6 +307,7 @@ npm test                                           # conformance + unit tests
 npm run permlang -- init src                        # set up a project: sketch config + first lock
 npm run permlang -- check fixtures/m1 --no-lock    # run the checker from source
 npm run permlang -- check src --json               # JSON report of declared vs. actual permissions
+npm run permlang -- check src --github-annotations # also print GitHub Actions annotations (the Action does this)
 npm run permlang -- lock src                       # write permlang.lock.json
 npm run permlang -- diff origin/main               # permission changes since main
 npm run permlang -- spec src                       # check .perm specs against the code

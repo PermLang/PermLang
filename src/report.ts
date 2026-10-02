@@ -53,6 +53,33 @@ export function toJson(report: Report, cwd = process.cwd()): string {
   );
 }
 
+/**
+ * GitHub Actions workflow commands, one per diagnostic, so each shows on its line in a pull
+ * request. `root` is the repository root (GITHUB_WORKSPACE), which annotation paths are relative to.
+ * Errors come first: GitHub shows only the first few annotations of each kind per step.
+ */
+export function formatAnnotations(report: Report, root: string): string {
+  const ordered = [...report.diagnostics].sort((a, b) => Number(a.severity !== "error") - Number(b.severity !== "error"));
+  return ordered
+    .map((d) => {
+      const message = d.message.split("\n").map((l) => l.trim()).join("\n") + (d.fix ? `\n-> ${d.fix}` : "");
+      const title = `PermLang ${d.code}${d.capability ? `: ${d.capability}` : ""}`;
+      const properties = [`file=${property(relative(d.file, root))}`, `line=${d.line}`, `col=${d.column}`, `title=${property(title)}`];
+      return `::${d.severity === "error" ? "error" : "warning"} ${properties.join(",")}::${data(message)}`;
+    })
+    .join("\n");
+}
+
+// GitHub's escaping for workflow commands: the message can't contain a raw newline, which would
+// let code text start a command of its own; properties also can't contain `:` or `,`.
+function data(text: string): string {
+  return text.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+}
+
+function property(text: string): string {
+  return data(text).replaceAll(":", "%3A").replaceAll(",", "%2C");
+}
+
 function relative(file: string, cwd: string): string {
   return path.relative(cwd, file).replaceAll("\\", "/");
 }
