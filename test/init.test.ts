@@ -40,6 +40,9 @@ describe("permlang init", () => {
       "src/app.ts#ping": ["net(api.example.com)"],
     });
     expect(out).toMatch(/Next steps/);
+    // Sketch still fails on access the lock doesn't record, so init mustn't say nothing fails.
+    expect(out).toContain("new access the lock file doesn't record still fails");
+    expect(out).not.toMatch(/nothing fails/);
     expect(permlang("check", "src").code).toBe(0);
   });
 

@@ -20,8 +20,8 @@ import {
   type Strictness,
   type UnmappedPolicy,
 } from "./check.js";
-import { formatDiffMarkdown, formatDiffText, type ViaPaths } from "./diff.js";
-import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockFile } from "./lock.js";
+import { formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
+import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockDiff, type LockFile } from "./lock.js";
 import { formatText, toJson } from "./report.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
@@ -90,6 +90,10 @@ function main(argv: string[]): number {
     console.log(pkg.version);
     return 0;
   }
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log(USAGE);
+    return 0;
+  }
   try {
     const args = parseArgs(rest);
     if (command === "init") return init(args);
@@ -148,7 +152,7 @@ function init(args: Args): number {
       throw new UsageError(`Strictness must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
     }
     writeFileSync(configFile, `${JSON.stringify({ strictness }, null, 2)}\n`);
-    const meaning = strictness === "sketch" ? ": permissions are inferred and reported, and nothing fails yet" : "";
+    const meaning = strictness === "sketch" ? ": rules are reported, not enforced; new access the lock file doesn't record still fails" : "";
     done.push(`Wrote ${configFile} (strictness ${strictness}${meaning}).`);
   }
 
@@ -269,17 +273,27 @@ function diff(args: Args): number {
   const baseLock = lockAt(base, lockFile);
   let headLock: LockFile;
   let via: ViaPaths = {};
+  // Access the code reaches that the committed lock doesn't record. A pull request that adds
+  // access without running `permlang lock` must still show it: the comment is what reviewers read.
+  let unrecorded: LockDiff | undefined;
   if (args.head) {
     const found = lockAt(args.head, lockFile);
     if (!found) throw new UsageError(`${lockFile} doesn't exist at ${args.head}.`);
     headLock = found;
   } else {
     if (!existsSync(lockFile)) throw new UsageError(`No ${lockFile}. Run \`permlang lock\` first.`);
-    headLock = parseLock(readFileSync(lockFile, "utf8"), lockFile);
-    // The working tree can be analyzed, so new access can be shown with its path.
-    // Best effort: the diff comes from the locks; analysis only adds where new access happens.
+    const diskLock = parseLock(readFileSync(lockFile, "utf8"), lockFile);
+    headLock = diskLock;
+    // The working tree is the truth: diff the base against what the code reaches now, not only
+    // what the lock says. If the code can't be analyzed, fall back to the lock file alone.
     try {
-      via = viaPaths(analyze({ ...args, paths: sources }, undefined), path.dirname(path.resolve(lockFile)));
+      const root = path.dirname(path.resolve(lockFile));
+      const report = analyze({ ...args, paths: sources }, undefined);
+      via = viaPaths(report, root);
+      const codeLock = buildLock(report, root);
+      const pending = diffLocks(diskLock, codeLock);
+      if (pending.functions.some((f) => f.added.length > 0) || pending.unsafeAdded.length > 0) unrecorded = pending;
+      headLock = codeLock;
     } catch (e) {
       if (!(e instanceof UsageError)) throw e;
       console.error(`Showing the diff without paths: ${e.message}`);
@@ -287,8 +301,9 @@ function diff(args: Args): number {
   }
 
   const changes = diffLocks(baseLock, headLock);
-  if (args.format === "json") console.log(JSON.stringify({ base, head: args.head ?? "working tree", ...changes, via }, null, 2));
-  else console.log(args.format === "markdown" ? formatDiffMarkdown(changes, via) : formatDiffText(changes, via));
+  const notes: DiffNotes = { unrecorded: unrecorded !== undefined, lockFile: path.basename(lockFile) };
+  if (args.format === "json") console.log(JSON.stringify({ base, head: args.head ?? "working tree", ...changes, via, unrecorded: unrecorded ?? null }, null, 2));
+  else console.log(args.format === "markdown" ? formatDiffMarkdown(changes, via, notes) : formatDiffText(changes, via, notes));
   return 0;
 }
 

@@ -59,6 +59,31 @@ describe("permlang diff", () => {
     expect(out).toContain("No permission changes");
   });
 
+  it("shows access the lock doesn't record yet, so a PR that skips `permlang lock` isn't reported as clean", () => {
+    expect(permlang("init", "my lib").code).toBe(0);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    // An AI-style change: new network access, lock file left untouched.
+    writeFileSync(path.join(dir, "my lib", "app.ts"), `export async function ping() {\n  return fetch("https://data-broker.io/");\n}\n`);
+    git("add", "-A");
+    git("commit", "-q", "-m", "change without lock");
+
+    const md = permlang("diff", "HEAD~1", "my lib", "--format", "markdown");
+    expect(md.code).toBe(0);
+    expect(md.out).toContain("Not approved yet");
+    expect(md.out).toContain("<code>+ net(data-broker.io)</code>");
+    expect(md.out).not.toContain("No permission changes");
+
+    const json = JSON.parse(permlang("diff", "HEAD~1", "my lib", "--format", "json").out) as { unrecorded: unknown };
+    expect(json.unrecorded).not.toBeNull();
+
+    // Once the lock is updated, the warning goes away and the access is still listed.
+    expect(permlang("lock", "my lib").code).toBe(0);
+    const approved = permlang("diff", "HEAD~1", "my lib", "--format", "markdown").out;
+    expect(approved).not.toContain("Not approved yet");
+    expect(approved).toContain("<code>+ net(data-broker.io)</code>");
+  });
+
   it("accepts an absolute --lock path", () => {
     permlang("init", "my lib");
     git("add", "-A");
@@ -75,6 +100,17 @@ describe("configuration errors", () => {
     const { code, out } = permlang("check", "my lib");
     expect(code).toBe(2);
     expect(out).toMatch(/permlang\.config\.json.*object/);
+  });
+});
+
+describe("help", () => {
+  it("prints usage for a subcommand's --help instead of an unknown-option error", () => {
+    for (const command of ["check", "lock", "diff", "init", "spec"]) {
+      const { code, out } = permlang(command, "--help");
+      expect(code).toBe(0);
+      expect(out).toContain("Usage:");
+      expect(out).not.toContain("Unknown option");
+    }
   });
 });
 

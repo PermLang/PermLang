@@ -2,6 +2,21 @@
 
 All notable changes to PermLang.
 
+## 0.1.2 (2026-10-02)
+
+### Fixed
+
+- The pull-request comment said "No permission changes" when a change added
+  access without updating `permlang.lock.json`. `permlang diff` now compares the
+  base against what the code reaches, and warns "Not approved yet" when the lock
+  hasn't caught up. The check itself already failed; the comment now agrees.
+- `window.fetch` and `self.fetch` with lib.dom or lib.webworker types weren't
+  detected: they resolve to `WindowOrWorkerGlobalScope.fetch`, not the global
+  function.
+- `permlang <command> --help` printed an unknown-option error instead of usage.
+- `permlang init` no longer says "nothing fails yet" in sketch mode, since new
+  access the lock doesn't record does fail.
+
 ## 0.1.1 (2026-10-01)
 
 ### Added
