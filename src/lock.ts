@@ -101,11 +101,14 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
     const fn = locations.get(change.key);
     const at = fn ? { file: fn.file, line: fn.line } : { file: lockFile, line: 1 };
     for (const capability of change.added) {
+      // At the line that reaches it, so the error (and its pull-request annotation) lands on the change.
+      const site = fn?.sites[capability];
       out.push({
         severity: "error",
         code: "PERM005",
         ...at,
-        column: 1,
+        ...(site ? { line: site.line } : {}),
+        column: site?.column ?? 1,
         function: change.name,
         capability,
         call: "",

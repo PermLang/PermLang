@@ -103,6 +103,17 @@ describe("configuration errors", () => {
   });
 });
 
+describe("permlang check --github-annotations", () => {
+  it("adds a GitHub annotation on the line of each diagnostic, after the usual report", () => {
+    const { code, out } = permlang("check", "my lib", "--no-lock", "--github-annotations");
+    expect(code).toBe(1);
+    expect(out).toContain("my lib/app.ts:2:10 error PERM003");
+    expect(out).toMatch(/^::error file=my lib\/app\.ts,line=2,col=10,title=PermLang PERM003%3A net\(api\.example\.com\)::ping calls fetch/m);
+    // Without the option, no workflow commands.
+    expect(permlang("check", "my lib", "--no-lock").out).not.toContain("::error");
+  });
+});
+
 describe("help", () => {
   it("prints usage for a subcommand's --help instead of an unknown-option error", () => {
     for (const command of ["check", "lock", "diff", "init", "spec"]) {

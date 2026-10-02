@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * The permlang command: check, lock, diff. It reads sources, config, and lock
- * files, writes the lock file, and runs `git show` to read a committed lock.
+ * files, writes the lock file, and runs `git show` to read a committed lock. In
+ * GitHub Actions it reads GITHUB_WORKSPACE, so annotations name files from the repository root.
  * @module
- * @perm fs.read, fs.write, exec
+ * @perm fs.read, fs.write, exec, env(GITHUB_WORKSPACE)
  */
 
 import { execFileSync } from "node:child_process";
@@ -22,7 +23,7 @@ import {
 } from "./check.js";
 import { formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockDiff, type LockFile } from "./lock.js";
-import { formatText, toJson } from "./report.js";
+import { formatAnnotations, formatText, toJson } from "./report.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
 
@@ -46,6 +47,7 @@ Options:
   --lock <file>                   lock file (default: ./permlang.lock.json)
   --no-lock                       check: don't compare against the lock file
   --json                          check: print the JSON report
+  --github-annotations            check: also print a GitHub Actions annotation per diagnostic
   --head <ref>                    diff: compare against this commit instead of the working tree
   --format <text|markdown|json>   diff: output format (default: text)
   --workflow                      init: also add .github/workflows/permlang.yml
@@ -74,6 +76,7 @@ interface Args {
   workflow: boolean;
   specs: string[];
   json: boolean;
+  githubAnnotations: boolean;
   head?: string;
   format: string;
 }
@@ -112,7 +115,7 @@ function main(argv: string[]): number {
 }
 
 function parseArgs(rest: string[]): Args {
-  const args: Args = { paths: [], adapters: [], specs: [], noLock: false, workflow: false, json: false, format: "text" };
+  const args: Args = { paths: [], adapters: [], specs: [], noLock: false, workflow: false, json: false, githubAnnotations: false, format: "text" };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]!;
     const value = () => {
@@ -121,6 +124,7 @@ function parseArgs(rest: string[]): Args {
       return v;
     };
     if (arg === "--json") args.json = true;
+    else if (arg === "--github-annotations") args.githubAnnotations = true;
     else if (arg === "--no-lock") args.noLock = true;
     else if (arg === "--workflow") args.workflow = true;
     else if (arg === "--spec") args.specs.push(value());
@@ -219,6 +223,8 @@ function check(args: Args): number {
   const lock = useLock ? { file: path.resolve(lockFile), contents: parseLock(readFileSync(lockFile, "utf8"), lockFile) } : undefined;
   const report = analyze(args, lock);
   console.log(args.json ? toJson(report) : formatText(report));
+  // In GitHub Actions, each diagnostic then shows on its line in the pull request.
+  if (args.githubAnnotations && report.diagnostics.length > 0) console.log(formatAnnotations(report, process.env.GITHUB_WORKSPACE ?? process.cwd()));
   return report.diagnostics.some((d) => d.severity === "error") ? 1 : 0;
 }
 

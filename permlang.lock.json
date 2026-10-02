@@ -17,6 +17,7 @@
       "fs.read"
     ],
     "src/cli.ts#<module>": [
+      "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",
@@ -31,6 +32,7 @@
       "fs.read(tsconfig.json)"
     ],
     "src/cli.ts#check": [
+      "env(GITHUB_WORKSPACE)",
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
@@ -65,6 +67,7 @@
       "exec"
     ],
     "src/cli.ts#main": [
+      "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
       "fs.read(.github/workflows/permlang.yml)",

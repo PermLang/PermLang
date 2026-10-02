@@ -2,6 +2,21 @@
 
 All notable changes to PermLang.
 
+## 0.2.1 (2026-10-02)
+
+### Added
+
+- The GitHub Action annotates each problem on its line in the pull request
+  (the **Files changed** tab and the check summary), not only in the log and the
+  comment. On the command line, this is `permlang check --github-annotations`.
+- The JSON report records, for each capability a function reaches, the line and
+  column where it reaches it (`sites`).
+
+### Changed
+
+- A new access the lock doesn't record (PERM005) now points at the line that
+  reaches it, such as the new `fetch`, instead of the function's first line.
+
 ## 0.2.0 (2026-10-02)
 
 This release can fail builds that passed before: code that hides a capability
