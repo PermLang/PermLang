@@ -32,7 +32,8 @@ jobs:
         run: |
           version=$(node -p "require('./package.json').version")
           private=$(node -p "require('./package.json').private === true")
-          if [ "$TAG" != "v$version" ]; then echo "::error::Release tag $TAG doesn't match package.json version $version."; exit 1; fi
+          if [ "$TAG" = "$version" ]; then echo "::error::Release tags start with v: delete this release and its tag, then create the release v$version."; exit 1; fi
+          if [ "$TAG" != "v$version" ]; then echo "::error::Release tag $TAG doesn't match package.json version $version: it should be v$version."; exit 1; fi
           if [ "$private" = "true" ]; then echo "::error::package.json is still marked private."; exit 1; fi
       - run: npm ci
       - run: npm run typecheck
