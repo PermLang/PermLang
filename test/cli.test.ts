@@ -15,8 +15,11 @@ const cli = path.join(repo, "src", "cli.ts");
 let dir: string;
 
 function permlang(...args: string[]): { code: number; out: string } {
+  // The temporary repository is the workspace, as it would be in its own GitHub Actions run.
+  // (When these tests run in Actions, GITHUB_WORKSPACE is PermLang's own checkout.)
+  const env = { ...process.env, GITHUB_WORKSPACE: dir };
   try {
-    return { code: 0, out: execFileSync(process.execPath, [tsx, cli, ...args], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
+    return { code: 0, out: execFileSync(process.execPath, [tsx, cli, ...args], { cwd: dir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }) };
   } catch (e) {
     const err = e as { status: number; stdout: string; stderr: string };
     return { code: err.status, out: err.stdout + err.stderr };
@@ -111,6 +114,17 @@ describe("permlang check --github-annotations", () => {
     expect(out).toMatch(/^::error file=my lib\/app\.ts,line=2,col=10,title=PermLang PERM003%3A net\(api\.example\.com\)::ping calls fetch/m);
     // Without the option, no workflow commands.
     expect(permlang("check", "my lib", "--no-lock").out).not.toContain("::error");
+  });
+
+  it("names files from the repository root (GITHUB_WORKSPACE), not the folder it runs in", () => {
+    const run = (env: NodeJS.ProcessEnv) => {
+      try {
+        return execFileSync(process.execPath, [tsx, cli, "check", ".", "--no-lock", "--github-annotations"], { cwd: path.join(dir, "my lib"), env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      } catch (e) {
+        return (e as { stdout: string }).stdout;
+      }
+    };
+    expect(run({ ...process.env, GITHUB_WORKSPACE: dir })).toMatch(/^::error file=my lib\/app\.ts,line=2/m);
   });
 });
 

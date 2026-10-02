@@ -2,7 +2,11 @@
 
 All notable changes to PermLang.
 
-## 0.2.1 (2026-10-02)
+## 0.2.2 (2026-10-02)
+
+The changes below were tagged as 0.2.1, but that release stopped before
+publishing: a test failed only in GitHub Actions, where `GITHUB_WORKSPACE` is set.
+0.2.1 was never on npm; 0.2.2 is the same release with the test fixed.
 
 ### Added
 
