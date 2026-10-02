@@ -103,8 +103,9 @@ every pull request. Commit all three. The [getting started guide](docs/getting-s
 walks through the rest in about ten minutes.
 
 > [!NOTE]
-> **This is PermLang's first release (v0.1).** Feedback, false positives, and
-> missed access are all welcome as [issues](https://github.com/PermLang/permlang/issues).
+> **PermLang is new (v0.x).** Feedback, false positives, and missed access are
+> all welcome as [issues](https://github.com/PermLang/permlang/issues). See the
+> [changelog](CHANGELOG.md) for what each release changes.
 
 ## What it can't see (yet)
 
