@@ -6,9 +6,10 @@ The npm package is `permlang`, owned by the npm user `parkweb`, with the
 ## Making a release
 
 1. Merge a PR that bumps `version` in `package.json` (and `package-lock.json`)
-   and dates the `CHANGELOG.md` section.
-2. On GitHub, create a release with the tag `v<version>` (for example `v0.2.1`)
-   on `main`.
+   and dates the `CHANGELOG.md` section, **once all its checks have passed**.
+   The release runs the same tests and stops before publishing if they fail.
+2. On GitHub, create a release with the tag `v<version>`, including the `v`
+   (for example `v0.2.3`), on `main`.
 
 The [release workflow](../.github/workflows/release.yml) checks that the tag
 matches `package.json`, runs the tests, publishes to npm with provenance, and
@@ -40,13 +41,20 @@ from a clean `main`). The package's npm settings then got a Trusted Publisher:
 | --- | --- |
 | Publisher | GitHub Actions |
 | Organization or user | `PermLang` |
-| Repository | `permlang` |
+| Repository | `PermLang` |
 | Workflow filename | `release.yml` |
 | Environment | *(empty)* |
 | Allowed actions | **Allow `npm publish`** ticked |
 
 Without **Allow `npm publish`**, npm only lets the workflow stage a release, and
 publishing fails with `OIDC permission denied for this action`.
+
+The repository name must match GitHub's exactly, capitals included: npm compares
+the name GitHub reports when the workflow signs in. When the repository was
+renamed from `permlang` to `PermLang` (2026-10-02), publishing failed with
+`404 Not Found - PUT https://registry.npmjs.org/permlang` until the connection
+was recreated. If the repository is renamed again, recreate the connection
+(npm doesn't let you edit it) before the next release.
 
 **Publishing access** is set to "Require two-factor authentication and disallow
 tokens", so only the workflow, or a person with 2FA, can publish.
