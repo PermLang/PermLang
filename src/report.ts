@@ -1,7 +1,65 @@
-// Human-readable and JSON output for a check report.
+// Human-readable, JSON, GitHub annotation, and SARIF output for a check report.
 
 import path from "node:path";
 import type { Diagnostic, Report } from "./check.js";
+
+/** What each diagnostic code means, for SARIF rules (and the reference's list of codes). */
+const RULES: Record<Diagnostic["code"], string> = {
+  PERM001: "A function reaches a capability its @perm doesn't declare.",
+  PERM002: "An @perm annotation is invalid.",
+  PERM003: "A function that must declare its permissions has no @perm.",
+  PERM004: "Code whose effects can't be determined statically.",
+  PERM005: "The code reaches something permlang.lock.json doesn't record, or no longer reaches something it does.",
+  PERM006: "A call into a package with no adapter: what it touches isn't checked.",
+  PERM007: "An import whose types can't be found: nothing called from it is checked.",
+  SPEC001: "A .perm spec file is invalid.",
+  SPEC002: "A .perm spec's implementation can't be found.",
+  SPEC003: "A spec's implementation reaches something its perms don't allow.",
+  SPEC004: "A spec allows a permission its implementation never uses.",
+};
+const HELP = "https://github.com/PermLang/PermLang/blob/main/docs/reference.md#diagnostic-codes";
+
+/**
+ * SARIF 2.1.0, the format GitHub code scanning reads: findings then show in the repository's
+ * Security tab. Paths are relative to `root`, the repository root. An empty report is an empty
+ * run, so alerts for fixed problems close.
+ */
+export function toSarif(report: Report, root: string, version: string): string {
+  const codes = [...new Set(report.diagnostics.map((d) => d.code))].sort();
+  const results = report.diagnostics.map((d) => ({
+    ruleId: d.code,
+    ruleIndex: codes.indexOf(d.code),
+    level: d.severity === "error" ? "error" : "warning",
+    message: { text: d.message.split("\n").map((l) => l.trim()).join(" ") + (d.fix ? ` Fix: ${d.fix}` : "") },
+    locations: [
+      {
+        physicalLocation: {
+          artifactLocation: { uri: relative(d.file, root), uriBaseId: "%SRCROOT%" },
+          region: { startLine: d.line, startColumn: d.column },
+        },
+      },
+    ],
+    properties: { capability: d.capability, function: d.function },
+  }));
+  const sarif = {
+    $schema: "https://json.schemastore.org/sarif-2.1.0.json",
+    version: "2.1.0",
+    runs: [
+      {
+        tool: {
+          driver: {
+            name: "PermLang",
+            version,
+            informationUri: "https://github.com/PermLang/PermLang",
+            rules: codes.map((id) => ({ id, shortDescription: { text: RULES[id] }, helpUri: HELP })),
+          },
+        },
+        results,
+      },
+    ],
+  };
+  return JSON.stringify(sarif, null, 2);
+}
 
 export function formatText(report: Report, cwd = process.cwd()): string {
   const lines = report.diagnostics.map((d) => formatDiagnostic(d, cwd));

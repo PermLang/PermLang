@@ -144,6 +144,21 @@ Other gaps, not yet in fixtures:
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
   order, so adding one can renumber the others and show spurious lock changes.
 
+## Diagnostic codes
+
+| Code | Severity | Meaning |
+| --- | --- | --- |
+| `PERM001` | error | A function reaches a capability its `@perm` doesn't declare. |
+| `PERM002` | error | An `@perm` annotation is invalid. |
+| `PERM003` | error | A function that must declare its permissions has no `@perm`: exported functions at development, every function at production. See [strictness levels](#strictness-levels). |
+| `PERM004` | error | Code whose effects can't be determined statically, such as `eval` or a capability hidden behind `any`. |
+| `PERM005` | error, or warning when access was removed | The code reaches something `permlang.lock.json` doesn't record, or no longer reaches something it does. |
+| `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
+| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
+| `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
+
+Sketch strictness reports everything but fails only on `PERM005`.
+
 ## Capabilities
 
 | Capability | Meaning | Matching |
@@ -299,6 +314,34 @@ detect more and fail builds that passed before; the [changelog](../CHANGELOG.md)
 says when. To upgrade on your own schedule, pin an exact release instead, such
 as `PermLang/permlang@v0.2.0`.
 
+**Code scanning.** Set `sarif: true` to also upload the findings to GitHub code
+scanning, where they appear in the repository's **Security** tab next to
+CodeQL's, and close on their own once fixed. The workflow needs
+`security-events: write` in its `permissions:`. The upload is best effort: on a
+pull request from a fork, whose token is read-only, it's skipped and the check
+still runs.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+# ...
+      - uses: PermLang/permlang@v0
+        with:
+          args: src
+          sarif: true
+```
+
+| Input | Default | Meaning |
+| --- | --- | --- |
+| `args` | | Arguments for `permlang check`: source paths, or `--project tsconfig.json`. |
+| `strictness` | | `sketch`, `development`, or `production`. Overrides `permlang.config.json`. |
+| `working-directory` | `.` | Where the code, `permlang.config.json`, and `permlang.lock.json` are. |
+| `comment` | `true` | Post the permission diff as a pull-request comment. |
+| `sarif` | `false` | Also upload the findings to code scanning. |
+| `github-token` | `github.token` | Token for the comment. |
+
 ## Usage
 
 ```bash
@@ -308,6 +351,7 @@ npm run permlang -- init src                        # set up a project: sketch c
 npm run permlang -- check fixtures/m1 --no-lock    # run the checker from source
 npm run permlang -- check src --json               # JSON report of declared vs. actual permissions
 npm run permlang -- check src --github-annotations # also print GitHub Actions annotations (the Action does this)
+npm run permlang -- check src --sarif out.sarif    # also write the findings as SARIF, for code scanning
 npm run permlang -- lock src                       # write permlang.lock.json
 npm run permlang -- diff origin/main               # permission changes since main
 npm run permlang -- spec src                       # check .perm specs against the code

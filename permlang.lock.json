@@ -38,7 +38,8 @@
       "env(GITHUB_WORKSPACE)",
       "fs.read",
       "fs.read(permlang.config.json)",
-      "fs.read(tsconfig.json)"
+      "fs.read(tsconfig.json)",
+      "fs.write"
     ],
     "src/cli.ts#diff": [
       "exec",
@@ -89,6 +90,9 @@
       "fs.read(yarn.lock)",
       "fs.write",
       "fs.write(.github/workflows/permlang.yml)"
+    ],
+    "src/cli.ts#packageVersion": [
+      "fs.read"
     ],
     "src/cli.ts#readConfig": [
       "fs.read",

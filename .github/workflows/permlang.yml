@@ -1,7 +1,7 @@
 name: PermLang
 
-# PermLang checks its own source with its own GitHub Action, and comments the
-# permission diff on pull requests.
+# PermLang checks its own source with its own GitHub Action, comments the
+# permission diff on pull requests, and uploads its findings to code scanning.
 
 on:
   pull_request:
@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   pull-requests: write
+  security-events: write # the sarif upload
 
 jobs:
   permissions:
@@ -20,3 +21,4 @@ jobs:
       - uses: ./
         with:
           args: src
+          sarif: true
