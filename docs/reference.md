@@ -277,6 +277,11 @@ The Action runs `permlang check`, fails the build on errors, and posts the
 permission diff as a pull-request comment, updating it on later pushes. This repository runs it on itself (see
 `.github/workflows/permlang.yml` and `permlang.lock.json`).
 
+`@v0` follows the latest 0.x release. A minor release (0.2, 0.3, ...) can
+detect more and fail builds that passed before; the [changelog](../CHANGELOG.md)
+says when. To upgrade on your own schedule, pin an exact release instead, such
+as `PermLang/permlang@v0.2.0`.
+
 ## Usage
 
 ```bash
@@ -288,6 +293,8 @@ npm run permlang -- check src --json               # JSON report of declared vs.
 npm run permlang -- lock src                       # write permlang.lock.json
 npm run permlang -- diff origin/main               # permission changes since main
 npm run permlang -- spec src                       # check .perm specs against the code
+npm run permlang -- --version                      # the installed version
+npm run permlang -- check --help                   # usage (any command)
 ```
 
 Exit codes: `0` no errors, `1` permission errors, `2` usage or configuration error.

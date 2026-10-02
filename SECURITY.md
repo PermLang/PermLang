@@ -4,9 +4,13 @@ PermLang is a security tool, so a way to get past it is a security bug.
 
 ## Supported versions
 
+Fixes go into the latest release. Before 1.0, only the newest minor version is
+supported.
+
 | Version | Supported |
 | --- | --- |
-| 0.1.x | ✅ |
+| 0.2.x | ✅ |
+| 0.1.x | ❌ Upgrade to 0.2 |
 
 ## Reporting a vulnerability
 

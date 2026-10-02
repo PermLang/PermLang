@@ -5,7 +5,9 @@ All notable changes to PermLang.
 ## 0.2.0 (2026-10-02)
 
 This release can fail builds that passed before: code that hides a capability
-behind `any` is now reported.
+behind `any` is now reported. GitHub Action users on `@v0` get this release
+automatically; pin `@v0.1.2` to stay on the previous behavior while you fix
+what it finds.
 
 ### Added
 

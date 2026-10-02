@@ -67,7 +67,8 @@ src/leads.ts:8:1 error PERM005: handleLead can now reach net(api.data-broker.io)
 
 If the access is intended, run `npx permlang lock` and commit the lock change.
 Reviewers see it in the pull request, and the Action's comment shows where the
-new access happens and which functions can now reach it:
+new access happens and which functions can now reach it. Until the lock change is
+committed, the comment is marked **Not approved yet**, matching the failing check:
 
 ```bash
 npx permlang diff origin/main
