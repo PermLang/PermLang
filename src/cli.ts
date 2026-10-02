@@ -192,6 +192,18 @@ function init(args: Args): number {
 }
 
 /** A workflow that runs the PermLang Action on the same files init checked. */
+/**
+ * How to install the project's dependencies in CI, from its lockfile. PermLang reads code through
+ * the TypeScript compiler: without the dependencies' types (`@types/node` above all), file, process,
+ * and environment access are invisible. Install scripts are skipped; they aren't needed for types.
+ */
+function installSteps(): string[] {
+  if (existsSync("pnpm-lock.yaml")) return ["      - run: corepack enable", "      - run: pnpm install --frozen-lockfile --ignore-scripts"];
+  if (existsSync("yarn.lock")) return ["      - run: corepack enable", "      - run: yarn install --ignore-scripts"];
+  if (existsSync("package-lock.json")) return ["      - run: npm ci --ignore-scripts --no-audit --no-fund"];
+  return ["      - run: npm install --ignore-scripts --no-audit --no-fund"];
+}
+
 function workflowFile(args: Args): string {
   const selection = args.project ? `--project ${args.project}` : args.paths.join(" ");
   const withArgs = selection ? `\n        with:\n          args: ${selection}` : "";
@@ -212,6 +224,12 @@ function workflowFile(args: Args): string {
     "    runs-on: ubuntu-latest",
     "    steps:",
     "      - uses: actions/checkout@v7",
+    "      - uses: actions/setup-node@v7",
+    "        with:",
+    "          node-version: lts/*",
+    "      # PermLang needs your dependencies' types (@types/node above all) to see file, process,",
+    "      # and environment access. If you generate code, such as `prisma generate`, add it here too.",
+    ...installSteps(),
     `      - uses: PermLang/permlang@v0${withArgs}`,
     "",
   ].join("\n");

@@ -61,6 +61,25 @@ describe("permlang init", () => {
     expect(workflow).toContain("pull-requests: write");
   });
 
+  // Without the dependencies' types, CI can't see file, process, or environment access (found
+  // by the demo repository: its check passed while missing them).
+  it("installs dependencies before checking, with the project's package manager", () => {
+    const steps = (lockfile?: string) => {
+      rmSync(path.join(dir, ".github"), { recursive: true, force: true });
+      for (const f of ["package-lock.json", "pnpm-lock.yaml", "yarn.lock"]) rmSync(path.join(dir, f), { force: true });
+      if (lockfile) writeFileSync(path.join(dir, lockfile), "");
+      permlang("init", "src", "--workflow");
+      return readFileSync(path.join(dir, ".github", "workflows", "permlang.yml"), "utf8");
+    };
+    const npm = steps("package-lock.json");
+    expect(npm).toContain("uses: actions/setup-node@v7");
+    expect(npm.indexOf("npm ci --ignore-scripts")).toBeGreaterThan(npm.indexOf("setup-node"));
+    expect(npm.indexOf("PermLang/permlang@v0")).toBeGreaterThan(npm.indexOf("npm ci --ignore-scripts"));
+    expect(steps("pnpm-lock.yaml")).toContain("pnpm install --frozen-lockfile --ignore-scripts");
+    expect(steps("yarn.lock")).toContain("yarn install --ignore-scripts");
+    expect(steps()).toContain("npm install --ignore-scripts");
+  });
+
   it("doesn't write the workflow unless asked", () => {
     permlang("init", "src");
     expect(existsSync(path.join(dir, ".github"))).toBe(false);

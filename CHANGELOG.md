@@ -17,6 +17,16 @@ All notable changes to PermLang.
 - A new access the lock doesn't record (PERM005) now points at the line that
   reaches it, such as the new `fetch`, instead of the function's first line.
 
+### Fixed
+
+- The workflow `permlang init --workflow` writes now installs your dependencies
+  before running PermLang (npm, pnpm, or yarn, from your lockfile, without
+  install scripts). Without them, `@types/node` was missing in CI, so file,
+  process, and environment access went unseen, with only `PERM007` warnings.
+  **If you set up PermLang with an earlier version,** add `actions/setup-node`
+  and an install step (`npm ci --ignore-scripts`) before the PermLang step; see
+  the reference.
+
 ## 0.2.0 (2026-10-02)
 
 This release can fail builds that passed before: code that hides a capability

@@ -269,10 +269,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+      - run: npm ci --ignore-scripts   # or pnpm / yarn; see below
       - uses: PermLang/permlang@v0
         with:
           args: src            # or --project tsconfig.json
 ```
+
+**Install dependencies before the Action.** PermLang reads code through the
+TypeScript compiler, so it needs your dependencies' types, `@types/node` above
+all. Without them, file, process, and environment access are invisible, and the
+check reports `PERM007` warnings instead of what the code does.
+`permlang init --workflow` writes this step for npm, pnpm, or yarn, based on
+your lockfile. Install scripts aren't needed for types; if you generate code,
+such as with `prisma generate`, run that too.
 
 The Action runs `permlang check`, fails the build on errors, and posts the
 permission diff as a pull-request comment, updating it on later pushes. Each

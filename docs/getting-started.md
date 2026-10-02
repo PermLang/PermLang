@@ -35,7 +35,7 @@ This writes three files. Commit all of them:
 | --- | --- |
 | `permlang.config.json` | Settings. Starts at `"strictness": "sketch"`: everything is reported, and nothing fails yet. |
 | `permlang.lock.json` | What every function can reach today: network hosts, files, database tables, environment variables, processes. |
-| `.github/workflows/permlang.yml` | Runs PermLang on every pull request and comments the permission diff. |
+| `.github/workflows/permlang.yml` | Installs your dependencies (for their types), then runs PermLang on every pull request and comments the permission diff. |
 
 ## 3. Review what you have
 
