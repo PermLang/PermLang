@@ -101,6 +101,17 @@ Then raise `"strictness"` in `permlang.config.json`:
 
 Set `"unmapped": "error"` to require every package to be mapped or declared pure.
 
+## 6. Show it (optional)
+
+Let visitors know your project's permissions are checked. Add this badge to your
+README:
+
+[![Permissions: checked by PermLang](https://img.shields.io/badge/permissions-checked%20by%20PermLang-2B3BFF)](https://github.com/PermLang/PermLang)
+
+```markdown
+[![Permissions: checked by PermLang](https://img.shields.io/badge/permissions-checked%20by%20PermLang-2B3BFF)](https://github.com/PermLang/PermLang)
+```
+
 ## Reference
 
 - Capabilities and matching rules, adapters, and known limits: [Reference](reference.md)
