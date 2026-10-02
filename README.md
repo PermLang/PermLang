@@ -12,9 +12,11 @@ A safety check for TypeScript projects. It notices when a change makes your code
 contact a new server, read or write files, use a secret, or change your database,
 and makes sure someone sees it before it's merged.
 
-[Get started](docs/getting-started.md) · [How it works](#how-it-works) · [Reference](docs/reference.md)
+[Get started](docs/getting-started.md) · [How it works](#how-it-works) · [Reference](docs/reference.md) · [Live demo](https://github.com/PermLang/permlang-demo/pull/1)
 
 </div>
+
+[![A pull request where the tests pass but PermLang fails: the change adds net(api.data-broker.io), reached from enrich and handleLead](https://raw.githubusercontent.com/PermLang/PermLang/main/docs/images/pr-check.png)](https://github.com/PermLang/permlang-demo/pull/1)
 
 ---
 
@@ -37,14 +39,12 @@ in plain view, on the pull request.
 | 2️⃣ | **Check every change** | On each pull request, PermLang compares the new code to the inventory. |
 | 3️⃣ | **Show what's new** | Anything new is posted as a comment on the pull request, and the check fails until someone approves it by updating the inventory. |
 
-The pull-request comment looks like this:
-
-> | New access | Where it happens | Now reachable from |
-> | --- | --- | --- |
-> | `+ net(api.data-broker.io)` | `scoreLead`<br>`axios.post("https://api.data-broker.io/v2/enrich", ...)` | `scoreLead`, `handleLead` |
-
+The image at the top is a real pull request: it adds an `enrich` helper that
+sends each lead's email and phone number to `api.data-broker.io`. The tests still
+pass. PermLang fails the check, marks the line, and comments with what's new.
 In words: *this change makes the code send data to `api.data-broker.io` from
-the `scoreLead` function, and `handleLead` can now trigger it too.*
+`enrich`, and `handleLead` can now trigger it too.*
+[See the pull request](https://github.com/PermLang/permlang-demo/pull/1).
 
 ## What it watches
 
