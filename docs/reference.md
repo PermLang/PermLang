@@ -225,7 +225,14 @@ it. From then on:
   | --- | --- | --- |
   | `+ net(api.data-broker.io)` | `scoreLead`<br>axios.post("https://api.data-broker.io/v2/enrich", ...) | `scoreLead`, `handleLead` |
 
-`--format markdown` produces the pull-request comment; `--format json` is for tools.
+  The diff compares `base-ref`'s lock with what the code reaches now, not only
+  with the lock file on disk. When the code reaches access the lock doesn't record
+  yet, the diff still lists it and adds a **Not approved yet** warning until
+  `permlang lock` is run and committed. With `--head <ref>`, it compares two
+  committed lock files.
+
+`--format markdown` produces the pull-request comment; `--format json` is for
+tools, and includes `unrecorded`: the access the lock doesn't record yet, or `null`.
 
 The check compares against `./permlang.lock.json` whenever it exists. When
 checking other files from the same folder (like the fixtures here), pass

@@ -12,7 +12,13 @@ export function fetchCapability(args: readonly Node[]): Capability {
 
 /** The global fetch from lib.dom or @types/node, however it was reached. */
 export function isGlobalFetch(declaration: Node): boolean {
-  return isGlobalLibFunction(declaration, "fetch");
+  if (isGlobalLibFunction(declaration, "fetch")) return true;
+  // `window.fetch` and `self.fetch` resolve to the method lib.dom and lib.webworker declare on
+  // WindowOrWorkerGlobalScope, not to the global function.
+  if (!Node.isMethodSignature(declaration) || declaration.getName() !== "fetch") return false;
+  if (!declaration.getSourceFile().isDeclarationFile()) return false;
+  const owner = declaration.getParent();
+  return Node.isInterfaceDeclaration(owner) && owner.getName() === "WindowOrWorkerGlobalScope";
 }
 
 /**

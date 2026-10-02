@@ -10,8 +10,18 @@ export type ViaPaths = Record<string, Record<string, string[]>>;
 /** Marks PermLang's comment so the GitHub Action updates it instead of adding another. */
 export const COMMENT_MARKER = "<!-- permlang-diff -->";
 
-export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths): string {
+/** Whether the code reaches access the lock file doesn't record yet, and which lock file. */
+export type DiffNotes = { unrecorded?: boolean; lockFile?: string };
+
+function unrecordedSentence(notes: DiffNotes, lock: string): string {
+  return `This change reaches access that ${lock} doesn't record yet, so the check fails. To approve it, run \`permlang lock\` and commit ${lock}.`;
+}
+
+export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNotes = {}): string {
   const lines = [COMMENT_MARKER, "### PermLang permission diff", ""];
+  if (notes.unrecorded) {
+    lines.push(`> [!WARNING]\n> **Not approved yet.** ${unrecordedSentence(notes, code(notes.lockFile ?? "permlang.lock.json"))}`, "");
+  }
   const gaining = diff.functions.filter((f) => f.added.length > 0);
   const losing = diff.functions.filter((f) => f.removed.length > 0);
 
@@ -57,8 +67,9 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths): string {
   return lines.join("\n");
 }
 
-export function formatDiffText(diff: LockDiff, via: ViaPaths): string {
+export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes = {}): string {
   const out: string[] = [];
+  if (notes.unrecorded) out.push(`Not approved yet: ${unrecordedSentence(notes, notes.lockFile ?? "permlang.lock.json")}`);
   for (const f of diff.functions) {
     const head = `${f.file} ${f.name}${f.status === "added" ? " (new)" : f.status === "removed" ? " (removed)" : ""}`;
     const rows = [
@@ -69,7 +80,8 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths): string {
   }
   for (const u of diff.unsafeAdded) out.push(`${u.key}\n  + @perm-unsafe: ${u.reason}`);
   for (const u of diff.unsafeRemoved) out.push(`${u.key}\n  - @perm-unsafe`);
-  return out.length === 0 ? "No permission changes." : out.join("\n\n");
+  const changed = out.length > (notes.unrecorded ? 1 : 0);
+  return changed ? out.join("\n\n") : [...out, "No permission changes."].join("\n\n");
 }
 
 function byCapability(changes: readonly FunctionChange[]): Map<string, FunctionChange[]> {
