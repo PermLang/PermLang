@@ -11,6 +11,7 @@ import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
 import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
+import { projectFiles } from "./project-files.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
@@ -66,6 +67,8 @@ export interface FunctionReport {
   via: Record<string, string[]>;
   /** For each actual capability: where in this function it's reached (a direct use, or the call leading to it). */
   sites: Record<string, { line: number; column: number }>;
+  /** A configuration file (a workflow, an Action, package.json) rather than code; see project-files.ts. */
+  kind?: "config";
 }
 
 /** A function whose checks are suppressed by @perm-unsafe. Always reported. */
@@ -108,6 +111,11 @@ export interface CheckOptions {
   lock?: { file: string; contents: LockFile };
   /** How to report calls into packages with no adapter: warn (default), error, or trust (report only). */
   unmapped?: UnmappedPolicy;
+  /**
+   * The repository root whose configuration is also recorded: its GitHub workflows and
+   * Actions, and package.json scripts (see project-files.ts). The CLI passes the lock's folder.
+   */
+  projectRoot?: string;
 }
 
 export type UnmappedPolicy = "warn" | "error" | "trust";
@@ -186,6 +194,9 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     functions.push(summarize(unit, reach));
     diagnostics.push(...diagnose(unit, edgesFrom.get(unit) ?? [], reach, strictness));
   }
+
+  // Configuration files are recorded like functions: what they grant, at the line that grants it.
+  if (options.projectRoot) functions.push(...projectFiles(options.projectRoot));
 
   const unsafe = [...units.values()].flatMap((u) =>
     u.own?.unsafe ? [{ file: u.file, line: u.own.unsafe.line, function: u.name, reason: u.own.unsafe.reason }] : [],

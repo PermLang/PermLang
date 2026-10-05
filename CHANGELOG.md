@@ -2,6 +2,23 @@
 
 All notable changes to PermLang.
 
+## 0.3.0 (unreleased)
+
+This release can fail builds that passed before, when a pull request changes
+what a workflow or script grants. Upgrading itself doesn't: see below.
+
+### Added
+
+- **Project configuration in the lock.** GitHub workflows, composite Actions,
+  and `package.json` scripts are recorded like functions: their triggers, token
+  permissions per job, secrets, Actions (and whether they're pinned to a
+  commit), and scripts. A change that adds a permission, a secret, an unpinned
+  Action, or a `postinstall` hook fails the check at that line and shows in the
+  pull-request comment, until `permlang lock` records it.
+- A lock written before 0.3 has no configuration in it. The first check after
+  upgrading reports it as warnings, not failures; run `permlang lock` to record
+  it.
+
 ## 0.2.4 (2026-10-02)
 
 ### Added

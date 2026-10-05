@@ -175,6 +175,38 @@ determined statically, for example `fetch(url)` or a template path like
 `` `./data/${name}` ``. *(Provisional: this answers open question 1 in the design
 doc and may change after review.)*
 
+## Project configuration
+
+Workflows and scripts grant as much as code does, and AI agents edit them as
+readily. So the lock also records, for the folder it lives in:
+
+- **GitHub workflows** (`.github/workflows/*.yml`), and **composite Actions**
+  (`action.yml`, `.github/actions/**/action.yml`);
+- **`package.json` scripts.**
+
+Each file is an entry in the lock, keyed by its path (for example
+`.github/workflows/ci.yml#<ci.yml>`), and what it grants are its capabilities:
+
+| Capability | Meaning |
+| --- | --- |
+| `ci.trigger(event)` | An event the workflow runs on, such as `pull_request_target`. |
+| `ci.permission(scope: level)` | A token permission a job gets, from its own `permissions:` or the workflow's. `ci.permission(write-all)` and `ci.permission(read-all)` for the shorthands; `ci.permission(default)` when neither sets any, so the token gets the repository's default, which can be write access to everything. |
+| `ci.secret(NAME)` | A secret the file reads (`secrets.NAME`). `ci.secret(inherit)` for `secrets: inherit`; `ci.secret(all)` for `toJSON(secrets)`. |
+| `ci.action(owner/repo)` | An Action or reusable workflow a step or job runs (`uses:`). |
+| `ci.unpinned(owner/repo)` | ...referenced by a tag or branch rather than an exact commit, so what runs can change without a change here. |
+| `npm.script(name: command)` | A `package.json` script and its command, lifecycle hooks such as `postinstall` included. |
+| `ci.unverifiable`, `npm.unverifiable` | A file PermLang can't parse. It's recorded rather than skipped, so it can't hide anything. |
+
+A change that adds one fails the check (`PERM005`) at the line that grants it,
+and shows in the pull-request comment, until `permlang lock` records it. That's
+the same review gate as for code. Updating a pinned Action to a new commit
+doesn't change the lock, but switching it to a tag does. Steps' `run:` commands
+aren't recorded yet.
+
+**Upgrading from 0.2:** a lock written before 0.3 records no configuration. The
+first check after upgrading reports each entry as a warning instead of failing,
+and `permlang lock` records them.
+
 ## Adapter manifests
 
 A manifest maps a package's functions to capabilities. Keys are

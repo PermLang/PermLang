@@ -106,6 +106,24 @@ describe("configuration errors", () => {
   });
 });
 
+describe("project configuration", () => {
+  it("fails a change that adds a secret to a workflow, and shows it in the comment", () => {
+    const workflow = path.join(dir, ".github", "workflows", "ci.yml");
+    mkdirSync(path.dirname(workflow), { recursive: true });
+    writeFileSync(workflow, "on: [pull_request]\npermissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n");
+    expect(permlang("init", "my lib").code).toBe(0);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(workflow, "on: [pull_request]\npermissions:\n  contents: read\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: npm test\n        env:\n          TOKEN: ${{ secrets.DEPLOY_KEY }}\n");
+
+    const check = permlang("check", "my lib");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain(".github/workflows/ci.yml:10:18 error PERM005: .github/workflows/ci.yml now grants ci.secret(DEPLOY_KEY)");
+    const md = permlang("diff", "HEAD", "my lib", "--format", "markdown").out;
+    expect(md).toContain("<code>+ ci.secret(DEPLOY&#95;KEY)</code> | <code>&lt;ci.yml&gt;</code><br><sub>secrets.DEPLOY&#95;KEY</sub>");
+  });
+});
+
 describe("permlang diff: new dependencies", () => {
   it("lists packages the change adds, what PermLang knows about them, and their install scripts", () => {
     writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { zod: "^3.0.0" } }));

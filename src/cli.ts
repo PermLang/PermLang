@@ -359,6 +359,8 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
     ...(strictness ? { strictness: strictness as Strictness } : {}),
     ...(unmapped ? { unmapped: unmapped as UnmappedPolicy } : {}),
     ...(lock ? { lock } : {}),
+    // Workflows, Actions, and package.json scripts, from the folder the lock lives in.
+    projectRoot: path.dirname(path.resolve(args.lock ?? DEFAULT_LOCK)),
   };
 
   if (args.project !== undefined) return checkTsConfig(args.project, options);
