@@ -28,6 +28,7 @@ npx permlang init src --workflow
 ```
 
 Use `--project tsconfig.json` instead of `src` to check a TypeScript project's files.
+In a monorepo, run it in the package you want checked.
 
 This writes three files. Commit all of them:
 

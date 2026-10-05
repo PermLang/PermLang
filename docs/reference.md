@@ -452,6 +452,26 @@ check reports `PERM007` warnings instead of what the code does.
 your lockfile. Install scripts aren't needed for types; if you generate code,
 such as with `prisma generate`, run that too.
 
+What `init --workflow` writes:
+
+- **pnpm and Yarn** come through Corepack, which the workflow installs from npm
+  first (`npm install --global corepack@latest`), since Node 25 and later no
+  longer include it. Yarn 2 and later (a `.yarnrc.yml`, or a Yarn 2 lockfile)
+  install with `--immutable --mode=skip-build`; Yarn 1 with
+  `--frozen-lockfile --ignore-scripts`.
+- **Triggers**: pull requests, merge queues (`merge_group`), and pushes to the
+  repository's default branch (from `origin`'s HEAD, else `main`).
+- **In a monorepo package**, run `init` in the package: the workflow goes in
+  the repository's `.github/workflows/`, named after the package
+  (`permlang-packages-api.yml`), with `working-directory` set to it.
+  Dependencies install at the repository root, where the lockfile is.
+- **Paths** are written with forward slashes. A path with a space can't be
+  passed in the Action's `args`, so `init` refuses it; list such files in a
+  `tsconfig.json` and use `--project`.
+
+`init` keeps an existing config, workflow, or lock. It writes the workflow
+before the lock, so the lock records it and the first pull request passes.
+
 The Action runs `permlang check`, fails the build on errors, and posts the
 permission diff as a pull-request comment, updating it on later pushes. Each
 problem also appears as an annotation on its line in the pull request's
