@@ -22,6 +22,12 @@ declare module "@modelcontextprotocol/sdk/server/mcp.js" {
     constructor(info: object);
     tool(name: string, schema: object, handler: (args: any) => unknown): void;
     registerTool(name: string, config: object, handler: (args: any) => unknown): void;
+    sendLoggingMessage(message: object): Promise<void>;
+  }
+}
+declare module "@modelcontextprotocol/sdk/client/streamableHttp.js" {
+  export class StreamableHTTPClientTransport {
+    constructor(url: URL);
   }
 }
 declare module "@modelcontextprotocol/sdk/server/index.js" {
@@ -65,8 +71,16 @@ export function start() {
   server.registerTool("save_note", { description: "Save a note" }, async ({ text }: { text: string }) => {
     writeFileSync("./notes/" + Date.now(), text);
   });
-  server.tool("ping", {}, async () => ({ ok: true }));
+  // Talking to the connected client isn't network access.
+  server.tool("ping", {}, async () => {
+    await server.sendLoggingMessage({ level: "info", data: "ping" });
+    return { ok: true };
+  });
   return server;
+}`,
+  client: `import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+export function connectRemote() {
+  return new StreamableHTTPClientTransport(new URL("https://mcp.example.com/mcp"));
 }`,
   lowlevel: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -173,6 +187,12 @@ describe("tools given to AI models", () => {
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
     expect(run({ tools: "trust" }).tools).toHaveLength(8);
+  });
+
+  it("counts an MCP client's connection as network access, and a server talking to its client as none", () => {
+    const report = run();
+    expect(report.functions.find((f) => f.name === "connectRemote")!.actual).toEqual(["net(mcp.example.com)"]);
+    expect(report.functions.find((f) => f.name === "start")!.actual).toEqual(["fs.write"]);
   });
 
   it("still charges the code that registers a tool with what the tool reaches", () => {

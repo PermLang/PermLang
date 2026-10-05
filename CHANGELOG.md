@@ -33,8 +33,17 @@ what a workflow or script grants. Upgrading itself doesn't: see below.
 
 ### Fixed
 
-- Declaring a tool with the Vercel AI SDK's `tool()`, or registering one on an
-  MCP server, no longer counts as network access.
+- Declaring a tool with the Vercel AI SDK's `tool()` no longer counts as network
+  access.
+- The MCP adapter counted every SDK call as network access to any host. A server
+  talking to its connected client (`sendLoggingMessage`, `listRoots`,
+  `createMessage`, registering tools and prompts) reaches nothing; a client's
+  HTTP, SSE, or WebSocket transport reaches the host it connects to, and a stdio
+  transport counts as `exec`. On the official MCP example servers, this took
+  the tool warnings from 10 to the 1 real one (a tool that fetches a URL the
+  model chooses).
+- `new URL("/path", "https://host")` with literal parts now names its host, for
+  `fetch` and adapters, instead of counting as any host.
 
 ## 0.2.4 (2026-10-02)
 

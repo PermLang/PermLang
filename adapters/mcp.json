@@ -1,14 +1,11 @@
 {
   "permlang": 1,
   "package": ["@modelcontextprotocol/client", "@modelcontextprotocol/sdk"],
-  "default": ["net"],
+  "default": [],
   "functions": {
-    "McpServer.tool": [],
-    "McpServer.registerTool": [],
-    "McpServer.prompt": [],
-    "McpServer.registerPrompt": [],
-    "McpServer.resource": [],
-    "McpServer.registerResource": [],
-    "Server.setRequestHandler": []
+    "StreamableHTTPClientTransport.constructor": ["net({host:0})"],
+    "SSEClientTransport.constructor": ["net({host:0})"],
+    "WebSocketClientTransport.constructor": ["net({host:0})"],
+    "StdioClientTransport.constructor": ["exec"]
   }
 }
