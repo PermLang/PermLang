@@ -18,7 +18,7 @@ import { YamlFile } from "./yaml-nodes.js";
 export const MANIFESTS = ["package.json", "package.json5", "package.yaml"];
 
 /** Every package, when PermLang can't tell which are workspaces; pnpm's default too. */
-const EVERY_PACKAGE = ["**"];
+export const EVERY_PACKAGE = ["**"];
 
 /** Records a manifest's scripts. Returns the workspace patterns a package.json lists. */
 export function readManifest(name: string, text: string, sink: Sink): string[] {

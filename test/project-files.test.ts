@@ -7,8 +7,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { checkFiles } from "../src/check.js";
+import { expressionsIn, literalOf, secretsRead } from "../src/ci-expressions.js";
 import { buildLock } from "../src/lock.js";
 import { projectFiles } from "../src/project-files.js";
+import { YamlFile } from "../src/yaml-nodes.js";
 
 const PIN = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -451,6 +453,44 @@ describe("secrets, however an expression writes them", () => {
     );
     expect(grants(root)).toEqual(["ci.action(actions/github-script)", "ci.trigger(push)"]);
   });
+
+  it("reads conditions in every form: ${{ }}, plain, a literal with a quote in it, or a boolean", () => {
+    const root = workflow(
+      "on: push",
+      "permissions: {}",
+      "jobs:",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - if: ${{ secrets.WRAPPED != '' && github.event_name == 'push' }}",
+      "        run: echo",
+      "      - if: ${{ 'secrets.QUOTED != ''''' }}",
+      "        run: echo",
+      "      - if: false",
+      "        run: echo",
+    );
+    expect(grants(root)).toEqual(["ci.secret(QUOTED)", "ci.secret(WRAPPED)", "ci.trigger(push)"]);
+  });
+
+  it("reads an expression GitHub would reject as unclosed to the end, so nothing in it is skipped", () => {
+    expect(grants(workflow("on: push", "permissions: {}", "env:", "  T: ${{ secrets.UNCLOSED"))).toEqual(["ci.secret(UNCLOSED)", "ci.trigger(push)"]);
+  });
+
+  it("records a reusable workflow's secrets passed by name, and `secrets: inherit` in any case", () => {
+    const root = workflow(
+      "on: push",
+      "permissions: {}",
+      "jobs:",
+      "  named:",
+      `    uses: org/shared/.github/workflows/deploy.yml@${PIN}`,
+      "    secrets:",
+      "      token: ${{ secrets.DEPLOY_TOKEN }}",
+      "  all:",
+      `    uses: org/shared/.github/workflows/deploy.yml@${PIN}`,
+      "    secrets: Inherit",
+    );
+    expect(grants(root)).toEqual(["ci.action(org/shared/.github/workflows/deploy.yml)", "ci.secret(DEPLOY_TOKEN)", "ci.secret(inherit)", "ci.trigger(push)"]);
+  });
 });
 
 // --- Permissions --------------------------------------------------------------------
@@ -461,6 +501,101 @@ describe("empty permissions", () => {
     expect(grants(none)).toEqual(["ci.trigger(push)"]);
     const empty = workflow("on: push", "jobs:", "  a:", "    runs-on: ubuntu-latest", "    permissions:", "    steps: [{ run: echo }]");
     expect(grants(empty)).toEqual(["ci.permission(default)", "ci.trigger(push)"]);
+  });
+
+  it("can't read a permission with no level, or a block that's a list, and says so", () => {
+    for (const block of ["permissions:\n      contents:\n      issues: write", "permissions: { contents, issues: write }", "permissions: [contents]"]) {
+      const root = workflow("on: push", "jobs:", "  a:", "    runs-on: ubuntu-latest", `    ${block}`, "    steps: [{ run: echo }]");
+      const issues = block.includes("issues") ? ["ci.permission(issues: write)"] : [];
+      expect(grants(root), block).toEqual([...issues, "ci.trigger(push)", expect.stringMatching(UNVERIFIABLE)]);
+    }
+  });
+
+  it("reads a `<<` whose value isn't a mapping as an ordinary key, as YAML 1.1 does", () => {
+    const root = workflow("on: push", "jobs:", "  a:", "    runs-on: ubuntu-latest", "    permissions: { <<: write }", "    steps: [{ run: echo }]");
+    expect(grants(root)).toEqual(["ci.permission(<<: write)", "ci.trigger(push)"]);
+  });
+});
+
+// --- GitHub's rules for expressions and YAML values ------------------------------------
+
+describe("GitHub's rules for expressions and values", () => {
+  it("finds each ${{ }} as GitHub does: a }} inside quotes doesn't close it, and an unclosed one runs to the end", () => {
+    expect(expressionsIn("a ${{ x }} b ${{ format('}}', y) }} c")).toEqual([" x ", " format('}}', y) "]);
+    expect(expressionsIn("echo ${{ secrets.A }} ${{ secrets.B")).toEqual([" secrets.A ", " secrets.B"]);
+    expect(expressionsIn("no expressions")).toEqual([]);
+  });
+
+  it("reads ${{ 'text' }} as the text only when it's the whole value and a single string", () => {
+    expect(literalOf("${{ 'pull_request_target' }}")).toBe("pull_request_target");
+    expect(literalOf("${{'it''s'}}")).toBe("it's");
+    expect(literalOf("${{ '' }}")).toBe("");
+    for (const text of ["push", "${{ 'a' }} b", "x ${{ 'a' }}", "${{ 'a' || 'b' }}", "${{ inputs.x }}", "${{ }}", "${{ 'unterminated }}", "${{ 'a'"]) {
+      expect(literalOf(text), text).toBe(text);
+    }
+  });
+
+  it("names the secrets an expression reads, and `all` for any other use of the context", () => {
+    expect(secretsRead("secrets.a && SECRETS [ \"b\" ] || Secrets.C-D")).toEqual(["A", "B", "C-D"]);
+    expect(secretsRead("secrets.*")).toEqual(["all"]);
+    expect(secretsRead("secrets . 1")).toEqual(["all"]);
+    expect(secretsRead("github.secrets.x || inputs.secrets || 'secrets.y'")).toEqual([]);
+  });
+
+  it("reads a number, boolean, or empty value as its text, as GitHub converts them", () => {
+    const yaml = new YamlFile("a: 1\nb: true\nc:\nd: ${{ 'x' }}\ne: [1]\n");
+    expect(yaml.fields(yaml.root()).map((f) => [f.key, yaml.text(f.value.node)])).toEqual([
+      ["a", "1"],
+      ["b", "true"],
+      ["c", ""],
+      ["d", "x"],
+      ["e", undefined],
+    ]);
+  });
+
+  it("skips a key that isn't text, which GitHub rejects", () => {
+    const yaml = new YamlFile("? [permissions]\n: write-all\non: push\n");
+    expect(yaml.fields(yaml.root()).map((f) => f.key)).toEqual(["on"]);
+  });
+});
+
+// --- Triggers and jobs ----------------------------------------------------------------
+
+describe("triggers and jobs in other shapes", () => {
+  it("reads triggers written as a flow mapping, and skips an empty one", () => {
+    expect(grants(workflow("on: { push, pull_request_target }", "permissions: {}"))).toEqual(["ci.trigger(pull_request_target)", "ci.trigger(push)"]);
+    expect(grants(workflow("on: [push, ~]", "permissions: {}"))).toEqual(["ci.trigger(push)"]);
+  });
+
+  it("skips a job, or steps, that aren't written as GitHub requires: GitHub rejects the file", () => {
+    const root = workflow(
+      "on: push",
+      "jobs:",
+      "  broken: not a job",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    permissions: {}",
+      "    steps: { uses: evil/not-a-list@main }",
+    );
+    expect(grants(root)).toEqual(["ci.trigger(push)"]);
+  });
+
+  it("reads steps grouped under `parallel:`, each group once", () => {
+    const root = workflow(
+      "on: push",
+      "permissions: {}",
+      "jobs:",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - parallel: &group",
+      "          - uses: evil/a@main",
+      "          - run: echo",
+      "      - parallel: *group",
+      "      - parallel:",
+      `          - uses: actions/checkout@${PIN}`,
+    );
+    expect(grants(root)).toEqual(["ci.action(actions/checkout)", "ci.action(evil/a)", "ci.trigger(push)", "ci.unpinned(evil/a)"]);
   });
 });
 
@@ -488,6 +623,12 @@ describe("which files are read", () => {
     expect(inventory(root)).toEqual({
       ".github/workflows/broken.yml": [expect.stringMatching(UNVERIFIABLE)],
       ".github/workflows/ok.yml": ["ci.trigger(push)"],
+    });
+  });
+
+  it("finds no workflows when .github is a file, rather than stopping the check", () => {
+    expect(inventory(repo({ ".github": "not a folder\n", "package.json": JSON.stringify({ scripts: { test: "vitest" } }) }))).toEqual({
+      "package.json": ["npm.script(test: vitest)"],
     });
   });
 
@@ -578,15 +719,17 @@ describe("local Actions and container images", () => {
   it("records a local path that names a file, or no possible folder, as unpinned instead of crashing", () => {
     const root = repo({
       // YAML's "\0" is a NUL character, which no file system allows in a path.
-      ".github/workflows/w.yml": 'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./scripts/deploy.sh\n      - uses: "./a\\0b"\n',
+      ".github/workflows/w.yml": 'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./scripts/deploy.sh\n      - uses: ./scripts/deploy.sh/inner\n      - uses: "./a\\0b"\n',
       "scripts/deploy.sh": "echo deploy\n",
     });
     expect(grants(root)).toEqual([
       "ci.action(./a\u0000b)",
       "ci.action(./scripts/deploy.sh)",
+      "ci.action(./scripts/deploy.sh/inner)",
       "ci.trigger(push)",
       "ci.unpinned(./a\u0000b)",
       "ci.unpinned(./scripts/deploy.sh)",
+      "ci.unpinned(./scripts/deploy.sh/inner)",
     ]);
   });
 
@@ -682,6 +825,21 @@ describe("local Actions and container images", () => {
     expect(grants(root)).toEqual(["ci.action(docker://node)", "ci.trigger(push)", "ci.unpinned(docker://node)", expect.stringMatching(UNVERIFIABLE)]);
   });
 
+  it("can't tell which containers an expression adds, and says so; an empty image runs nothing", () => {
+    const expression = (lines: string[]) =>
+      grants(workflow("on: push", "permissions: {}", "jobs:", "  a:", "    runs-on: ubuntu-latest", ...lines.map((l) => `    ${l}`), "    steps: [{ run: echo }]"));
+    // The whole services block, a service's name, or a key of the container (GitHub's `insert`).
+    expect(expression(["services: ${{ fromJSON(inputs.services) }}"])).toEqual(["ci.trigger(push)", expect.stringMatching(UNVERIFIABLE)]);
+    expect(expression(["services:", "  ${{ inputs.db }}: postgres:16"])).toEqual(["ci.trigger(push)", expect.stringMatching(UNVERIFIABLE)]);
+    expect(expression(["container:", "  image: node:22", "  ${{ insert }}: ${{ fromJSON(inputs.extra) }}"])).toEqual([
+      "ci.action(docker://node)",
+      "ci.trigger(push)",
+      "ci.unpinned(docker://node)",
+      expect.stringMatching(UNVERIFIABLE),
+    ]);
+    expect(expression(["container:", "  image: ''", "  options: --cpus 1"])).toEqual(["ci.trigger(push)"]);
+  });
+
   it("reads `uses` only where GitHub runs it: steps, and jobs that call a reusable workflow", () => {
     const root = repo({
       ".github/workflows/w.yml": "on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo\n        env:\n          uses: evil/env@main\n      - uses: ok/action@" + PIN + "\n        with:\n          uses: evil/with@main\n",
@@ -763,6 +921,90 @@ describe("workspace packages' scripts", () => {
   it("can't read a workspace list it doesn't understand, and says so", () => {
     expect(inventory(repo({ "pnpm-workspace.yaml": "packages: [unclosed\n" }))).toEqual({ "pnpm-workspace.yaml": [expect.stringMatching(UNVERIFIABLE)] });
     expect(inventory(repo({ "package.json": pkg({}, { workspaces: "packages/*" }) }))).toEqual({ "package.json": [expect.stringMatching(UNVERIFIABLE)] });
+  });
+
+  it("records every package's scripts when it can't tell which are workspaces", () => {
+    const anywhere = { "deep/tool/package.json": pkg({ postinstall: "node tool.js" }) };
+    const tool = { "deep/tool/package.json": ["npm.script(postinstall: node tool.js)"] };
+    for (const workspaces of ["packages/*", { packages: "packages/*" }, ["packages/*", 7]]) {
+      expect(inventory(repo({ "package.json": pkg({}, { workspaces }), ...anywhere })), JSON.stringify(workspaces)).toEqual({
+        "package.json": [expect.stringMatching(UNVERIFIABLE)],
+        ...tool,
+      });
+    }
+    for (const packages of ["packages: packages/*\n", "packages:\n  - { name: a }\n"]) {
+      expect(inventory(repo({ "pnpm-workspace.yaml": packages, ...anywhere })), packages).toEqual({ "pnpm-workspace.yaml": [expect.stringMatching(UNVERIFIABLE)], ...tool });
+    }
+    // A pnpm-workspace.yaml that isn't a file can't be read at all.
+    const folder = repo(anywhere);
+    mkdirSync(path.join(folder, "pnpm-workspace.yaml"));
+    expect(inventory(folder)).toEqual({ "pnpm-workspace.yaml": [expect.stringMatching(UNVERIFIABLE)], ...tool });
+  });
+
+  it("finds no workspaces in a `workspaces` object without `packages`, or an empty `packages:`", () => {
+    const anywhere = { "deep/tool/package.json": pkg({ postinstall: "node tool.js" }) };
+    expect(inventory(repo({ "package.json": pkg({ test: "vitest" }, { workspaces: { nohoist: ["**/react-native"] } }), ...anywhere }))).toEqual({
+      "package.json": ["npm.script(test: vitest)"],
+    });
+    // pnpm takes an empty list as no list: every package, with nothing unverifiable.
+    expect(inventory(repo({ "pnpm-workspace.yaml": "packages:\n", ...anywhere }))).toEqual({ "deep/tool/package.json": ["npm.script(postinstall: node tool.js)"] });
+  });
+
+  it("matches workspace patterns as the package managers do", () => {
+    const packages = [
+      "apps/web",
+      "tools/cli",
+      "libs/lib-a",
+      "libs/lib-ab",
+      "plugins/p1",
+      "plugins/p2",
+      "plugins/p3",
+      "deep/x/nested-one",
+      "extra/a",
+      "extra/c",
+      "odd/x",
+      "odd2/y",
+      "other/z",
+    ];
+    const root = repo({
+      "package.json": pkg({}, {
+        workspaces: [
+          "{apps,tools}/*",
+          "libs/lib-?",
+          "plugins/p[12]",
+          "!plugins/p[!1]",
+          "**/nested-*",
+          // Syntax PermLang doesn't read matches any folder name, and an exclusion with it is ignored.
+          "extra/@(a|b)",
+          "!extra/+(c)",
+          "odd/{unclosed",
+          "odd2/[unclosed",
+          // pnpm ignores an absolute pattern; a file or a missing folder selects nothing.
+          "/abs/*",
+          "README.md",
+          "missing/*",
+        ],
+      }),
+      "README.md": "# app\n",
+      ...Object.fromEntries(packages.map((p) => [`${p}/package.json`, pkg({ postinstall: `node ${p}.js` })])),
+    });
+    expect(Object.keys(inventory(root)).sort()).toEqual(
+      ["apps/web", "deep/x/nested-one", "extra/a", "extra/c", "libs/lib-a", "odd/x", "odd2/y", "plugins/p1", "tools/cli"].map((p) => `${p}/package.json`),
+    );
+  });
+
+  it("reads a package.json5 written as plain JSON, and can't read a package.yaml that doesn't parse", () => {
+    const root = repo({
+      "pnpm-workspace.yaml": "packages: ['tools/*']\n",
+      "tools/a/package.json5": JSON.stringify({ scripts: { postinstall: "node a.js" } }),
+      "tools/b/package.yaml": "scripts: [unclosed\n",
+      "tools/c/package.yaml": "scripts:\n  postinstall: node c.js\n  build: [tsc, vite]\n",
+    });
+    expect(inventory(root)).toEqual({
+      "tools/a/package.json5": ["npm.script(postinstall: node a.js)"],
+      "tools/b/package.yaml": [expect.stringMatching(UNVERIFIABLE)],
+      "tools/c/package.yaml": ["npm.script(postinstall: node c.js)"],
+    });
   });
 });
 

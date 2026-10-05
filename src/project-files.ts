@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, type Dirent } from "node:fs";
 import path from "node:path";
 import type { FunctionReport } from "./check.js";
-import { MANIFESTS, readManifest, readPnpmWorkspace, workspaceFolders } from "./package-files.js";
+import { EVERY_PACKAGE, MANIFESTS, readManifest, readPnpmWorkspace, workspaceFolders } from "./package-files.js";
 import { readWorkflowFile, type LocalAction } from "./workflow-files.js";
 import type { Position } from "./yaml-nodes.js";
 
@@ -71,8 +71,10 @@ class Project {
     const patterns = this.manifests(this.root);
     const pnpm = path.join(this.root, "pnpm-workspace.yaml");
     if (exists(pnpm)) {
-      const entry = this.open(pnpm, "npm");
-      if (entry?.text !== undefined) patterns.push(...readPnpmWorkspace(entry.text, entry));
+      // Nothing else opens it, so it's new here. One that can't be read at all is unverifiable,
+      // and every package's scripts are recorded, as for one that doesn't parse.
+      const entry = this.open(pnpm, "npm")!;
+      patterns.push(...(entry.text === undefined ? EVERY_PACKAGE : readPnpmWorkspace(entry.text, entry)));
     }
     for (const dir of workspaceFolders(this.root, patterns)) this.manifests(dir);
   }
@@ -188,7 +190,8 @@ function listFiles(dir: string, recursive: boolean, match: RegExp, seen = new Se
     seen.add(real);
     entries = readdirSync(dir, { withFileTypes: true });
   } catch (e) {
-    if (["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "")) return [];
+    const { code } = e as NodeJS.ErrnoException;
+    if (code === "ENOENT" || code === "ENOTDIR") return [];
     throw e;
   }
   const out: string[] = [];
