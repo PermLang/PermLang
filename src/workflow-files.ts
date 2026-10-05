@@ -43,9 +43,14 @@ class Reader {
 
   workflow() {
     const root = this.yaml.root();
-    for (const on of this.yaml.get(root, "on")) this.triggers(on);
+    const triggers = this.yaml.get(root, "on");
+    const allJobs = this.yaml.get(root, "jobs");
+    // GitHub needs both. A workflow that seems to lack one may read differently to GitHub (stray
+    // byte-order marks or invisible characters in a key), so it's recorded rather than trusted.
+    if (triggers.length === 0 || allJobs.length === 0) this.sink.unverifiable("a workflow without both on: and jobs:", { line: 1, column: 1 });
+    for (const on of triggers) this.triggers(on);
     const workflowPermissions = this.yaml.get(root, "permissions");
-    for (const jobs of this.yaml.get(root, "jobs")) {
+    for (const jobs of allJobs) {
       for (const job of this.yaml.fields(jobs)) if (isMap(job.value.node)) this.job(job.value, workflowPermissions, job.at);
     }
   }

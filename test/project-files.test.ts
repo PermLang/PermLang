@@ -38,6 +38,8 @@ function inventory(root: string): Record<string, string[]> {
 }
 const workflow = (...lines: string[]) => repo({ ".github/workflows/w.yml": lines.join("\n") });
 const grants = (root: string, file = ".github/workflows/w.yml") => inventory(root)[file];
+/** A job that grants nothing more than the workflow does, for a test about the workflow's other parts. */
+const JOB = ["jobs:", "  a:", "    runs-on: ubuntu-latest", "    steps:", "      - run: echo hi"];
 
 beforeAll(() => {
   dir = mkdtempSync(path.join(tmpdir(), "permlang-project-"));
@@ -400,7 +402,7 @@ describe("secrets, however an expression writes them", () => {
   });
 
   it("names a secret in upper case, as GitHub stores it", () => {
-    expect(grants(workflow("on: push", "permissions: {}", "env:", "  T: ${{ Secrets.npm_Token }} and ${{ secrets['Other'] }}"))).toEqual([
+    expect(grants(workflow("on: push", "permissions: {}", "env:", "  T: ${{ Secrets.npm_Token }} and ${{ secrets['Other'] }}", ...JOB))).toEqual([
       "ci.secret(NPM_TOKEN)",
       "ci.secret(OTHER)",
       "ci.trigger(push)",
@@ -409,7 +411,7 @@ describe("secrets, however an expression writes them", () => {
 
   it("records each use of the whole secrets context as every secret", () => {
     for (const expression of ["secrets", "toJSON(secrets)", "fromJSON(toJSON(secrets)).X", "secrets.*", "secrets[0]", "(secrets).X", "contains(secrets, 'x')"]) {
-      expect(grants(workflow("on: push", "permissions: {}", "env:", `  T: \${{ ${expression} }}`)), expression).toEqual(["ci.secret(all)", "ci.trigger(push)"]);
+      expect(grants(workflow("on: push", "permissions: {}", "env:", `  T: \${{ ${expression} }}`, ...JOB)), expression).toEqual(["ci.secret(all)", "ci.trigger(push)"]);
     }
   });
 
@@ -473,7 +475,7 @@ describe("secrets, however an expression writes them", () => {
   });
 
   it("reads an expression GitHub would reject as unclosed to the end, so nothing in it is skipped", () => {
-    expect(grants(workflow("on: push", "permissions: {}", "env:", "  T: ${{ secrets.UNCLOSED"))).toEqual(["ci.secret(UNCLOSED)", "ci.trigger(push)"]);
+    expect(grants(workflow("on: push", "permissions: {}", "env:", "  T: ${{ secrets.UNCLOSED", ...JOB))).toEqual(["ci.secret(UNCLOSED)", "ci.trigger(push)"]);
   });
 
   it("records a reusable workflow's secrets passed by name, and `secrets: inherit` in any case", () => {
@@ -563,8 +565,8 @@ describe("GitHub's rules for expressions and values", () => {
 
 describe("triggers and jobs in other shapes", () => {
   it("reads triggers written as a flow mapping, and skips an empty one", () => {
-    expect(grants(workflow("on: { push, pull_request_target }", "permissions: {}"))).toEqual(["ci.trigger(pull_request_target)", "ci.trigger(push)"]);
-    expect(grants(workflow("on: [push, ~]", "permissions: {}"))).toEqual(["ci.trigger(push)"]);
+    expect(grants(workflow("on: { push, pull_request_target }", "permissions: {}", ...JOB))).toEqual(["ci.trigger(pull_request_target)", "ci.trigger(push)"]);
+    expect(grants(workflow("on: [push, ~]", "permissions: {}", ...JOB))).toEqual(["ci.trigger(push)"]);
   });
 
   it("skips a job, or steps, that aren't written as GitHub requires: GitHub rejects the file", () => {
@@ -1061,5 +1063,33 @@ describe("project configuration in the check", () => {
 
   it("isn't recorded without a project root (the library default)", () => {
     expect(checkFiles(code()).functions.some((f) => f.kind === "config")).toBe(false);
+  });
+});
+
+describe("project configuration: a workflow GitHub wouldn't run as written", () => {
+  let repo: string;
+  beforeAll(() => {
+    repo = mkdtempSync(path.join(tmpdir(), "permlang-project-invalid-"));
+    mkdirSync(path.join(repo, ".github", "workflows"), { recursive: true });
+  });
+  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+  const read = (text: string) => {
+    writeFileSync(path.join(repo, ".github", "workflows", "w.yml"), text);
+    return projectFiles(repo).find((f) => f.name === "<w.yml>")?.actual;
+  };
+
+  // Found by the property test on CI: after two byte-order marks the first key is "\uFEFF[on", so
+  // the file read as a mapping with no trigger and no jobs, and nothing at all was recorded.
+  it.each([
+    ["two byte-order marks before the trigger", "\uFEFF\uFEFF[on:"],
+    ["no jobs", "on: push\n"],
+    ["no trigger", "jobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"],
+    ["neither", "name: only a name\n"],
+  ])("records a workflow with %s as unverifiable", (_, text) => {
+    expect(read(text)).toEqual(expect.arrayContaining([expect.stringMatching(/^ci\.unverifiable\(sha256:[0-9a-f]{64}\)$/)]));
+  });
+
+  it("doesn't for a workflow with both", () => {
+    expect(read("on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")!.some((c) => c.startsWith("ci.unverifiable"))).toBe(false);
   });
 });
