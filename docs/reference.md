@@ -334,7 +334,8 @@ can trigger this*, with the tool's name.
 What counts as unverifiable, and what reaches nothing:
 
 - A handler PermLang can't follow (a parameter, or a variable that can be
-  reassigned) counts as unverifiable.
+  reassigned) counts as unverifiable. A library function given as the handler
+  (`execute: execSync`) reaches what PermLang knows that function does.
 - A tool written without a handler, where its definition has a place for one,
   counts as unverifiable too: the AI SDK hands its calls back to your app, or,
   for a provider tool like `bash_20250124()`, runs them in whatever sandbox the
@@ -633,6 +634,7 @@ src/dispatch.ts     implementations reachable through interfaces and base classe
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/unmapped.ts     packages with no adapter, and imports with no types
+src/unseen.ts       code a function reaches that has no types, for checking specs
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
 src/tools.ts        tool registrations for AI models, their handlers, and what those reach
 src/flows.ts        data-flow rules: parsing, and finding functions that break them

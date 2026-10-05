@@ -162,8 +162,13 @@ function lastFunction(args: readonly Node[]): Node | undefined {
   return [...args].reverse().find((a) => Node.isArrowFunction(a) || Node.isFunctionExpression(a) || a.getType().getCallSignatures().length > 0);
 }
 
-/** A definition's handler property. A property named like one that isn't a function (MCP's schema `{ run: "boolean" }`) isn't it. */
+/**
+ * A definition's handler property. A property named like one that isn't a function (MCP's
+ * schema `{ run: "boolean" }`) isn't it; one typed `any` (`execute: execSync as any`) is a
+ * second choice, after real functions.
+ */
 function definitionHandler(definition: ObjectLiteralExpression): Node | undefined {
+  let untyped: Node | undefined;
   for (const p of definition.getProperties()) {
     if (Node.isSpreadAssignment(p)) continue;
     const key = p.getName();
@@ -172,8 +177,9 @@ function definitionHandler(definition: ObjectLiteralExpression): Node | undefine
     if (Node.isMethodDeclaration(p)) return p;
     const value = Node.isPropertyAssignment(p) ? p.getInitializer() : Node.isShorthandPropertyAssignment(p) ? p.getNameNode() : undefined;
     if (value && value.getType().getCallSignatures().length > 0) return p;
+    if (value && (value.getType().isAny() || value.getType().isUnknown())) untyped ??= p;
   }
-  return undefined;
+  return untyped;
 }
 
 /**

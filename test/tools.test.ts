@@ -153,6 +153,13 @@ async function execute({ cmd }: { cmd: string }) {
 export const runTool = tool({ name: "run", description: "Run a command", execute });
 // \`run\` here is a setting, not the handler.
 export const deployTool = tool({ name: "deploy", description: "Deploy", run: "nightly", execute: async () => execSync("make deploy") });`,
+  // A library function as the handler, cast to any as such code often is; and one passed in from elsewhere.
+  byLibrary: `import { tool } from "@openai/agents";
+import { execSync } from "node:child_process";
+export const rawTool = tool({ name: "raw", description: "Run a command", execute: execSync as any });
+export function make(handler: (input: string) => string) {
+  return tool({ name: "injected", description: "Whatever it is given", execute: handler });
+}`,
   // The schema is compared by symbol, so renaming the import doesn't hide the handler.
   renamedSchema: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema as CallTool, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -194,6 +201,8 @@ describe("tools given to AI models", () => {
       "@openai/agents browse",
       "@openai/agents cleanup",
       "@openai/agents deploy",
+      "@openai/agents injected",
+      "@openai/agents raw",
       "@openai/agents run",
       "ai deleteUser",
       "ai tool",
@@ -213,6 +222,11 @@ describe("tools given to AI models", () => {
 
   it("follows shorthand { execute } to the function it names", () => {
     expect(tool(run(), "run").reaches).toEqual(["exec"]);
+  });
+
+  it("follows a library function given as the handler, and can't follow one passed in", () => {
+    expect(tool(run(), "raw").reaches).toEqual(["exec"]);
+    expect(tool(run(), "injected").reaches).toEqual(["unverifiable"]);
   });
 
   it("skips a property named like a handler whose value isn't a function", () => {
@@ -248,6 +262,8 @@ describe("tools given to AI models", () => {
     const warnings = run().diagnostics.filter((d) => d.code === "PERM008");
     expect(warnings.map((d) => `${d.severity} ${path.basename(d.file)}:${d.line} ${d.capability}`).sort()).toEqual([
       "warning anyHost.ts:2 browse",
+      "warning byLibrary.ts:3 raw",
+      "warning byLibrary.ts:5 injected",
       "warning byReference.ts:6 cleanup",
       "warning langchain.ts:3 shell",
       "warning lowlevel.ts:5 *",
@@ -283,11 +299,11 @@ describe("tools given to AI models", () => {
     expect(run({ strictness: "development", tools: "error" }).diagnostics.filter((d) => d.code === "PERM008").every((d) => d.severity === "error")).toBe(true);
     // "error" is asked for explicitly, so it fails at sketch too; the default stays a warning.
     const atSketch = (tools?: "error") => run({ strictness: "sketch", ...(tools ? { tools } : {}) }).diagnostics.filter((d) => d.code === "PERM008").map((d) => d.severity);
-    expect(atSketch("error")).toEqual(Array(12).fill("error"));
-    expect(atSketch()).toEqual(Array(12).fill("warning"));
+    expect(atSketch("error")).toEqual(Array(14).fill("error"));
+    expect(atSketch()).toEqual(Array(14).fill("warning"));
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
-    expect(run({ tools: "trust" }).tools).toHaveLength(16);
+    expect(run({ tools: "trust" }).tools).toHaveLength(18);
   });
 
   it("counts an MCP client's connection as network access, and a server talking to its client as none", () => {
