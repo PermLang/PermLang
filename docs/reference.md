@@ -388,17 +388,19 @@ argument N:
 ```
 
 `default` applies to every other method in the package (not constructors). An
-empty list maps a function to nothing. Two more placeholders cover hosts set in
-options: `{host:N+}` is argument N's host unless a later options argument sets
-another (Node's `http.request(url, { hostname })`), and `{host:N?}` counts only
-when argument N can set a host (Stripe's `new Stripe(key, { host })`; a config
-that doesn't name one adds nothing). Built-in detection for databases applies
-first, and adapters add to it. Add your own adapters in `permlang.config.json`;
-they take precedence over the built-in ones:
+empty list maps a function to nothing. Add your own adapters in
+`permlang.config.json`; they take precedence over the built-in ones:
 
 ```json
 { "adapters": ["./permlang/adapters/acme-sms.json"] }
 ```
+
+Two more placeholders cover hosts set in options: `{host:N+}` is argument N's
+host unless a later options argument sets another (Node's
+`http.request(url, { hostname })`), and `{host:N?}` counts only when argument N
+can set a host (Stripe's `new Stripe(key, { host })`; a config that doesn't name
+one adds nothing). For database clients, PermLang's own detection applies first,
+and adapters add to it.
 
 ### Packages without an adapter
 
@@ -422,19 +424,20 @@ Built-in adapters cover axios, Stripe, nodemailer, `node-fetch`, `undici`, Redis
 (`redis`, `ioredis`), Kafka, Bull/BullMQ, ClickHouse, AI SDKs (`ai`, `openai`,
 `@anthropic-ai/sdk`, ...), MCP clients, several web APIs, `@nestjs/config`,
 `maxmind`, `tar`, and the Node modules that carry capabilities. Where an
-adapter can't know a service's hosts, it uses bare `net`. Stripe's calls go to
-`api.stripe.com`, except file uploads and quote PDFs (`files.stripe.com`), OAuth
-(`connect.stripe.com`), meter event streams (`meter-events.stripe.com`), and
-`rawRequest` (any of the four); a client created with a `host` in its config
-also needs that host. `tar` extraction writes files (tar 7's typings give every
-command one shape, so listing counts as a write too). Some otherwise pure
-libraries have a few functions that aren't: cheerio's `fromURL`, rxjs's `ajax`,
-`fromFetch`, and `webSocket`, and react-dom's resource hints (`preload`,
-`preconnect`, ...) reach the network, react-dom's `preinit` and
-`preinitModule` also run the script they load, and lodash's `template` compiles
-its text into code, so the last three are unverifiable. PermLang runs itself
+adapter can't know a service's hosts, it uses bare `net`. PermLang runs itself
 with `"unmapped": "error"` and a team adapter for ts-morph (see
 [`permlang.config.json`](../permlang.config.json)).
+
+Stripe's calls go to `api.stripe.com`, except file uploads and quote PDFs
+(`files.stripe.com`), OAuth (`connect.stripe.com`), meter event streams
+(`meter-events.stripe.com`), and `rawRequest` (any of the four); a client created
+with a `host` in its config also needs that host. `tar` extraction writes files
+(tar 7's typings give every command one shape, so listing counts as a write too).
+Some otherwise pure libraries have a few functions that aren't: cheerio's
+`fromURL`, rxjs's `ajax`, `fromFetch`, and `webSocket`, and react-dom's resource
+hints (`preload`, `preconnect`, ...) reach the network; react-dom's `preinit` and
+`preinitModule` also run the script they load, and lodash's `template` compiles
+its text into code, so those three are unverifiable.
 
 ## Strictness levels
 
@@ -623,7 +626,7 @@ other. Every fixture file must be a module (have an import or export).
 src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
-src/detect/         direct uses: fetch, fs, env, Prisma (and its relations), Drizzle, SQL, adapter-mapped calls, values, unverifiable code
+src/detect/         direct uses: fetch, fs, env, Prisma, Drizzle, SQL, adapter-mapped calls, values, unverifiable code
 src/dispatch.ts     implementations reachable through interfaces and base classes
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
