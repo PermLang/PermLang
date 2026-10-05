@@ -2,7 +2,7 @@
 
 All notable changes to PermLang.
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-05)
 
 This release can fail builds that passed before, when a pull request changes
 what a workflow or script grants. Upgrading itself doesn't: see below.
