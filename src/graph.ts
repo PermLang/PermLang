@@ -10,12 +10,13 @@
 //   - a class's implicit constructor running its base constructor;
 //   - importing a module, which runs its top-level code.
 
-import { Node, SyntaxKind, ts, type Identifier, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, type Identifier, type SourceFile, type Type } from "ts-morph";
 import type { AdapterIndex } from "./adapters.js";
 import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js";
 import { classifyComputedCall, computedCallee } from "./detect/computed.js";
-import { isRequire } from "./detect/functions.js";
-import { argumentsOf, callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
+import { loadOf, loadTarget } from "./detect/modules.js";
+import { callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
+import { descendantsOfKind } from "./walk.js";
 import type { Hierarchy } from "./dispatch.js";
 import {
   constructorUnitNode,
@@ -38,6 +39,8 @@ export interface Edge {
 
 export interface GraphContext {
   unitOf: (node: Node) => Unit | undefined;
+  /** A file's units that code outside it can reach: its top level, and what it exports. */
+  exportedUnits: (file: SourceFile) => readonly Unit[];
   hierarchy: Hierarchy;
   adapters: AdapterIndex;
 }
@@ -123,9 +126,16 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     const call: CallLike = node;
     const text = callText(call);
 
-    if (Node.isCallExpression(call) && call.getExpression().getKind() === SyntaxKind.ImportKeyword) {
-      const target = literalString(call.getArguments()[0]) === undefined ? undefined : moduleOf(call.getArguments()[0]!);
-      add(call, target, call, text);
+    // require(x) and import(x) run the module's top level. When TypeScript types the result,
+    // calls on it resolve; when it's `any`, any of the module's exports could be called.
+    const load = loadOf(call);
+    if (load) {
+      const [argument] = load.call.getArguments();
+      const literal = argument && (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument)) ? moduleOf(argument) : undefined;
+      const target = literal ? undefined : loadTarget(load, ctx.adapters);
+      const file = literal ?? (target?.kind === "file" ? target.file : undefined);
+      add(call, file, call, text);
+      if (load.untyped && file && Node.isSourceFile(file)) for (const unit of ctx.exportedUnits(file)) add(call, unit.node, call, text);
       return;
     }
 
@@ -137,12 +147,6 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     }
 
     const declaration = resolvedDeclaration(call);
-    // require("./x") runs that file's top level, like an import.
-    if (declaration && isRequire(declaration)) {
-      const specifier = literalString(argumentsOf(call)[0]);
-      if (specifier?.startsWith(".")) add(call, resolveModule(sourceFile, specifier), call, text);
-      return;
-    }
     if (declaration) {
       add(call, unitNodeForDeclaration(declaration), call, text);
       for (const impl of ctx.hierarchy.implementations(declaration)) add(call, impl, call, text);
@@ -171,10 +175,13 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     edges.push({ from, to, call: `extends ${base.getName() ?? "base class"}`, line, column });
   }
 
-  // Imports and re-exports run the target module's top level.
+  // Imports and re-exports run the target module's top level, and so does `import x = require("y")`.
   for (const decl of [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations()]) {
     if (decl.isTypeOnly()) continue;
     addFromModule(decl.getModuleSpecifierSourceFile(), decl);
+  }
+  for (const decl of descendantsOfKind(sourceFile, SyntaxKind.ImportEqualsDeclaration)) {
+    if (!decl.isTypeOnly() && Node.isExternalModuleReference(decl.getModuleReference())) addFromModule(decl.getExternalModuleReferenceSourceFile(), decl);
   }
   return edges;
 }
@@ -192,13 +199,6 @@ function valueUnit(declaration: Node): Node | undefined {
   if (!Node.isPropertyAssignment(declaration)) return undefined;
   const symbol = declaration.getInitializer()?.getSymbol();
   return symbol ? unitNodeForSymbol(resolveAlias(symbol)) : undefined;
-}
-
-/** The project source file a relative specifier resolves to from `from`, using the project's module resolution. */
-function resolveModule(from: SourceFile, specifier: string): Node | undefined {
-  const options = from.getProject().getCompilerOptions();
-  const resolved = ts.resolveModuleName(specifier, from.getFilePath(), options, ts.sys).resolvedModule?.resolvedFileName;
-  return resolved ? from.getProject().getSourceFile(resolved) : undefined;
 }
 
 /** The source file a module specifier (an import() argument) resolves to. */

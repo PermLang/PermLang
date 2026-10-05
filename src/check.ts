@@ -16,7 +16,7 @@ import { findTools, type ToolRegistration } from "./tools.js";
 import { flowDiagnostics, type FlowRule } from "./flows.js";
 import { resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
-import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
+import { collectEdges, pathTo, propagate, type Edge, type GraphContext, type Reach } from "./graph.js";
 import {
   createUnit,
   declaredCapabilities,
@@ -206,7 +206,13 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   }
 
   // 2. Edges between units, then what each unit can reach.
-  const context = { unitOf: (node: Node) => units.get(node), hierarchy: new Hierarchy(sourceFiles), adapters };
+  const exported = groupBy([...units.values()].filter((u) => u.exported), (u) => u.node.getSourceFile());
+  const context: GraphContext = {
+    unitOf: (node: Node) => units.get(node),
+    exportedUnits: (file) => exported.get(file) ?? [],
+    hierarchy: new Hierarchy(sourceFiles),
+    adapters,
+  };
   const edges = sourceFiles.flatMap((sf) => collectEdges(sf, context));
   const reach = propagate(units.values(), edges);
   const edgesFrom = groupBy(edges, (e) => e.from);
@@ -515,6 +521,10 @@ function dedupe(diagnostics: Diagnostic[]): Diagnostic[] {
 
 function groupBy<T, K>(items: readonly T[], key: (item: T) => K): Map<K, T[]> {
   const out = new Map<K, T[]>();
-  for (const item of items) out.set(key(item), [...(out.get(key(item)) ?? []), item]);
+  for (const item of items) {
+    const group = out.get(key(item));
+    if (group) group.push(item);
+    else out.set(key(item), [item]);
+  }
   return out;
 }
