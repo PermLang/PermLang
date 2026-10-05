@@ -7,8 +7,8 @@ import {
   type NewExpression,
   type ObjectLiteralExpression,
   type Symbol as MorphSymbol,
+  type Identifier,
   type TaggedTemplateExpression,
-  type VariableDeclaration,
 } from "ts-morph";
 import type { Capability } from "../capability.js";
 
@@ -63,7 +63,7 @@ export function literalString(arg: Node | undefined, depth = 0): string | undefi
   const declaration = symbol && resolveAlias(symbol).getDeclarations()[0];
   if (!declaration) return undefined;
   if (Node.isEnumMember(declaration)) {
-    return isWritten(declaration.getParent()) ? undefined : literalString(declaration.getInitializer(), depth + 1);
+    return isWritten(declaration.getParent().getNameNode()) ? undefined : literalString(declaration.getInitializer(), depth + 1);
   }
   if (Node.isVariableDeclaration(declaration)) {
     return isConst(declaration) ? literalString(declaration.getInitializer(), depth + 1) : undefined;
@@ -77,14 +77,15 @@ function isConst(declaration: Node): boolean {
   return Node.isVariableDeclaration(declaration) && declaration.getVariableStatement()?.getDeclarationKind() === "const";
 }
 
-/** The `const X` holding `{ ... } as const` that a property belongs to (possibly nested), if it is one. */
-function constObjectHolder(property: Node): VariableDeclaration | undefined {
+/** The name of the `const X` holding `{ ... } as const` that a property belongs to (possibly nested), if it is one. */
+function constObjectHolder(property: Node): Identifier | undefined {
   let node = property.getParent();
   while (node && Node.isObjectLiteralExpression(node)) {
     const parent = node.getParent();
     if (parent && Node.isAsExpression(parent) && parent.getTypeNode()?.getText() === "const") {
       const holder = parent.getParent();
-      return Node.isVariableDeclaration(holder) && isConst(holder) ? holder : undefined;
+      const name = Node.isVariableDeclaration(holder) && isConst(holder) ? holder.getNameNode() : undefined;
+      return Node.isIdentifier(name) ? name : undefined;
     }
     node = parent && Node.isPropertyAssignment(parent) ? parent.getParent() : undefined;
   }
@@ -112,21 +113,15 @@ const WRITING_FUNCTIONS = new Set([
   "Reflect.set", "Reflect.defineProperty", "Reflect.deleteProperty", "Reflect.setPrototypeOf",
 ]);
 
-/** Whether the program may change an enum or `as const` object after it's created. */
-function isWritten(holder: Node): boolean {
-  const program = holder.getProject().getProgram().compilerObject;
+/** Whether the program may change an enum or `as const` object, named `name`, after it's created. */
+function isWritten(name: Identifier): boolean {
+  const program = name.getProject().getProgram().compilerObject;
   const cache = written.get(program) ?? new WeakMap<Node, boolean>();
   written.set(program, cache);
-  const cached = cache.get(holder);
+  const cached = cache.get(name);
   if (cached !== undefined) return cached;
-  const name = Node.isVariableDeclaration(holder) || Node.isEnumDeclaration(holder) ? holder.getNameNode() : undefined;
-  let result = !Node.isIdentifier(name);
-  try {
-    if (Node.isIdentifier(name)) result = name.findReferencesAsNodes().some((reference) => writesThrough(reference));
-  } catch {
-    result = true; // references that can't be found can't be checked
-  }
-  cache.set(holder, result);
+  const result = name.findReferencesAsNodes().some((reference) => writesThrough(reference));
+  cache.set(name, result);
   return result;
 }
 
@@ -196,20 +191,20 @@ export function propertyValue(object: ObjectLiteralExpression, name: string): No
     const key = propertyKey(p.getNameNode());
     if (key === undefined) return "unknown";
     if (key !== name) continue;
-    if (Node.isPropertyAssignment(p)) return p.getInitializer() ?? "unknown";
+    if (Node.isPropertyAssignment(p)) return p.getInitializerOrThrow();
     if (Node.isShorthandPropertyAssignment(p)) return p;
     return "unknown"; // a getter, setter, or method
   }
   return "absent";
 }
 
-/** A property name as written (`a`, `"a"`, `1`, `["a"]`), or undefined for a computed key that can't be known. */
+/**
+ * A property name (`a`, `"a"`, `["a"]`), or undefined for a computed key that can't be known.
+ * A number is kept as written, which is enough to tell it from the names looked for.
+ */
 function propertyKey(name: Node): string | undefined {
-  if (Node.isIdentifier(name) || Node.isPrivateIdentifier(name)) return name.getText();
-  if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralValue();
-  if (Node.isNumericLiteral(name)) return String(name.getLiteralValue());
   if (Node.isComputedPropertyName(name)) return literalString(name.getExpression());
-  return undefined;
+  return Node.isStringLiteral(name) ? name.getLiteralValue() : name.getText();
 }
 
 // Several passes resolve the same calls; signature resolution is the expensive part.
@@ -368,9 +363,9 @@ export function nodeRequestHost(args: readonly Node[], index: number): string | 
   }
   const host = hostOf(input);
   const options = args[index + 1] && unwrapExpression(args[index + 1]);
-  // A callback, or nothing that can carry options.
+  // No options, or a callback, leaves the URL's host; options that aren't written out could replace it.
   if (!options || options.getType().getCallSignatures().length > 0) return host;
-  if (!Node.isObjectLiteralExpression(options)) return options.getType().isObject() ? undefined : host;
+  if (!Node.isObjectLiteralExpression(options)) return undefined;
   if (redirects(options, REDIRECTING_OPTIONS)) return undefined;
   const hostname = propertyValue(options, "hostname");
   return hostname === "absent" ? host : hostname === "unknown" ? undefined : hostName(hostname);

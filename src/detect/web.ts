@@ -16,12 +16,12 @@
 // aliases (`const WS = WebSocket`), subclasses, `typeof WebSocket` parameters, and
 // `super(url)` are covered too.
 
-import { Node, type Type } from "ts-morph";
+import { Node, SyntaxKind, type Type } from "ts-morph";
 import { packageOf, type AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { fsCapabilities, fsStreamClass } from "./fs.js";
 import { declarationCapabilities } from "./functions.js";
-import { argumentsOf, containerName, evaluatesString, hostOf, isGlobalLibFunction, literalString, resolveAlias, type CallLike } from "./shared.js";
+import { argumentsOf, containerName, evaluatesString, hostOf, isGlobalLibFunction, literalString, type CallLike } from "./shared.js";
 
 const NETWORK_CLASSES = new Set(["WebSocket", "EventSource", "WebTransport", "WebSocketStream"]);
 const SCRIPT_CLASSES = new Set(["Worker", "SharedWorker"]);
@@ -42,7 +42,6 @@ export function webCapabilities(call: CallLike, declaration: Node | undefined): 
     const stream = fsStreamClass(call.getType());
     // A subclass's constructor may pass its base different arguments, so they aren't read.
     if (stream) return fsCapabilities(stream.name, stream.direct ? args : []);
-    if (!declaration && constructsGlobal(call.getExpression())) return [net(args[0])];
   }
   return declaration ? platformCapabilities(declaration, args, "called") : [];
 }
@@ -107,17 +106,19 @@ function processCapabilities(name: string, args: readonly Node[], reach: Reach):
   return [];
 }
 
-/** The class a constructor or construct signature builds: `WebSocket` for `declare var WebSocket: { new(...) }`. */
+/**
+ * The class a constructor or construct signature in a declaration file builds: `WebSocket` for
+ * `declare class WebSocket`, `interface WebSocketConstructor`, or `declare var WebSocket: { new(...) }`.
+ */
 function constructedClass(declaration: Node): string | undefined {
-  if (Node.isConstructorDeclaration(declaration)) {
-    const owner = declaration.getParent();
-    return Node.isClassDeclaration(owner) ? owner.getName() : undefined;
-  }
+  // Declaration files have no class expressions, so a constructor is in a class declaration.
+  if (Node.isConstructorDeclaration(declaration)) return declaration.getParentIfKindOrThrow(SyntaxKind.ClassDeclaration).getName();
   if (!Node.isConstructSignatureDeclaration(declaration)) return undefined;
-  const owner = declaration.getParent();
+  // Otherwise the signature is in a type literal: the type of a variable, or of something else.
+  const owner = declaration.getParentOrThrow();
   if (Node.isInterfaceDeclaration(owner)) return owner.getName().replace(/Constructor$/, "");
-  const holder = owner?.getParent();
-  return Node.isTypeLiteral(owner) && Node.isVariableDeclaration(holder) ? holder.getName() : undefined;
+  const holder = owner.getParent();
+  return Node.isVariableDeclaration(holder) ? holder.getName() : undefined;
 }
 
 /**
@@ -138,15 +139,6 @@ function platformSource(declaration: Node): "lib" | "node" | "undici" | "project
 function isTimer(declaration: Node): boolean {
   if ([...TIMERS].some((name) => isGlobalLibFunction(declaration, name))) return true;
   return Node.isMethodSignature(declaration) && containerName(declaration) === "WindowOrWorkerGlobalScope";
-}
-
-/** `new WebSocket(url)` whose signature couldn't be resolved, such as with too many arguments. */
-function constructsGlobal(expression: Node): boolean {
-  const symbol = expression.getSymbol();
-  if (!symbol) return false;
-  return resolveAlias(symbol)
-    .getDeclarations()
-    .some((d) => [...NETWORK_CLASSES].some((name) => isGlobalLibFunction(d, name)));
 }
 
 function net(arg: Node | undefined): Capability {

@@ -11,7 +11,7 @@
 
 import { Node, SyntaxKind, type SourceFile } from "ts-morph";
 import type { Capability } from "../capability.js";
-import { literalString, type CapabilityUse } from "./shared.js";
+import { literalString, unwrapExpression, type CapabilityUse } from "./shared.js";
 
 export interface EnvUse {
   node: Node;
@@ -93,15 +93,10 @@ function envType(node: Node): Environment | undefined {
 /** `process.env` on the global `process` that has no Node types, or `import.meta.env` with no type at all. */
 function untypedEnv(node: Node): Environment | undefined {
   if (!Node.isPropertyAccessExpression(node) || node.getName() !== "env") return undefined;
-  if (isImportMetaEnv(node)) return "import.meta";
-  const object = node.getExpression();
+  // `(process as any).env` too: without types, the cast hides nothing more.
+  const object = unwrapExpression(node.getExpression());
+  if (object.getText() === "import.meta") return "import.meta";
   return Node.isIdentifier(object) && object.getText() === "process" && isGlobalWithoutNodeTypes(object) ? "process" : undefined;
-}
-
-function isImportMetaEnv(node: Node): boolean {
-  if (!Node.isPropertyAccessExpression(node) || node.getName() !== "env") return false;
-  const meta = node.getExpression();
-  return Node.isMetaProperty(meta) && meta.getKeywordToken() === SyntaxKind.ImportKeyword;
 }
 
 /**

@@ -41,3 +41,24 @@ export function sockets() {
   tls.connect({ host: "good.example", path: "/var/run/docker.sock" }); // expect: error PERM001 net
   net.connect(80, "evil.example"); // expect: error PERM001 net(evil.example)
 }
+
+declare const maybeOptions: https.RequestOptions | undefined;
+declare const socketOptions: net.NetConnectOpts;
+declare const tlsOptions: tls.ConnectionOptions;
+declare const target: any;
+
+// Options that aren't written out, an accessor after a URL, the functions used as values, and
+// net's other forms: a socket path, a port with no host, and options after a port and host.
+/** @perm net(good.example) */
+export function unknownForms(urls: string[]) {
+  https.get("https://good.example/", maybeOptions); // expect: error PERM001 net
+  https.get("https://good.example/", { get hostname() { return "evil.example"; } }); // expect: error PERM001 net
+  urls.map(https.get); // expect: error PERM001 net
+  net.connect("/var/run/docker.sock"); // expect: error PERM001 net
+  net.connect(socketOptions); // expect: error PERM001 net
+  net.connect(5432); // expect: error PERM001 net
+  net.connect(target, "good.example"); // expect: error PERM001 net
+  tls.connect(443, "good.example", tlsOptions); // expect: error PERM001 net
+  tls.connect(443, "good.example", { path: "/var/run/docker.sock" } as tls.ConnectionOptions); // expect: error PERM001 net
+  return [net.connect, tls.connect]; // expect: error PERM001 net
+}

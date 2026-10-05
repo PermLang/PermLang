@@ -26,7 +26,18 @@
 // Also here: process.binding() and process._linkedBinding(), internal APIs the
 // types don't declare, which reach Node's native internals (spawning processes, say).
 
-import { Node, SyntaxKind, type CallExpression, type Identifier, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
+import {
+  Node,
+  SyntaxKind,
+  type CallExpression,
+  type ElementAccessExpression,
+  type Identifier,
+  type ParameterDeclaration,
+  type PropertyAccessExpression,
+  type SourceFile,
+  type Symbol as MorphSymbol,
+  type Type,
+} from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { requiresCapabilityModule } from "./functions.js";
@@ -40,10 +51,14 @@ export interface EscapeUse {
 
 /** Globals whose members include capabilities. */
 const GLOBAL_OBJECTS = new Set(["globalThis", "window", "self", "global", "process"]);
-/** Internal process APIs that the types don't declare. */
-const PROCESS_INTERNALS = new Set(["binding", "_linkedBinding"]);
-/** Object and Reflect functions that list an object's members, functions included. */
-const ENUMERATORS = new Set(["values", "entries", "keys", "getOwnPropertyNames", "getOwnPropertyDescriptors", "ownKeys"]);
+/** Internal process APIs that the types don't declare. (Undefined stands for a computed name.) */
+const PROCESS_INTERNALS = new Set<string | undefined>(["binding", "_linkedBinding"]);
+/**
+ * Object functions that list an object's members, functions included, and keep their own type
+ * for it. (Object.keys, Reflect.ownKeys, and the like take `object` or `any`, so passing a module
+ * to them already loses its type.)
+ */
+const ENUMERATORS = new Set(["values", "entries", "getOwnPropertyDescriptors"]);
 
 type Carrier = "global" | "module";
 
@@ -63,20 +78,21 @@ export function anyEscapes(sourceFile: SourceFile, adapters: AdapterIndex): Esca
       else if (member === undefined && carrier === "module") out.push(hidden(value));
       return;
     }
-    const internal = processInternal(node, carriers);
-    if (internal) {
-      out.push(internal);
-      return;
+    if (Node.isPropertyAccessExpression(node) || Node.isElementAccessExpression(node)) {
+      const internal = processInternal(node);
+      if (internal) out.push(internal);
+      // `fs[name]` read with a computed key, rather than called (calls are in computed.ts).
+      else if (Node.isElementAccessExpression(node) && isComputedModuleRead(node, carriers)) out.push(hidden(node, "read with a computed key"));
     }
     // A capability module used where its type is lost: `const m: any = cp`, `m = cp` with
-    // `let m: any`, `use(cp)` with `function use(m: unknown)`, or `Object.values(cp)`.
-    if (Node.isIdentifier(node) && isPassedOn(node) && carriers.of(node) === "module") {
-      const lost = typeLostBy(node);
-      if (lost) out.push(hidden(node, lost.isAny() ? "cast to `any`" : `passed on as \`${lost.getText()}\``));
+    // `let m: any`, `use(cp)` with `function use(m: unknown)`, `run.call(cp)`, or `Object.values(cp)`.
+    else if (Node.isIdentifier(node) && isPassedOn(node) && carriers.of(node) === "module") {
+      const receiver = thisReceiver(node);
+      const lost = receiver ? undefined : typeLostBy(node);
+      if (receiver === "project") out.push(hidden(node, "given as `this`"));
+      else if (lost) out.push(hidden(node, lost.isAny() ? "cast to `any`" : `passed on as \`${lost.getText()}\``));
       else if (isEnumerated(node)) out.push(hidden(node, "with its members listed"));
     }
-    // `fs[name]` read with a computed key, rather than called (calls are in computed.ts).
-    else if (Node.isElementAccessExpression(node) && isComputedModuleRead(node, carriers)) out.push(hidden(node, "read with a computed key"));
     // `Reflect.get(cp, name)`, the same as `cp[name]`.
     else if (Node.isCallExpression(node) && isComputedReflectGet(node, carriers)) out.push(hidden(node, "read with a computed key"));
     // `.then((m: any) => m.exec("ls"))` on a promise of a capability module.
@@ -98,11 +114,14 @@ function erasesType(type: Type): boolean {
   return type.getStringIndexType()?.isAny() === true || type.getNumberIndexType()?.isAny() === true;
 }
 
-/** `any`, `unknown`, `object`, or `{}`: a type that a module can be passed as but can't be used through. */
-function losesModule(type: Type): boolean {
-  if (erasesType(type) || type.isUnknown()) return true;
-  if (type.getText() === "object") return true;
-  return type.isObject() && type.getProperties().length === 0 && type.getCallSignatures().length === 0 && type.getStringIndexType() === undefined;
+/**
+ * A type a module can be passed as but not used through: `any`, `unknown`, `object`, `{}`, or a
+ * record such as `Record<string, unknown>`, also when optional.
+ */
+function losesModule(contextual: Type): boolean {
+  const type = contextual.getNonNullableType();
+  if (type.isAny() || type.isUnknown() || type.getText() === "object") return true;
+  return type.isObject() && type.getProperties().length === 0 && type.getCallSignatures().length === 0;
 }
 
 /** `x as unknown as T`: the second cast replaces the original type with one the code wrote itself. */
@@ -162,7 +181,7 @@ class CarrierCache {
   }
 
   private isCapabilityModuleName(specifier: string): boolean {
-    return requiresCapabilityModule(specifier, this.adapters) && !this.adapters.isPure(specifier.replace(/^node:/, ""));
+    return isCapabilityModuleName(specifier, this.adapters);
   }
 
   /** Whether a module file exports a capability function, or a capability module (`export * as cp from "node:child_process"`). */
@@ -203,51 +222,60 @@ function isPassedOn(identifier: Node): boolean {
 
 /**
  * The contextual type that loses a module passed where it's expected: an argument, assignment,
- * or initializer typed `any`, `unknown`, or `object`. Undefined when the module keeps its type.
+ * or initializer typed `any`, `unknown`, `object`, and the like (see losesModule). Undefined
+ * when the module keeps its type.
  */
 function typeLostBy(identifier: Identifier): Type | undefined {
   const contextual = identifier.getContextualType();
   return contextual !== undefined && losesModule(contextual) ? contextual : undefined;
 }
 
-/** `Object.values(cp)`, `Object.entries(cp)`, `Reflect.ownKeys(cp)`: its functions, listed without their names' types. */
+/**
+ * Whose function a module is given to as `this`, by `.call`, `.apply`, or `.bind`: a library's
+ * (`fs.readFile.bind(fs)`), trusted like library code everywhere, or the project's own (or one
+ * that can't be resolved), which could use `this` as anything, whatever the contextual type
+ * says (`.call` infers it from the module). Undefined when the module isn't given as `this`.
+ */
+function thisReceiver(identifier: Node): "library" | "project" | undefined {
+  const call = identifier.getParent();
+  if (!Node.isCallExpression(call) || call.getArguments()[0] !== identifier) return undefined;
+  const callee = call.getExpression();
+  if (!Node.isPropertyAccessExpression(callee) || !/^(call|apply|bind)$/.test(callee.getName())) return undefined;
+  const declarations = callee.getExpression().getSymbol()?.getDeclarations() ?? [];
+  return declarations.length > 0 && declarations.every((d) => d.getSourceFile().isDeclarationFile()) ? "library" : "project";
+}
+
+/** `Object.values(cp)`, `Object.entries(cp)`: its functions, listed without their names' types. */
 function isEnumerated(identifier: Node): boolean {
   const call = identifier.getParent();
   if (!Node.isCallExpression(call) || call.getArguments()[0] !== identifier) return false;
   const declaration = resolvedDeclaration(call);
-  if (!declaration || !declaration.getSourceFile().isDeclarationFile()) return false;
-  const name = "getName" in declaration ? (declaration as { getName(): string | undefined }).getName() : undefined;
-  const container = containerName(declaration);
-  return name !== undefined && ENUMERATORS.has(name) && (container === "ObjectConstructor" || container === "Reflect");
+  return Node.isMethodSignature(declaration) && containerName(declaration) === "ObjectConstructor" && ENUMERATORS.has(declaration.getName());
 }
 
-/** `fs[name]` with a key that isn't a literal, not called and not assigned to. */
-function isComputedModuleRead(access: Node, carriers: CarrierCache): boolean {
-  if (!Node.isElementAccessExpression(access) || literalString(access.getArgumentExpression()) !== undefined) return false;
+/** `fs[name]` with a key that isn't a literal, read or written rather than called (calls are in computed.ts). */
+function isComputedModuleRead(access: ElementAccessExpression, carriers: CarrierCache): boolean {
+  if (literalString(access.getArgumentExpression()) !== undefined) return false;
   const parent = access.getParent();
   if (Node.isCallExpression(parent) && parent.getExpression() === access) return false;
-  if (Node.isBinaryExpression(parent) && parent.getLeft() === access && parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken) return false;
   return carriers.of(unwrapExpression(access.getExpression())) === "module";
 }
 
 /** `Reflect.get(cp, name)` with a computed name; on a global, only when what it reads is then called or read from. */
 function isComputedReflectGet(call: CallExpression, carriers: CarrierCache): boolean {
-  const callee = call.getExpression();
-  if (!Node.isPropertyAccessExpression(callee) || callee.getName() !== "get" || callee.getExpression().getText() !== "Reflect") return false;
-  if (!resolvedDeclaration(call)?.getSourceFile().isDeclarationFile()) return false;
+  if (call.getExpression().getText() !== "Reflect.get") return false;
   const [target, key] = call.getArguments();
   if (!target || literalString(key) !== undefined) return false;
   const carrier = carriers.of(unwrapExpression(target));
   if (carrier === "module") return true;
-  const parent = outerOf(call).getParent();
-  const used = (Node.isCallExpression(parent) && parent.getExpression() === outerOf(call)) ||
-    ((Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent)) && parent.getExpression() === outerOf(call));
+  const outer = outerOf(call);
+  const parent = outer.getParent();
+  const used = Node.isCallExpression(parent) ? parent.getExpression() === outer : Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent);
   return carrier === "global" && used;
 }
 
 /** `(m: any) => m.exec("ls")` where the callback is given a capability module. */
-function receivesModuleAsAny(parameter: Node, carriers: CarrierCache): boolean {
-  if (!Node.isParameterDeclaration(parameter)) return false;
+function receivesModuleAsAny(parameter: ParameterDeclaration, carriers: CarrierCache): boolean {
   const written = parameter.getTypeNode()?.getKind();
   if (written !== SyntaxKind.AnyKeyword && written !== SyntaxKind.UnknownKeyword) return false;
   const fn = parameter.getParent();
@@ -258,17 +286,14 @@ function receivesModuleAsAny(parameter: Node, carriers: CarrierCache): boolean {
   return given !== undefined && carriers.isCapabilityModule(given.getTypeAtLocation(fn), fn);
 }
 
-/** `process.binding("spawn_sync")` or `(process as any)._linkedBinding(...)`. */
-function processInternal(node: Node, carriers: CarrierCache): EscapeUse | undefined {
-  let name: string | undefined;
-  if (Node.isPropertyAccessExpression(node)) name = node.getName();
-  else if (Node.isElementAccessExpression(node)) name = literalString(node.getArgumentExpression());
-  else return undefined;
-  if (name === undefined || !PROCESS_INTERNALS.has(name)) return undefined;
-  const object = unwrapExpression(node.getExpression());
-  const isProcess = carriers.of(object) === "global" && (Node.isIdentifier(object) ? object.getText() : (object as { getName?(): string }).getName?.()) === "process";
-  if (!isProcess) return undefined;
-  return { node, uses: [{ capability: unverifiable, call: node.getText().replace(/\s+/g, " "), verb: "uses" }] };
+/** `process.binding("spawn_sync")`, `(process as any)._linkedBinding(...)`, `globalThis.process["binding"]`. */
+function processInternal(access: PropertyAccessExpression | ElementAccessExpression): EscapeUse | undefined {
+  const name = Node.isPropertyAccessExpression(access) ? access.getName() : literalString(access.getArgumentExpression());
+  if (!PROCESS_INTERNALS.has(name)) return undefined;
+  const object = unwrapExpression(access.getExpression());
+  const holder = Node.isPropertyAccessExpression(object) ? object.getName() : object.getText();
+  if (holder !== "process" || !isGlobalObject(object)) return undefined;
+  return { node: access, uses: [{ capability: unverifiable, call: access.getText().replace(/\s+/g, " "), verb: "uses" }] };
 }
 
 /**
@@ -301,9 +326,10 @@ function memberUse(cast: Node, value: Node, carrier: Carrier, adapters: AdapterI
     // capability module it could be an API newer than its types (`(fs as any).someNewWrite()`).
     if (!property) return carrier === "module" ? hidden(value) : null;
 
-    const used = propertyUse(property, access, adapters);
+    // `(globalThis as any).process.mainModule.require(...)`: an optional member's members are still there.
+    type = property.getTypeAtLocation(access).getNonNullableType();
+    const used = propertyUse(property, type, access, adapters);
     if (used) return used;
-    type = property.getTypeAtLocation(access);
     object = access;
   }
   // The chain ends on a member that isn't a capability, used some other way (stored, passed on).
@@ -313,10 +339,12 @@ function memberUse(cast: Node, value: Node, carrier: Carrier, adapters: AdapterI
   return carrier === "module" && isModuleObject(type, adapters) ? hidden(value) : null;
 }
 
-/** What reading, calling, or constructing one member read past a cast touches, if anything. */
-function propertyUse(property: MorphSymbol, access: Node, adapters: AdapterIndex): EscapeUse | undefined {
-  const env = envUse(property, access);
+/** What reading, calling, or constructing one member read past a cast, of type `type`, touches, if anything. */
+function propertyUse(property: MorphSymbol, type: Type, access: Node, adapters: AdapterIndex): EscapeUse | undefined {
+  const env = envUse(type, access);
   if (env) return env;
+  // A member that isn't a function or class (`(fs as any).constants`) is no capability itself.
+  if (type.getCallSignatures().length === 0 && type.getConstructSignatures().length === 0) return undefined;
   const parent = access.getParent();
   const call = (Node.isCallExpression(parent) || Node.isNewExpression(parent)) && parent.getExpression() === access ? parent : undefined;
   const use = (capabilities: Capability[]): EscapeUse | undefined => {
@@ -325,24 +353,21 @@ function propertyUse(property: MorphSymbol, access: Node, adapters: AdapterIndex
     return { node: call ?? access, uses: capabilities.map((capability) => ({ capability, call: text, verb: call ? "calls" : "uses" })) };
   };
   const args = call ? argumentsOf(call) : [];
-  if (Node.isNewExpression(call)) return use(constructorCapabilities(property.getTypeAtLocation(access), adapters, args));
+  if (Node.isNewExpression(call)) return use(constructorCapabilities(type, adapters, args));
   for (const declaration of resolveAlias(property).getDeclarations()) {
     const found = use(capabilitiesOf(declaration, args, adapters, call ? "called" : "value", call));
     if (found) return found;
   }
-  // `(process as any).getBuiltinModule("child_process")` returns the module typed `any`.
-  if (call && property.getName() === "getBuiltinModule" && call.getType().isAny()) {
-    const module = literalString(args[0]);
-    if (module !== undefined && requiresCapabilityModule(module, adapters) && !adapters.isPure(module.replace(/^node:/, ""))) {
-      return hidden(call, "returned as `any`");
-    }
+  // `(process as any).getBuiltinModule("child_process")` returns the module as `any`. (A computed
+  // name, and the function used as a value, are unverifiable above, so this is a call with a literal name.)
+  if (property.getName() === "getBuiltinModule" && isCapabilityModuleName(literalString(args[0])!, adapters)) {
+    return hidden(call!, "returned as `any`");
   }
   return undefined;
 }
 
 /** `(process as any).env.KEY`, `(process as any).env`: the environment, read past the cast. */
-function envUse(property: MorphSymbol, access: Node): EscapeUse | undefined {
-  const type = property.getTypeAtLocation(access);
+function envUse(type: Type, access: Node): EscapeUse | undefined {
   const symbol = type.getSymbol() ?? type.getAliasSymbol();
   if (symbol?.getName() !== "ProcessEnv" || !symbol.getDeclarations().some((d) => d.getSourceFile().isDeclarationFile())) return undefined;
   const parent = access.getParent();
@@ -355,6 +380,11 @@ function envUse(property: MorphSymbol, access: Node): EscapeUse | undefined {
   const site = key !== undefined && parent ? parent : access;
   const capability: Capability = key !== undefined ? { name: "env", arg: key } : { name: "env" };
   return { node: site, uses: [{ capability, call: site.getText().replace(/\s+/g, " "), verb: "reads" }] };
+}
+
+/** A Node built-in or package with capabilities, and not declared pure. */
+function isCapabilityModuleName(specifier: string, adapters: AdapterIndex): boolean {
+  return requiresCapabilityModule(specifier, adapters) && !adapters.isPure(specifier.replace(/^node:/, ""));
 }
 
 /** A namespace-like member of a capability module (`fs.promises`): its own members carry capabilities. */

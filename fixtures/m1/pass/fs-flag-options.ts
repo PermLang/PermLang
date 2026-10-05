@@ -1,4 +1,5 @@
 import fs, { createReadStream, readFileSync, realpathSync } from "node:fs";
+import * as fsp from "node:fs/promises";
 import { readFile, realpath } from "node:fs/promises";
 
 declare const encoded: { encoding: BufferEncoding };
@@ -21,4 +22,22 @@ export async function reads() {
 /** @perm fs.read(./data) */
 export function stdout() {
   new fs.Utf8Stream({ fd: 1 });
+}
+
+// A file opened for reading, read through its handle; an encoding instead of options.
+/** @perm fs.read(./data) */
+export async function moreReads(encoding: BufferEncoding) {
+  fs.openSync("./data/j");
+  readFileSync("./data/k", encoding);
+  const handle = await fsp.open("./data/l");
+  return handle.readFile();
+}
+
+// A project's own type that happens to be named FileHandle.
+interface FileHandle {
+  chmod(mode: number): Promise<void>;
+}
+
+export async function ownHandle(handle: FileHandle) {
+  await handle.chmod(0o644);
 }

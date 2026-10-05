@@ -39,8 +39,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
     (`const env = process.env; env.KEY`). Spreading or enumerating the
-    environment needs bare `env`. `process.env` is read the same way without
-    Node's types, or with a project's own `declare const process`; a `process`
+    environment needs bare `env`. `process.env` (and `(process as any).env`) is
+    read the same way without Node's types, or with a project's own
+    `declare const process`; a `process`
     that doesn't resolve also gets a PERM007 warning, since its other APIs
     can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
     `env(KEY)`, except what Vite sets itself (`MODE`, `DEV`, `PROD`, `SSR`,
@@ -59,7 +60,10 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `hostname`. Other libraries' options must name one host in all of `url`,
     `hostname`, and `host`. A spread, an accessor, a computed key, or a
     `socketPath`, `lookup`, or `createConnection` option (or a `path` for `net`
-    and `tls`) could send the connection anywhere, so it needs bare `net`.
+    and `tls`) could send the connection anywhere, so it needs bare `net`. So do
+    options that aren't written out where they're used (a variable, even one that
+    may be `undefined`), and a first argument to `net.connect` or `tls.connect`
+    that isn't a port number or written-out options.
   - `fs.read` / `fs.write`: `readFile` and `createReadStream` with a writing
     `flag` / `flags` option (`"w"`, `"a+"`, or one that can't be read) write the
     file, and used as values they could be called with any flags, as `open` can.
@@ -110,7 +114,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     (`const run = execSync; run.call(null, cmd)`, `Reflect.apply(run, ...)`,
     `urls.map(get)` with `const get = fetch`) is a use of what it holds. Testing
     whether a function exists (`if (globalThis.fetch)`, `!WebSocket`,
-    `x instanceof WebSocket`) isn't a use;
+    `x instanceof WebSocket`, `if (ready && window.WebSocket)`) isn't a use, but
+    picking one with `&&`, `||`, or `??` outside a condition
+    (`const WS = window.WebSocket || Fallback`) is;
   - capability classes reached indirectly: through an alias
     (`const WS = WebSocket`), a subclass, `super(url)`, a `typeof WebSocket`
     parameter, or `Reflect.construct(WebSocket, ...)`;
@@ -172,17 +178,27 @@ so the list can't go stale.
     import, `import cp = require(...)`, the result of `await import(...)` or
     `process.getBuiltinModule(...)`, or a module of the project's own that
     re-exports one. One that escapes any other way (stored, passed, or returned
-    as `any`; passed on as `unknown` or `object`; listed with `Object.values`,
-    `entries`, or `keys`; read with a computed key, also by `Reflect.get`; or
-    given to a callback parameter typed `any`, as in
-    `Promise.resolve(cp).then((m: any) => ...)`) is unverifiable (PERM004).
+    as `any`; passed on as `unknown`, `object`, `{}`, or a record such as
+    `Record<string, unknown>`; listed with `Object.values`, `entries`, or
+    `keys`; read or written with a computed key, also by `Reflect.get`; or
+    given to a callback parameter typed `any` or `unknown`, as in
+    `Promise.resolve(cp).then((m: any) => ...)`; or given as `this` to a function
+    of the project's own, as in `run.call(cp)`) is unverifiable (PERM004).
+    Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
+    checked through that parameter like the module itself.
   - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
     and `(require as any)(...)` are still `require`.
 
   Two things stay unchecked. A global object stored as `any`
   (`const w = window as any; w.fetch(url)`) isn't followed: that cast is common
   and almost always harmless, so it isn't reported. And a value that was `any`
-  from the start, such as an untyped parameter, has nothing to trace. Imports
+  from the start, such as an untyped parameter, has nothing to trace; that
+  includes a module handed through a promise or a collection to a named
+  function whose parameter is `any` (`Promise.resolve(cp).then(handle)`, with
+  `function handle(m: any)`), since only callbacks written in place are
+  matched to what they're given. A module that's passed on from somewhere other
+  than its own name (an array element or an object's property, as in
+  `use(modules[0])`) isn't followed either. Imports
   whose types can't be found, including packages shimmed with
   `declare module "x";`, are reported (PERM007), whether reached by `import`,
   `import x = require()`, or a literal `import()`.

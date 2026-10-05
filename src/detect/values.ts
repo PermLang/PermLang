@@ -128,7 +128,7 @@ function isExempt(site: Node): boolean {
   if (Node.isPropertyAccessExpression(parent) && parent.getExpression() === site) {
     return !/^(call|apply|bind)$/.test(parent.getName());
   }
-  if (Node.isTypeOfExpression(parent) || isExistenceTest(site, parent)) return true;
+  if (Node.isTypeOfExpression(parent) || isExistenceTest(site)) return true;
   // A const alias: calls through it resolve by signature. Not when an annotation erases the
   // signature (`const f: any = fetch`): nothing called through it can be resolved, so the
   // reference itself is the use.
@@ -153,15 +153,21 @@ const COMPARISONS = new Set([
 
 /**
  * Feature detection, which never calls the function: `if (globalThis.fetch)`, `!WebSocket`,
- * `fetch === undefined`, `x instanceof WebSocket`, and the left of `&&`.
+ * `fetch === undefined`, `x instanceof WebSocket`, the condition of `?:`, the left of `&&`,
+ * and either side of `&&` or `||` when the whole is a test itself
+ * (`if (typeof window !== "undefined" && window.WebSocket)`).
  */
-function isExistenceTest(site: Node, parent: Node): boolean {
+function isExistenceTest(site: Node): boolean {
+  const parent = site.getParentOrThrow();
+  // An if's only expression is its condition.
+  if (Node.isIfStatement(parent)) return true;
+  if (Node.isParenthesizedExpression(parent)) return isExistenceTest(parent);
   if (Node.isPrefixUnaryExpression(parent)) return parent.getOperatorToken() === SyntaxKind.ExclamationToken;
-  if (Node.isIfStatement(parent) || Node.isWhileStatement(parent) || Node.isDoStatement(parent)) return parent.getExpression() === site;
   if (Node.isConditionalExpression(parent)) return parent.getCondition() === site;
   if (!Node.isBinaryExpression(parent)) return false;
   const operator = parent.getOperatorToken().getKind();
-  if (operator === SyntaxKind.AmpersandAmpersandToken) return parent.getLeft() === site;
+  if (operator === SyntaxKind.AmpersandAmpersandToken) return parent.getLeft() === site || isExistenceTest(parent);
+  if (operator === SyntaxKind.BarBarToken) return isExistenceTest(parent);
   if (operator === SyntaxKind.InstanceOfKeyword) return parent.getRight() === site;
   return COMPARISONS.has(operator);
 }

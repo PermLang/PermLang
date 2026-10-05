@@ -16,3 +16,9 @@ export function fine() {
   tls.connect({ host: "good.example", port: 443, servername: "good.example" });
   net.connect(443, "good.example");
 }
+
+// Options after a port and host that don't redirect the connection.
+/** @perm net(good.example) */
+export function portAndHost() {
+  tls.connect(443, "good.example", { servername: "good.example" });
+}

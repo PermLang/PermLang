@@ -10,13 +10,13 @@ const FS_MODULES = new Set(["fs", "node:fs", "fs/promises", "node:fs/promises"])
 
 // Classes whose constructors open a file: what each is classified as. ReadStream and
 // WriteStream declare no constructor of their own, so they're matched by the class.
-const STREAM_CLASSES = new Map([["ReadStream", "createReadStream"], ["WriteStream", "createWriteStream"], ["Utf8Stream", "Utf8Stream"]]);
+const STREAM_CLASSES = new Map<string | undefined, string>([["ReadStream", "createReadStream"], ["WriteStream", "createWriteStream"], ["Utf8Stream", "Utf8Stream"]]);
 
 /** The fs function a declaration is, or undefined. */
 export function fsFunctionName(declaration: Node): string | undefined {
   if (Node.isClassDeclaration(declaration) || Node.isConstructorDeclaration(declaration)) {
     const owner = Node.isClassDeclaration(declaration) ? declaration : declaration.getParent();
-    return Node.isClassDeclaration(owner) && isInFsModule(owner) ? STREAM_CLASSES.get(owner.getName() ?? "") : undefined;
+    return Node.isClassDeclaration(owner) && isInFsModule(owner) ? STREAM_CLASSES.get(owner.getName()) : undefined;
   }
   if (Node.isMethodSignature(declaration)) return fileHandleMethod(declaration);
   if (!Node.isFunctionDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return undefined;
@@ -31,14 +31,14 @@ export function fsFunctionName(declaration: Node): string | undefined {
  * The fs class an instance type is (`new fs.WriteStream(path)`), or extends when `direct` is
  * false, as fsFunctionName names it.
  */
-export function fsStreamClass(type: Type, depth = 0): { name: string; direct: boolean } | undefined {
-  if (depth > 8) return undefined;
+export function fsStreamClass(type: Type, direct = true): { name: string; direct: boolean } | undefined {
   for (const declaration of type.getSymbol()?.getDeclarations() ?? []) {
     const name = fsFunctionName(declaration);
-    if (name !== undefined) return { name, direct: depth === 0 };
+    if (name !== undefined) return { name, direct };
   }
+  // Class hierarchies can't be circular, so this ends.
   for (const base of type.getBaseTypes()) {
-    const found = fsStreamClass(base, depth + 1);
+    const found = fsStreamClass(base, false);
     if (found) return found;
   }
   return undefined;

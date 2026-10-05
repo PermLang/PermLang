@@ -32,3 +32,42 @@ export function use() {
   void fetch(Endpoint.Url); // expect: error PERM001 net
   void fetch(LOOSENED.url); // expect: error PERM001 net
 }
+
+// Each way of writing to a member, and constants that were never fixed.
+const ASSIGNED = { url: "https://good.example/x" } as const;
+const DELETED = { url: "https://good.example/x" } as const;
+const COUNTED = { url: "https://good.example/x", retries: 1 } as const;
+const APPENDED = { url: "https://good.example/x" } as const;
+const DESTRUCTURED = { url: "https://good.example/x" } as const;
+const LOOPED = { url: "https://good.example/x" } as const;
+let REASSIGNABLE = { url: "https://good.example/x" } as const;
+const PLAIN = { url: "https://good.example/x" };
+
+export function tamperMembers(evil: string[]) {
+  // @ts-expect-error readonly only to the type checker
+  ASSIGNED.url = "https://evil.example/x";
+  // @ts-expect-error
+  delete DELETED.url;
+  // @ts-expect-error
+  COUNTED.retries++;
+  // @ts-expect-error
+  APPENDED.url += "/../../redirect?to=https://evil.example";
+  // @ts-expect-error
+  [DESTRUCTURED.url] = evil;
+  // @ts-expect-error
+  for (LOOPED.url of evil);
+  PLAIN.url = "https://evil.example/x";
+  REASSIGNABLE = { url: "https://evil.example/x" } as never;
+}
+
+/** @perm net(good.example) */
+export function useMembers() {
+  void fetch(ASSIGNED.url); // expect: error PERM001 net
+  void fetch(DELETED.url); // expect: error PERM001 net
+  void fetch(COUNTED.url); // expect: error PERM001 net
+  void fetch(APPENDED.url); // expect: error PERM001 net
+  void fetch(DESTRUCTURED.url); // expect: error PERM001 net
+  void fetch(LOOPED.url); // expect: error PERM001 net
+  void fetch(REASSIGNABLE.url); // expect: error PERM001 net
+  void fetch(PLAIN.url); // expect: error PERM001 net
+}

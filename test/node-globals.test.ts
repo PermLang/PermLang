@@ -3,12 +3,13 @@
 // runs as its own project, since the shared fixtures have both lib.dom and @types/node.
 // Found in the 0.3 review.
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { checkTsConfig, type Report } from "../src/check.js";
+import { removeTemporary } from "./temporary.js";
 
 const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
 const dirs: string[] = [];
@@ -24,7 +25,7 @@ function check(compilerOptions: object, files: Record<string, string>): Report {
   return checkTsConfig(path.join(dir, "tsconfig.json"), { strictness: "development" });
 }
 
-afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true, maxRetries: 5 })));
+afterAll(() => dirs.forEach(removeTemporary));
 
 const errors = (report: Report, fn: string) =>
   report.diagnostics.filter((d) => d.function === fn && d.severity === "error").map((d) => `${d.code} ${d.capability}`);
@@ -62,17 +63,22 @@ describe("process without Node's types", () => {
       "export function other() { return process.env[\"OTHER\"]; }",
       "/** @perm env(STRIPE_KEY) */",
       "export function stop() { process.kill(1); }",
+      "/** @perm env(STRIPE_KEY) */",
+      "export function cast() { return (process as any).env.SECRET; }",
     ].join("\n"),
+    "worker.ts": "// A second file that uses process too.\n/** @perm env(PORT) */\nexport function port() { return process.env.PORT; }",
   });
 
   it("still reads environment variables by name", () => {
     expect(errors(report, "key")).toEqual([]);
     expect(errors(report, "other")).toEqual(["PERM001 env(OTHER)"]);
+    expect(errors(report, "cast")).toEqual(["PERM001 env(SECRET)"]);
+    expect(errors(report, "port")).toEqual([]);
   });
 
-  it("warns that the rest of process can't be checked", () => {
+  it("warns once, at the first file that uses it, that the rest of process can't be checked", () => {
     const d = report.diagnostics.filter((x) => x.code === "PERM007");
-    expect(d.map((x) => `${x.severity} ${x.capability} ${x.line}`)).toEqual(["warning node:process 2"]);
+    expect(d.map((x) => `${x.severity} ${x.capability} ${path.basename(x.file)}:${x.line}`)).toEqual(["warning node:process app.ts:2"]);
     expect(d[0]!.fix).toBe("install @types/node.");
     expect(report.unresolved).toEqual(["node:process"]);
   });
@@ -84,6 +90,18 @@ describe("process without Node's types", () => {
     });
     expect(errors(shimmed, "b")).toEqual(["PERM001 env(B)"]);
     expect(shimmed.unresolved).toEqual([]);
+    // Declared in the file that uses it, as a bundler's config might.
+    const inline = check({ lib: ["ES2022"], types: [] }, {
+      "app.ts": "declare const process: { env: Record<string, string | undefined> };\n/** @perm env(A) */\nexport function b() { return process.env.B; }",
+    });
+    expect(errors(inline, "b")).toEqual(["PERM001 env(B)"]);
+  });
+
+  it("leaves a local variable named process alone", () => {
+    const local = check({ lib: ["ES2022"], types: [] }, {
+      "app.ts": "export function b() { const process = { env: { B: \"1\" } }; return process.env.B; }",
+    });
+    expect(local.diagnostics).toEqual([]);
   });
 });
 
@@ -96,6 +114,8 @@ describe("import.meta.env", () => {
       "export function secret() { return import.meta.env.VITE_SECRET_KEY; }",
       "/** @perm env(VITE_API_URL) */",
       "export function mode() { return import.meta.env.DEV ? import.meta.env.MODE : \"\"; }",
+      "/** @perm env(VITE_API_URL) */",
+      "export function built() { const { BASE_URL, SSR } = import.meta.env; return [BASE_URL, SSR, import.meta.env[\"PROD\"]]; }",
       "/** @perm env(VITE_API_URL) */",
       "export function whole() { return { ...import.meta.env }; }",
       "/** @perm env(VITE_API_URL) */",
@@ -116,11 +136,38 @@ describe("import.meta.env", () => {
         expect(errors(report, "whole")).toEqual(["PERM001 env"]);
       });
 
-      it("ignores what Vite sets itself (MODE, DEV, PROD, SSR, BASE_URL)", () => expect(errors(report, "mode")).toEqual([]));
+      it("ignores what Vite sets itself (MODE, DEV, PROD, SSR, BASE_URL)", () => {
+        expect(errors(report, "mode")).toEqual([]);
+        expect(errors(report, "built")).toEqual([]);
+      });
 
       it("follows an alias, or reads every variable through one it can't follow", () => {
         expect(errors(report, "alias")).toEqual([name === "without types" ? "PERM001 env" : "PERM001 env(VITE_TOKEN)"]);
       });
     });
   }
+});
+
+describe("web workers", () => {
+  const report = check({ lib: ["ES2022", "WebWorker"], types: [] }, {
+    "worker.ts": [
+      "/** @perm net(cdn.example) */",
+      "export function load() { importScripts(\"https://cdn.example/lib.js\"); }",
+      "/** @perm net(cdn.example) */",
+      "export function get() { return self.fetch(\"https://cdn.example/data.json\"); }",
+    ].join("\n"),
+  });
+
+  it("treats importScripts as code it can't see", () => expect(errors(report, "load")).toEqual(["PERM004 unverifiable"]));
+  it("still reads self.fetch's host", () => expect(errors(report, "get")).toEqual([]));
+});
+
+describe("a project's own declarations", () => {
+  // An SDK loaded by a script tag, typed by hand. Its classes aren't the platform's.
+  const report = check({ lib: ["ES2022", "DOM"], types: [] }, {
+    "sdk.d.ts": "declare const sdk: { Client: { new (url: string): { send(body: string): void } } };\ndeclare class Tracker { constructor(url: string); }",
+    "app.ts": "/** @perm env(MODE) */\nexport function connect() { new sdk.Client(\"https://sdk.example\").send(\"x\"); return new Tracker(\"https://t.example\"); }",
+  });
+
+  it("aren't mistaken for the platform's network classes", () => expect(errors(report, "connect")).toEqual([]));
 });

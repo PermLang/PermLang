@@ -111,12 +111,11 @@ const NODE_PROCESS = "node:process";
 function unresolvedProcess(sourceFile: SourceFile): Node | undefined {
   if (!sourceFile.getFullText().includes("process")) return undefined;
   for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    // Declared names, property names, and shorthand properties all have a symbol, typed or not.
     if (id.getText() !== "process" || id.getSymbol() !== undefined) continue;
+    // `x.process` on an untyped `x` isn't the global.
     const parent = id.getParent();
-    // A property name (`x.process`, `{ process: 1 }`) isn't the global.
-    if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === id) continue;
-    if (parent && !Node.isShorthandPropertyAssignment(parent) && "getNameNode" in parent && (parent as { getNameNode(): Node }).getNameNode() === id) continue;
-    return id;
+    if (!Node.isPropertyAccessExpression(parent) || parent.getNameNode() !== id) return id;
   }
   return undefined;
 }

@@ -33,6 +33,13 @@ export function files() {
   process.chdir("/srv/other"); // expect: error PERM001 fs.read(/srv/other) expect: error PERM001 fs.write(/srv/other)
 }
 
+// A path that isn't literal, or the function passed along to be called with any path.
+/** @perm env */
+export function envFiles(path: string) {
+  process.loadEnvFile(path); // expect: error PERM001 fs.read
+  [".env.local", ".env"].forEach(process.loadEnvFile); // expect: error PERM001 fs.read
+}
+
 // Internal bindings that the types don't declare can spawn processes.
 /** @perm env(MODE) */
 export function bindings() {

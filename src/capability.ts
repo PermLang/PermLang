@@ -152,7 +152,7 @@ function parsePath(p: string): { root: string; segments: string[] } {
   const root = /^(\/\/|[A-Za-z]:\/?|\/)/.exec(slashed)?.[0] ?? "";
   const rest = slashed.slice(root.length);
   const absolute = root.endsWith("/");
-  const normalized = path.posix.normalize(absolute ? `/${rest}` : rest || ".");
+  const normalized = path.posix.normalize(absolute ? `/${rest}` : rest);
   return {
     // Drive letters are case-insensitive.
     root: root.toUpperCase(),
