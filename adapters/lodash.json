@@ -1,0 +1,10 @@
+{
+  "permlang": 1,
+  "package": "lodash",
+  "default": [],
+  "functions": {
+    "LoDashStatic.template": ["unverifiable"],
+    "LoDashImplicitWrapper.template": ["unverifiable"],
+    "LoDashExplicitWrapper.template": ["unverifiable"]
+  }
+}
