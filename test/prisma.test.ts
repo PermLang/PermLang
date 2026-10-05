@@ -215,7 +215,9 @@ const ext = prisma.$extends({});
   "src/custom-client.ts": `
 import { PrismaClient } from "./db/client/index.js";
 const prisma = new PrismaClient();
+const ext = prisma.$extends({});
 /** @perm env(NONE) */ export function read() { return prisma.lead.findMany({ include: { tags: true } }); }
+/** @perm env(NONE) */ export function extended() { return [ext.user.findMany({ include: { profile: true } }), ext.$queryRaw\`SELECT 1\`]; }
 `,
   // The prisma-client generator, which writes .ts files among the project's own.
   "src/modern-client.ts": `
@@ -298,6 +300,8 @@ describe("recognizing Prisma", () => {
     expect(actual("src/default-client.ts", "read")).toEqual(["db.read(lead)"]);
     expect(actual("src/default-client.ts", "raw")).toEqual(["db.read", "db.write"]);
     expect(actual("src/custom-client.ts", "read")).toEqual(["db.read(lead)", "db.read(tag)"]);
+    // Its `$extends` client is typed by the runtime copied next to it.
+    expect(actual("src/custom-client.ts", "extended")).toEqual(["db.read", "db.read(profile)", "db.read(user)", "db.write"]);
     expect(actual("src/modern-client.ts", "read")).toEqual(["db.read(lead)", "db.read(user)"]);
     expect(actual("src/headed.ts", "read")).toEqual(["db.read(audit)"]);
   });
