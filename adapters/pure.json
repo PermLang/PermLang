@@ -66,6 +66,8 @@
     "fast-redact",
     "tablemark",
     "jsonpath",
+    "sqlstring",
+    "sql-escaper",
     "cheerio",
     "eventemitter2",
     "@internationalized/number",

@@ -85,9 +85,17 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     name), a parenthesized list after an `INSERT` table that isn't a list of
     columns, a quoted name it can't report as written (`"audit.log"`), and SQL nested
     more than 64 levels deep. So can SQL built with string concatenation or a
-    template passed to `query()`. These need bare `db.read` and `db.write`. So does any client
-    method PermLang doesn't know, so new APIs can't pass silently. Schema-qualified
-    names are declared as written (`db.read(public.users)`).
+    template passed to `query()`; a config object (`{ text }`, `{ sql }`) with a
+    spread, a computed key, or the SQL named twice, any of which can replace the
+    text; a mysql2 value with a `toSqlString()` method (what `mysql.raw()` returns),
+    whose text mysql2 pastes into the query; and a tag called as a function with
+    an array made to look like a template's strings. These need bare `db.read`
+    and `db.write`. Neon's query function called with SQL text (before 1.0) is read
+    like `query()`. So does any client method PermLang doesn't know, so new APIs
+    can't pass silently; postgres.js's query modifiers (`.values()`, `.cursor()`,
+    `.describe()`, ...) and mysql2's `.promise()` touch nothing beyond the query
+    they belong to. Schema-qualified names are declared as written
+    (`db.read(public.users)`).
 - **Adapter manifests.** JSON files mapping a library's functions to
   capabilities, including app-level ones such as `payments.refund`. Built-in
   adapters in [`adapters/`](../adapters) cover HTTP clients, Stripe, email, Redis,
@@ -175,6 +183,13 @@ Other gaps, not yet in fixtures:
   decorated member.
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
   order, so adding one can renumber the others and show spurious lock changes.
+- Databases run code of their own that SQL text doesn't show: triggers, views,
+  rules, and row-level security can read or write other tables.
+- Table names in SQL are reported as written. Postgres folds unquoted names to
+  lower case, so `LEADS` and `"LEADS"` are different tables there but are both
+  reported as `LEADS`.
+- A mysql2 value typed `any` that has a `toSqlString()` method: mysql2 pastes its
+  text into the query, but nothing in its type shows that.
 
 ## Configuration
 

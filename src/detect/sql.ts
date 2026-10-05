@@ -7,7 +7,7 @@
 // so the literal parts still name the tables. A template string passed to query()
 // is concatenation, which is how SQL injection happens: it is unknown.
 
-import { Node } from "ts-morph";
+import { Node, type Type } from "ts-morph";
 import { packageName, packageOf } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { sqlTables } from "./sql-tables.js";
@@ -27,13 +27,17 @@ const TEXT_METHODS: Record<string, readonly string[]> = {
 // Methods that touch no table: connection lifecycle, transactions (whose queries are
 // checked where they're written), statement handles, and pure helpers. Every other
 // method on these packages is unknown database access, so new or unusual APIs
-// (COPY streams, pragmas, large objects) never pass silently.
+// (COPY streams, pragmas, large objects) never pass silently. postgres.js's query
+// modifiers (`.values()`, `.cursor()`, ...) run the query its tag already named.
 const SAFE_METHODS: Record<string, readonly string[]> = {
   pg: ["connect", "end", "release", "on", "once", "off", "removeListener", "removeAllListeners", "pauseDrain", "resumeDrain", "getTransactionStatus", "escapeLiteral", "escapeIdentifier"],
-  mysql2: ["createConnection", "createPool", "createPoolCluster", "connect", "end", "destroy", "release", "releaseConnection", "getConnection", "beginTransaction", "commit", "rollback", "ping", "pause", "resume", "escape", "escapeId", "format", "on", "once", "unprepare", "close", "reset"],
+  mysql2: ["createConnection", "createPool", "createPoolCluster", "connect", "end", "destroy", "release", "releaseConnection", "getConnection", "beginTransaction", "commit", "rollback", "ping", "pause", "resume", "escape", "escapeId", "format", "on", "once", "unprepare", "close", "reset", "promise"],
   "better-sqlite3": ["close", "transaction", "defaultSafeIntegers", "function", "aggregate", "table", "run", "get", "all", "iterate", "pluck", "expand", "raw", "columns", "bind", "safeIntegers"],
   sqlite3: ["verbose", "close", "serialize", "parallelize", "configure", "interrupt", "on", "once", "bind", "reset", "finalize"],
-  postgres: ["postgres", "begin", "end", "reserve", "release", "json", "array", "typed", "savepoint"],
+  postgres: [
+    "postgres", "begin", "end", "reserve", "release", "json", "array", "typed", "savepoint",
+    "values", "raw", "describe", "simple", "execute", "cancel", "cursor", "forEach", "stream", "readable", "writable",
+  ],
   "@neondatabase/serverless": ["neon", "neonConfig", "transaction", "connect", "end", "release", "on"],
   "@vercel/postgres": ["createPool", "createClient", "connect", "end", "release", "on"],
 };
@@ -54,6 +58,8 @@ const TEXT_CONTAINERS: Record<string, string> = { sqlite3: "Database" };
 
 /** Packages whose tagged templates run SQL with bound parameters. */
 const TAG_PACKAGES = new Set(["postgres", "@neondatabase/serverless", "@vercel/postgres"]);
+/** Packages whose tag also runs SQL text called as a function: neon's `sql("SELECT ...")` before 1.0. */
+const TEXT_CALL_PACKAGES = new Set(["@neondatabase/serverless"]);
 
 /** Packages covered here, so they aren't reported as having no adapter. */
 export const SQL_PACKAGES: readonly string[] = [...Object.keys(TEXT_METHODS)];
@@ -70,7 +76,11 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   if (call && Node.isTaggedTemplateExpression(call) && TAG_PACKAGES.has(name)) {
     return fromSql(templateText(call.getTemplate()));
   }
-  // A call signature (postgres.js `sql(value)`, a helper) or a constructor touches no table.
+  // A call signature: postgres.js's `sql(value)` helper, or a tag called as a function.
+  if (Node.isCallSignatureDeclaration(declaration) || Node.isFunctionTypeNode(declaration)) {
+    return TAG_PACKAGES.has(name) && call ? directCall(declaration, argumentsOf(call)[0], TEXT_CALL_PACKAGES.has(name)) : [];
+  }
+  // A constructor, or a function from the package, touches no table unless listed below.
   const method = memberName(declaration);
   if (!method) return [];
   const special = SPECIAL_METHODS[name]?.[method];
@@ -78,12 +88,33 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   const textContainer = TEXT_CONTAINERS[name];
   if (TEXT_METHODS[name]!.includes(method) && (!textContainer || containerName(declaration) === textContainer)) {
     // Used as a value (no call), the SQL is unknown.
-    return fromSql(call ? queryText(argumentsOf(call)[0]) : undefined);
+    if (!call) return unknown;
+    const [text, ...rest] = argumentsOf(call);
+    // mysql2 pastes a value's toSqlString() into the SQL as it is: mysql.raw(...) does this.
+    const values = [text && configValues(text), ...rest].filter((v): v is Node => v !== undefined);
+    if (name === "mysql2" && values.some(carriesSql)) return unknown;
+    return fromSql(queryText(text));
   }
   if (SAFE_METHODS[name]?.includes(method) || (textContainer && containerName(declaration) !== textContainer && TEXT_METHODS[name]!.includes(method))) {
     return [];
   }
   return unknown;
+}
+
+/**
+ * A tag called as an ordinary function. Neon's `sql("SELECT ...")` (before 1.0)
+ * takes SQL text. An array built to look like a template's strings runs as a query
+ * in all of them, so the template signature called directly, or a helper given a
+ * value that could be such an array, is unknown. Other helper calls, such as
+ * postgres.js's `sql("name")`, build values.
+ */
+function directCall(signature: Node & { getParameters(): Node[] }, first: Node | undefined, takesText: boolean): Capability[] {
+  const parameter = signature.getParameters()[0]?.getType();
+  if (takesText && parameter?.isString()) return fromSql(queryText(first));
+  if (parameter?.getSymbol()?.getName() === "TemplateStringsArray") return unknown;
+  const type = first && unwrapExpression(first).getType();
+  const written = first?.getType();
+  return [type, written].some((t) => t && (t.isAny() || t.isUnknown() || t.getProperty("raw") !== undefined)) ? unknown : [];
 }
 
 function fromSql(sql: string | undefined): Capability[] {
@@ -95,19 +126,65 @@ function fromSql(sql: string | undefined): Capability[] {
   ];
 }
 
-/** The SQL of a query argument: literal text, or a `{ text }` / `{ sql }` config object with literal text. */
+/**
+ * The SQL of a query argument: literal text, or a `{ text }` / `{ sql }` config
+ * object with literal text. A config object is read only when its keys are all
+ * written out and it names the SQL once: a spread, a computed key, or a getter
+ * could replace it.
+ */
 function queryText(arg: Node | undefined): string | undefined {
   if (!arg) return undefined;
   const inner = unwrapExpression(arg);
   const direct = literalString(inner);
   if (direct !== undefined) return direct;
-  if (Node.isObjectLiteralExpression(inner)) {
-    for (const key of ["text", "sql"]) {
-      const prop = inner.getProperty(key);
-      if (prop && Node.isPropertyAssignment(prop)) return literalString(prop.getInitializer());
-    }
+  if (!Node.isObjectLiteralExpression(inner)) return undefined;
+  const props = inner.getProperties();
+  if (!props.every((p) => (Node.isPropertyAssignment(p) && !Node.isComputedPropertyName(p.getNameNode())) || Node.isShorthandPropertyAssignment(p))) {
+    return undefined;
   }
-  return undefined;
+  const sql = props.filter((p) => ["text", "sql"].includes(keyOf(p)));
+  if (sql.length !== 1) return undefined;
+  const value = Node.isPropertyAssignment(sql[0]!) ? sql[0].getInitializer() : (sql[0] as Node & { getNameNode(): Node }).getNameNode();
+  return literalString(value);
+}
+
+/** A property's name, without quotes. */
+function keyOf(prop: Node): string {
+  const name = (prop as Node & { getNameNode(): Node }).getNameNode();
+  return Node.isStringLiteral(name) ? name.getLiteralValue() : name.getText();
+}
+
+/** The `values` of a mysql2 `{ sql, values }` options object, or nothing to check. */
+function configValues(arg: Node): Node | undefined {
+  const inner = unwrapExpression(arg);
+  if (!Node.isObjectLiteralExpression(inner)) return undefined;
+  const values = inner.getProperty("values");
+  return values && Node.isPropertyAssignment(values) ? values.getInitializer() : undefined;
+}
+
+/** Whether a mysql2 value, or one inside it, has a `toSqlString` method. */
+function carriesSql(value: Node): boolean {
+  const inner = unwrapExpression(value);
+  if (Node.isArrayLiteralExpression(inner)) return inner.getElements().some(carriesSql);
+  if (Node.isObjectLiteralExpression(inner)) {
+    // The value itself, if it defines toSqlString, or a named placeholder's value: { id: ... }.
+    return inner.getProperties().some((p) => {
+      if (Node.isSpreadAssignment(p)) return hasToSqlString(p.getExpression().getType());
+      if (keyOf(p) === "toSqlString") return true;
+      if (Node.isPropertyAssignment(p)) return carriesSql(p.getInitializer()!);
+      return Node.isShorthandPropertyAssignment(p) && hasToSqlString(p.getNameNode().getType());
+    });
+  }
+  return hasToSqlString(inner.getType());
+}
+
+function hasToSqlString(type: Type, depth = 0): boolean {
+  if (depth > 3) return false;
+  if (type.getProperty("toSqlString")) return true;
+  if (type.isUnion()) return type.getUnionTypes().some((t) => hasToSqlString(t, depth + 1));
+  if (type.isArray()) return hasToSqlString(type.getArrayElementTypeOrThrow(), depth + 1);
+  if (type.isTuple()) return type.getTupleElements().some((t) => hasToSqlString(t, depth + 1));
+  return false;
 }
 
 /**
