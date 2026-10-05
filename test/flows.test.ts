@@ -53,6 +53,8 @@ describe("data-flow rules", () => {
     );
     expect(message("viaExec").fix).toBe("keep env(STRIPE_KEY) away from that call: no rule can allow it, since a command could send it anywhere.");
     expect(message("viaEval").message).toContain("runs code that can't be verified, through eval(");
+    const nowhere = { from: stripeRule.from, to: [] };
+    expect(flows({ flows: [nowhere] }).find((d) => d.function === "viaExec")!.message).toContain("the flow rule for env(STRIPE_KEY) doesn't let it go anywhere.");
   });
 
   it("allows the hosts the rule lists, and ignores functions that never have the source", () => {

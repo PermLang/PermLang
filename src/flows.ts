@@ -62,7 +62,7 @@ export function flowDiagnostics(units: Iterable<Unit>, edges: readonly Edge[], r
   const out: Diagnostic[] = [];
   for (const rule of rules) {
     const source = formatCapability(rule.from);
-    const allowed = rule.to.map(formatCapability).join(", ") || "nothing";
+    const allowed = rule.to.length > 0 ? `allows only ${rule.to.map(formatCapability).join(", ")}` : "doesn't let it go anywhere";
     for (const [unit, via] of holders(units, edges, rule)) {
       const got = via.length === 0 ? `reads ${source}` : `gets ${source} from ${via.join(" → ")}`;
       for (const [key, p] of reach.get(unit)!) {
@@ -84,7 +84,7 @@ export function flowDiagnostics(units: Iterable<Unit>, edges: readonly Edge[], r
           call: site.call,
           path,
           message: anywhere
-            ? `${unit.name} ${got} and ${doing}, through ${through}, which could send it anywhere: the flow rule for ${source} allows only ${allowed}.`
+            ? `${unit.name} ${got} and ${doing}, through ${through}, which could send it anywhere: the flow rule for ${source} ${allowed}.`
             : `${unit.name} ${got} and can send to ${sink}, through ${through}, which the flow rule for ${source} doesn't allow.`,
           fix: anywhere
             ? `keep ${source} away from that call: no rule can allow it, since ${key === "exec" ? "a command" : "code that can't be verified"} could send it anywhere.`
