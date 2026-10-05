@@ -3,6 +3,7 @@
   "package": "lodash",
   "default": [],
   "functions": {
+    "template": ["unverifiable"],
     "LoDashStatic.template": ["unverifiable"],
     "LoDashImplicitWrapper.template": ["unverifiable"],
     "LoDashExplicitWrapper.template": ["unverifiable"]

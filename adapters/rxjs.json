@@ -3,6 +3,7 @@
   "package": "rxjs",
   "default": [],
   "functions": {
+    "ajax": ["net({host:0})"],
     "AjaxCreationMethod()": ["net({host:0})"],
     "AjaxCreationMethod.get": ["net({host:0})"],
     "AjaxCreationMethod.post": ["net({host:0})"],

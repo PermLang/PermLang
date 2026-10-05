@@ -112,8 +112,11 @@ declare namespace _ {
 export = _;`,
 };
 
-// Packages as older typings declare them.
+// Packages as other typings declare them: as plain functions.
 const OLDER: Record<string, string> = {
+  "rxjs/index.d.ts": `export declare function of<T>(value: T): unknown;`,
+  "rxjs/ajax/index.d.ts": `export declare function ajax(urlOrConfig: string | { url: string }): unknown;`,
+  "lodash/index.d.ts": `export declare function template(text: string): (data?: object) => string;`,
   // @types/tar 6: the commands are functions, with one-letter aliases.
   "@types/tar/index.d.ts": `
 export function create(options: { file?: string }, fileList: ReadonlyArray<string>): Promise<void>;
@@ -202,6 +205,12 @@ import _, { template } from "lodash";
 };
 
 const OLDER_SOURCES: Record<string, string> = {
+  "functions.ts": `
+import { ajax } from "rxjs/ajax";
+import { template } from "lodash";
+/** @perm env(NONE) */ export function viaAjax() { return ajax("https://a.example/x"); }
+/** @perm env(NONE) */ export function viaTemplate() { return template("<%= x %>"); }
+`,
   "tar.ts": `
 import * as tar from "tar";
 /** @perm env(NONE) */ export function extract(f: string) { return [tar.x({ file: f }), tar.extract({ file: f })]; }
@@ -309,6 +318,15 @@ describe("tar", () => {
     ["list", ["fs.read"]],
   ])("tar 6: %s", (name, expected) => {
     expect(actual("tar.ts", name, older)).toEqual(expected);
+  });
+});
+
+describe("other typings' shapes", () => {
+  it.each([
+    ["viaAjax", ["net(a.example)"]],
+    ["viaTemplate", ["unverifiable"]],
+  ])("%s", (name, expected) => {
+    expect(actual("functions.ts", name, older)).toEqual(expected);
   });
 });
 
