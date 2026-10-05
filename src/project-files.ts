@@ -17,7 +17,8 @@
 // pinned Actions don't change the lock; switching one to a tag does.
 //
 // The files: .github/workflows/*.yml, action.yml at the root and under .github/actions,
-// the action.yml of each local Action a step runs (`uses: ./path`), and package.json.
+// the action.yml of each local Action a step runs (`uses: ./path`), and package.json at
+// the root and in each workspace package (see package-files.ts).
 /**
  * @module
  * @perm fs.read
@@ -27,6 +28,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import path from "node:path";
 import type { FunctionReport } from "./check.js";
+import { MANIFESTS, readManifest, readPnpmWorkspace, workspaceFolders } from "./package-files.js";
 import { readWorkflowFile, type LocalAction } from "./workflow-files.js";
 import type { Position } from "./yaml-nodes.js";
 
@@ -64,11 +66,15 @@ class Project {
     for (const local of readWorkflowFile(entry.text, kind, entry)) this.follow(local, entry);
   }
 
+  /** package.json (and pnpm's other manifests) at the root and in every workspace package. */
   packages() {
-    const file = path.join(this.root, "package.json");
-    if (!exists(file)) return;
-    const entry = this.open(file, "npm");
-    if (entry?.text !== undefined) readPackageJson(entry.text, entry);
+    const patterns = this.manifests(this.root);
+    const pnpm = path.join(this.root, "pnpm-workspace.yaml");
+    if (exists(pnpm)) {
+      const entry = this.open(pnpm, "npm");
+      if (entry?.text !== undefined) patterns.push(...readPnpmWorkspace(entry.text, entry));
+    }
+    for (const dir of workspaceFolders(this.root, patterns)) this.manifests(dir);
   }
 
   reports(): FunctionReport[] {
@@ -93,6 +99,18 @@ class Project {
     if (actions.length === 0 && !(inside && listFiles(dir, false, DOCKERFILE).length > 0)) {
       from.add(`ci.unpinned(${local.ref})`, `uses: ${local.ref}, which isn't in the repository`, local.at);
     }
+  }
+
+  /** Records a folder's manifests, and returns the workspace patterns its package.json lists. */
+  private manifests(dir: string): string[] {
+    const patterns: string[] = [];
+    for (const name of MANIFESTS) {
+      const file = path.join(dir, name);
+      if (!exists(file)) continue;
+      const entry = this.open(file, "npm");
+      if (entry?.text !== undefined) patterns.push(...readManifest(name, entry.text, entry));
+    }
+    return patterns;
   }
 
   /** A new entry for `file`, or undefined when it's already recorded. */
@@ -152,28 +170,6 @@ class Entry implements Sink {
       sites: Object.fromEntries(actual.map((c) => [c, this.caps.get(c)!.at])),
       kind: "config",
     };
-  }
-}
-
-// --- package.json -------------------------------------------------------------
-
-function readPackageJson(text: string, sink: Sink) {
-  let scripts: Record<string, unknown>;
-  try {
-    const pkg = JSON.parse(text) as { scripts?: unknown };
-    scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? (pkg.scripts as Record<string, unknown>) : {};
-  } catch {
-    sink.unverifiable("a package.json PermLang can't read", { line: 1, column: 1 });
-    return;
-  }
-  const from = Math.max(0, text.indexOf('"scripts"'));
-  for (const [name, command] of Object.entries(scripts)) {
-    if (typeof command !== "string") continue;
-    const key = text.indexOf(`${JSON.stringify(name)}`, from);
-    const before = text.slice(0, Math.max(0, key));
-    const line = before.split("\n").length;
-    const column = key - (before.lastIndexOf("\n") + 1) + 1;
-    sink.add(`npm.script(${name}: ${command})`, `"${name}": ${JSON.stringify(command)}`, { line, column });
   }
 }
 
