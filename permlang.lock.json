@@ -72,15 +72,10 @@
       "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
-      "fs.read(.github/workflows/permlang.yml)",
-      "fs.read(package-lock.json)",
       "fs.read(package.json)",
       "fs.read(permlang.config.json)",
-      "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
-      "fs.read(yarn.lock)",
-      "fs.write",
-      "fs.write(.github/workflows/permlang.yml)"
+      "fs.write"
     ],
     "src/main.ts#analyze": [
       "fs.read",
@@ -93,6 +88,9 @@
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)",
       "fs.write"
+    ],
+    "src/main.ts#defaultBranch": [
+      "exec"
     ],
     "src/main.ts#dependencyChanges": [
       "exec",
@@ -116,21 +114,19 @@
     "src/main.ts#findSpecFiles": [
       "fs.read"
     ],
+    "src/main.ts#gitRoot": [
+      "exec",
+      "fs.write"
+    ],
     "src/main.ts#init": [
+      "exec",
       "fs.read",
-      "fs.read(.github/workflows/permlang.yml)",
-      "fs.read(package-lock.json)",
       "fs.read(permlang.config.json)",
-      "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
-      "fs.read(yarn.lock)",
-      "fs.write",
-      "fs.write(.github/workflows/permlang.yml)"
+      "fs.write"
     ],
     "src/main.ts#installSteps": [
-      "fs.read(package-lock.json)",
-      "fs.read(pnpm-lock.yaml)",
-      "fs.read(yarn.lock)"
+      "fs.read"
     ],
     "src/main.ts#installed": [
       "fs.read"
@@ -148,15 +144,10 @@
       "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
-      "fs.read(.github/workflows/permlang.yml)",
-      "fs.read(package-lock.json)",
       "fs.read(package.json)",
       "fs.read(permlang.config.json)",
-      "fs.read(pnpm-lock.yaml)",
       "fs.read(tsconfig.json)",
-      "fs.read(yarn.lock)",
-      "fs.write",
-      "fs.write(.github/workflows/permlang.yml)"
+      "fs.write"
     ],
     "src/main.ts#packageVersion": [
       "fs.read"
@@ -171,9 +162,12 @@
       "fs.read(tsconfig.json)"
     ],
     "src/main.ts#workflowFile": [
-      "fs.read(package-lock.json)",
-      "fs.read(pnpm-lock.yaml)",
-      "fs.read(yarn.lock)"
+      "exec",
+      "fs.read"
+    ],
+    "src/main.ts#workflowTarget": [
+      "exec",
+      "fs.write"
     ],
     "src/project-files.ts#listFiles": [
       "fs.read"
