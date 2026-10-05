@@ -6,11 +6,13 @@
 //   db.insert(t), db.update(t), db.delete(t)    db.write(t)
 //   db.query.<key>.findMany / findFirst          db.read(<key>), plus each `with` relation
 //   db.execute / run / all / get / values(sql)   raw SQL: bare db.read and db.write
+//   sql`...` and sql.raw("...") in a query       the tables its SQL names (see fragment)
 
 import { Node } from "ts-morph";
 import { packageName, packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
-import { argumentsOf, containerName, literalString, resolveAlias, unwrapExpression, type CallLike } from "./shared.js";
+import { sqlTables } from "./sql-tables.js";
+import { argumentsOf, containerName, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike } from "./shared.js";
 
 const WRITES = new Set(["insert", "update", "delete"]);
 const RAW = new Set(["execute", "run", "all", "get", "values"]);
@@ -19,6 +21,8 @@ const JOIN = /^(from|(left|right|inner|full|cross)Join(Lateral)?)$/;
 export function drizzleCapabilities(declaration: Node, call: CallLike | undefined): Capability[] {
   const pkg = packageOf(declaration);
   if (pkg === undefined || packageName(pkg) !== "drizzle-orm") return [];
+  const sql = fragment(declaration, call);
+  if (sql) return sql;
   // Real drizzle declares joins as function-typed properties (`leftJoin: PgSelectJoinFn`),
   // whose signatures have no name; the call site names them.
   const method = ("getName" in declaration ? (declaration as { getName(): string | undefined }).getName() : undefined) ?? calledName(call);
@@ -139,4 +143,86 @@ function relationReads(config: Node | undefined): Capability[] {
     else if (nestedValue && !(Node.isTrueLiteral(nestedValue) || Node.isFalseLiteral(nestedValue))) out.push({ name: "db.read", dynamic: true });
   }
   return out;
+}
+
+// --- sql fragments ----------------------------------------------------------------
+
+const unknownSql: Capability[] = [{ name: "db.read", dynamic: true }, { name: "db.write", dynamic: true }];
+
+// SQL that a schema definition holds: column defaults and generated columns, check
+// constraints, partial-index conditions, views, and row-level security policies.
+// It runs inside the database (on insert, or through migrations, which are checked
+// as raw SQL), not as part of a query here. A view is read as an unknown table.
+const SCHEMA_CONTAINER = /(ColumnBuilder|IndexBuilder|ViewBuilder|ViewBuilderCore)$/;
+const SCHEMA_FUNCTIONS = new Set(["check", "pgPolicy"]);
+
+/**
+ * A `sql` fragment in a query, `.where(sql`EXISTS (SELECT 1 FROM secrets)`)`, or the
+ * text `sql.raw()` pastes in. Its tables are read from its SQL as raw SQL's are,
+ * where it is written; anything the reader can't follow needs bare db.read and
+ * db.write. Undefined for anything else in drizzle-orm.
+ */
+function fragment(declaration: Node, call: CallLike | undefined): Capability[] | undefined {
+  if (!Node.isFunctionDeclaration(declaration)) return undefined;
+  const name = declaration.getName();
+  const holder = containerName(declaration);
+  if (name === "raw" && holder === "sql") return fromFragment(call ? literalString(argumentsOf(call)[0]) : undefined);
+  if (name !== "sql" || holder !== undefined) return undefined;
+  // Called as a function, with an array made to look like a template's strings.
+  if (!call || !Node.isTaggedTemplateExpression(call)) return unknownSql;
+  return inSchemaDefinition(call) ? [] : fromFragment(fragmentText(call.getTemplate()));
+}
+
+/**
+ * The fragment's text with each substitution in place: a table's name, quoted, or
+ * otherwise `$n`, since drizzle binds values and columns can't name a table. A
+ * nested fragment or `sql.raw()` is read where it's written, so as `$n` here it can
+ * only make this one unknown (`FROM $1`), never hide a table.
+ */
+function fragmentText(template: Node): string | undefined {
+  if (Node.isNoSubstitutionTemplateLiteral(template)) return template.getLiteralValue();
+  if (!Node.isTemplateExpression(template)) return undefined;
+  const parts = [template.getHead().getLiteralText()];
+  template.getTemplateSpans().forEach((span, i) => {
+    const named = table(span.getExpression());
+    const text = "arg" in named ? named.arg.split(".").map((p) => `"${p.replaceAll('"', '""')}"`).join(".") : `$${i + 1}`;
+    parts.push(text, span.getLiteral().getLiteralText());
+  });
+  return parts.join("");
+}
+
+// A fragment that is a whole statement, after any comments; anything else stands for an expression.
+const STATEMENT = /^\s*(?:(?:--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)\s*)*(SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|VALUES|TABLE)\b/i;
+
+function fromFragment(text: string | undefined): Capability[] {
+  if (text === undefined) return unknownSql;
+  // An expression is read as a select list, so a subquery or FROM in it still counts.
+  const tables = sqlTables(STATEMENT.test(text) ? text : `SELECT ${text}`);
+  if (!tables) return unknownSql;
+  return [
+    ...tables.read.map((t): Capability => ({ name: "db.read", arg: t })),
+    ...tables.write.map((t): Capability => ({ name: "db.write", arg: t })),
+  ];
+}
+
+/** Whether a fragment is passed to a schema definition: `.default(sql`now()`)`, `check(...)`, ... */
+function inSchemaDefinition(node: Node): boolean {
+  let child = node;
+  for (let parent = node.getParent(); parent; child = parent, parent = parent.getParent()) {
+    if (Node.isCallExpression(parent) || Node.isNewExpression(parent)) {
+      if (!(parent.getArguments() as Node[]).includes(child)) return false;
+      const declaration = resolvedDeclaration(parent);
+      if (!declaration || packageOf(declaration) !== "drizzle-orm") return false;
+      const container = containerName(declaration);
+      const name = "getName" in declaration ? (declaration as { getName(): string | undefined }).getName() : undefined;
+      return container !== undefined ? SCHEMA_CONTAINER.test(container) : name !== undefined && SCHEMA_FUNCTIONS.has(name);
+    }
+    // Look through what can carry a fragment into a call: (...), `as`, arrays, objects, arrow functions.
+    const carries =
+      Node.isParenthesizedExpression(parent) || Node.isAsExpression(parent) || Node.isSatisfiesExpression(parent) ||
+      Node.isArrayLiteralExpression(parent) || Node.isObjectLiteralExpression(parent) || Node.isPropertyAssignment(parent) ||
+      (Node.isArrowFunction(parent) && parent.getBody() === child);
+    if (!carries) return false;
+  }
+  return false;
 }

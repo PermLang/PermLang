@@ -69,7 +69,15 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `let`) could be any table. `.from()` and joins read. `db.query.<key>.findMany()`
     reads `<key>` and each `with` relation, nested ones included; options that
     aren't written out could load any. `db.execute()` is raw SQL, and `migrate()`
-    can touch any table.
+    can touch any table. A `` sql`...` `` fragment is read like raw SQL where it's
+    written, whether it's a whole statement or stands for an expression in a query
+    (`` .where(sql`EXISTS (SELECT 1 FROM secrets)`) ``, a select field, `.set()`,
+    `.orderBy()`): a table substituted into it (`${secrets}`) is named by its
+    definition, and other substitutions are values. `sql.raw("...")` is read the
+    same way, and `sql.raw(text)` with text PermLang can't read could touch any
+    table, as can a fragment calling a function it doesn't know. SQL in a schema
+    definition (a column default or generated column, a check, an index condition,
+    a view, a policy) runs inside the database, so it isn't counted.
   - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
     `postgres`, `@neondatabase/serverless`, `@vercel/postgres`). When the query
     is literal text, its tables are read out of it: `SELECT ... FROM leads JOIN
