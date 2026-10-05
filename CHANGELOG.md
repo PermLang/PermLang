@@ -2,6 +2,17 @@
 
 All notable changes to PermLang.
 
+## 0.3.1 (2026-10-05)
+
+### Fixed
+
+- Tools made with the Vercel AI SDK v7's `tool()` weren't found. The SDK
+  declares it in `@ai-sdk/provider-utils`, under a bundler's rename
+  (`tool$1`), and `ai` re-exports it. PermLang now recognizes the `@ai-sdk/*`
+  packages and ignores rename suffixes like `$1`, for tools and for adapter
+  keys. `@ai-sdk/provider-utils` is covered by the AI SDK adapter, with `tool()`
+  and the schema helpers touching nothing.
+
 ## 0.3.0 (2026-10-05)
 
 This release can fail builds that passed before, when a pull request changes
