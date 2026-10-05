@@ -2,6 +2,8 @@ import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { pgTable, text } from "drizzle-orm/pg-core";
 
+const keep = <T>(value: T) => value;
+
 const leads = pgTable("leads", { id: text("id"), name: text("name") });
 const secrets = pgTable("api_secrets", { key: text("key") });
 const db = drizzle("postgres://localhost/app");
@@ -19,6 +21,19 @@ export async function fragments(id: string, filter: string) {
   // sql.raw() pastes its text in: literal text is read, anything else is unknown.
   await db.select().from(leads).orderBy(sql.raw("(SELECT max(id) FROM audit)")); // expect: error PERM001 db.read(audit)
   await db.select().from(leads).where(sql.raw(filter)); // expect: error PERM001 db.read expect: error PERM001 db.write
+}
+
+// A fragment is counted wherever it's written, unless a schema definition holds it.
+/** @perm db.read(leads) */
+export function elsewhere(strings: TemplateStringsArray, filters: string[]) {
+  keep(sql`(SELECT 1 FROM vault1)`); // expect: error PERM001 db.read(vault1)
+  (keep as any)(sql`(SELECT 1 FROM vault2)`); // expect: error PERM001 db.read(vault2)
+  eq(leads.id, sql`(SELECT 1 FROM vault3)`); // expect: error PERM001 db.read(vault3)
+  (() => sql`(SELECT 1 FROM vault4)`)(); // expect: error PERM001 db.read(vault4)
+  pgTable("t", { a: text("a") }, () => [sql`(SELECT 1 FROM vault5)`]); // expect: error PERM001 db.read(vault5)
+  // Called as a function, or passed along, sql and sql.raw can run anything.
+  sql(strings as any); // expect: error PERM001 db.read expect: error PERM001 db.write
+  return filters.map(sql.raw); // expect: error PERM001 db.read expect: error PERM001 db.write
 }
 
 // A whole statement is read as one: this one writes, on top of execute()'s unknown access.

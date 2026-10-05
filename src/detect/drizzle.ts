@@ -8,7 +8,7 @@
 //   db.execute / run / all / get / values(sql)   raw SQL: bare db.read and db.write
 //   sql`...` and sql.raw("...") in a query       the tables its SQL names (see fragment)
 
-import { Node } from "ts-morph";
+import { Node, type TemplateLiteral } from "ts-morph";
 import { packageName, packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { sqlTables } from "./sql-tables.js";
@@ -147,15 +147,13 @@ function relationReads(config: Node | undefined, depth = 0): Capability[] {
   return out;
 }
 
-/** A `with` key as written: `posts`, `"posts"`, or `["posts"]`; undefined when computed. */
+/** A `with` key as written: `posts`, `"posts"`, or `["posts"]`; undefined when computed or a method. */
 function relationKey(p: Node): string | undefined {
   if (Node.isShorthandPropertyAssignment(p)) return p.getName();
   if (!Node.isPropertyAssignment(p)) return undefined;
   const name = p.getNameNode();
-  if (Node.isIdentifier(name)) return name.getText();
-  if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralValue();
   if (Node.isComputedPropertyName(name)) return literalString(unwrapExpression(name.getExpression()));
-  return undefined;
+  return Node.isStringLiteral(name) ? name.getLiteralValue() : name.getText();
 }
 
 // --- sql fragments ----------------------------------------------------------------
@@ -192,9 +190,8 @@ function fragment(declaration: Node, call: CallLike | undefined): Capability[] |
  * nested fragment or `sql.raw()` is read where it's written, so as `$n` here it can
  * only make this one unknown (`FROM $1`), never hide a table.
  */
-function fragmentText(template: Node): string | undefined {
+function fragmentText(template: TemplateLiteral): string {
   if (Node.isNoSubstitutionTemplateLiteral(template)) return template.getLiteralValue();
-  if (!Node.isTemplateExpression(template)) return undefined;
   const parts = [template.getHead().getLiteralText()];
   template.getTemplateSpans().forEach((span, i) => {
     const named = table(span.getExpression());
@@ -220,22 +217,24 @@ function fromFragment(text: string | undefined): Capability[] {
 
 /** Whether a fragment is passed to a schema definition: `.default(sql`now()`)`, `check(...)`, ... */
 function inSchemaDefinition(node: Node): boolean {
+  // Look through what can carry a fragment into a call: (...), `as`, arrays, objects, arrow functions.
   let child = node;
-  for (let parent = node.getParent(); parent; child = parent, parent = parent.getParent()) {
-    if (Node.isCallExpression(parent) || Node.isNewExpression(parent)) {
-      if (!(parent.getArguments() as Node[]).includes(child)) return false;
-      const declaration = resolvedDeclaration(parent);
-      if (!declaration || packageOf(declaration) !== "drizzle-orm") return false;
-      const container = containerName(declaration);
-      const name = "getName" in declaration ? (declaration as { getName(): string | undefined }).getName() : undefined;
-      return container !== undefined ? SCHEMA_CONTAINER.test(container) : name !== undefined && SCHEMA_FUNCTIONS.has(name);
-    }
-    // Look through what can carry a fragment into a call: (...), `as`, arrays, objects, arrow functions.
-    const carries =
-      Node.isParenthesizedExpression(parent) || Node.isAsExpression(parent) || Node.isSatisfiesExpression(parent) ||
-      Node.isArrayLiteralExpression(parent) || Node.isObjectLiteralExpression(parent) || Node.isPropertyAssignment(parent) ||
-      (Node.isArrowFunction(parent) && parent.getBody() === child);
-    if (!carries) return false;
+  let parent = node.getParentOrThrow();
+  while (carries(parent, child)) {
+    child = parent;
+    parent = parent.getParentOrThrow();
   }
-  return false;
+  if (!Node.isCallExpression(parent) || !parent.getArguments().includes(child)) return false;
+  const declaration = resolvedDeclaration(parent);
+  if (declaration === undefined || packageOf(declaration) !== "drizzle-orm") return false;
+  const name = Node.isFunctionDeclaration(declaration) ? declaration.getName() : undefined;
+  return SCHEMA_CONTAINER.test(containerName(declaration) ?? "") || SCHEMA_FUNCTIONS.has(String(name));
+}
+
+function carries(parent: Node, child: Node): boolean {
+  return (
+    Node.isParenthesizedExpression(parent) || Node.isAsExpression(parent) || Node.isSatisfiesExpression(parent) ||
+    Node.isArrayLiteralExpression(parent) || Node.isObjectLiteralExpression(parent) || Node.isPropertyAssignment(parent) ||
+    (Node.isArrowFunction(parent) && parent.getBody() === child)
+  );
 }
