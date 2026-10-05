@@ -131,6 +131,7 @@ describe("sqlTables: anything else is unknown", () => {
     // MySQL needs a space after --, so this runs the subquery there.
     "SELECT * FROM leads WHERE 1--1 OR (SELECT max(id) FROM secrets) > 0",
     "SELECT 1 --x\nFROM secrets",
+    "SELECT 1 -- x\nFROM secrets",
     // MySQL reads double quotes as a string with backslash escapes: this reads leads there.
     "SELECT \"a\\\" FROM secrets -- \" FROM leads",
     // MariaDB runs /*M! ... */ as SQL.

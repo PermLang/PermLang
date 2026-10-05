@@ -52,8 +52,9 @@ function tokenize(sql: string): Token[] {
     if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f" || c === "\v") {
       i++;
     } else if (c === "-" && at(1) === "-") {
-      // MySQL needs whitespace after --: there, `1--1` is 1 minus -1 and the line goes on.
-      if (i + 2 < sql.length && !/[\s\x00-\x1f]/.test(at(2))) unknown();
+      // MySQL needs ASCII whitespace or a control character after --: there, `1--1`
+      // is 1 minus -1 and the line goes on.
+      if (i + 2 < sql.length && !/[\x00-\x20]/.test(at(2))) unknown();
       // Postgres also ends the comment at a lone \r, which MySQL and SQLite don't.
       while (i < sql.length && at() !== "\n") {
         if (at() === "\r" && at(1) !== "\n") unknown();
