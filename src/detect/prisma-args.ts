@@ -10,7 +10,7 @@
 // `data`). Without payload types (Prisma 4, hand-written typings) a relation can't
 // be told from a plain field, so any argument that could name one is unknown.
 
-import { Node, SyntaxKind, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, ts, type SourceFile, type Type } from "ts-morph";
 import type { Capability } from "../capability.js";
 import { literalString, unwrapExpression } from "./shared.js";
 
@@ -277,6 +277,13 @@ function mayNameRelation(type: Type, relations: Map<string, Relation> | undefine
   if (isPlainType(type) || seen.has(type.compilerType)) return false;
   if (!relations || depth > 6) return true;
   seen.add(type.compilerType);
+  // A generic type (`T extends Prisma.LeadFindManyArgs`, `Prisma.SelectSubset<T, ...>`)
+  // is checked by its constraint; one whose keys aren't known yet could hold any.
+  if (type.isTypeParameter()) {
+    const constraint = type.getConstraint();
+    return constraint === undefined || mayNameRelation(constraint, relations, at, depth, seen);
+  }
+  if (type.getFlags() & (ts.TypeFlags.Conditional | ts.TypeFlags.Substitution | ts.TypeFlags.Index | ts.TypeFlags.IndexedAccess)) return true;
   const parts = type.isUnion() ? type.getUnionTypes() : type.isIntersection() ? type.getIntersectionTypes() : undefined;
   if (parts) return parts.some((t) => mayNameRelation(t, relations, at, depth, seen));
   if (type.isArray()) return mayNameRelation(type.getArrayElementTypeOrThrow(), relations, at, depth + 1, seen);

@@ -106,6 +106,8 @@ export class PrismaClient<ExtArgs = {}> {
 export namespace Prisma {
 ${MODELS.map((m) => modelTypes(m, "Prisma.")).join("\n")}
 ${typeMap("Prisma.")}
+export type Subset<T, U> = { [key in keyof T]: key extends keyof U ? T[key] : never };
+export type SelectSubset<T, U> = { [key in keyof T]: key extends keyof U ? T[key] : never } & (T extends { select: unknown; include: unknown } ? "Please either choose \`select\` or \`include\`." : {});
 }`;
 }
 
@@ -207,6 +209,10 @@ const ext = prisma.$extends({});
 /** @perm env(NONE) */ export function anyData(body: any) { return prisma.lead.create({ data: body }); }
 /** @perm env(NONE) */ export function spread(args: Prisma.LeadFindManyArgs) { return prisma.lead.findMany({ ...args, take: 5 }); }
 /** @perm env(NONE) */ export function computed(key: string) { return prisma.lead.findMany({ include: { [key]: true } }); }
+/** @perm env(NONE) */ export function generic<T extends Prisma.LeadFindManyArgs>(args: T) { return prisma.lead.findMany(args); }
+/** @perm env(NONE) */ export function subset<T extends Prisma.LeadFindManyArgs>(args: Prisma.SelectSubset<T, Prisma.LeadFindManyArgs>) { return prisma.lead.findMany(args); }
+/** @perm env(NONE) */ export function counted<T extends Prisma.LeadFindManyArgs>(args: Prisma.Subset<T, Prisma.LeadFindManyArgs>) { return prisma.lead.count(args); }
+/** @perm env(NONE) */ export function picked(where: Pick<Prisma.LeadWhereInput, "id" | "name">) { return prisma.lead.findMany({ where }); }
 /** @perm env(NONE) */ export function fluent() { return prisma.user.findUnique({ where: { id: 1 } }).leads(); }
 /** @perm env(NONE) */ export function extended() { return ext.user.findMany({ include: { leads: true } }); }
 /** @perm env(NONE) */ export function extendedFluent() { return ext.lead.findUnique({ where: { id: 1 } }).owner().apiKeys(); }
@@ -333,6 +339,11 @@ describe("related tables", () => {
     ["anyData", ["db.read", "db.write", "db.write(lead)"]],
     ["spread", ["db.read", "db.read(lead)"]],
     ["computed", ["db.read", "db.read(lead)"]],
+    // A generic type counts by its constraint, or as unknown when its keys aren't known yet.
+    ["generic", ["db.read", "db.read(lead)"]],
+    ["subset", ["db.read", "db.read(lead)"]],
+    ["counted", ["db.read", "db.read(lead)"]],
+    ["picked", ["db.read(lead)"]],
     ["fluent", ["db.read(lead)", "db.read(user)"]],
     ["extended", ["db.read(lead)", "db.read(user)"]],
     ["extendedFluent", ["db.read(apiKey)", "db.read(lead)", "db.read(user)"]],
