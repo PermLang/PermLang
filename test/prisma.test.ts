@@ -276,7 +276,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  rmSync(path.dirname(root), { recursive: true, force: true });
+  rmSync(path.dirname(root), { recursive: true, force: true, maxRetries: 5 });
 });
 
 /** What a function reaches, sorted. */
