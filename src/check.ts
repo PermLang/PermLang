@@ -12,9 +12,8 @@ import { detectInFile } from "./detect/index.js";
 import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
 import { projectFiles } from "./project-files.js";
-import { findTools, type ToolRegistration } from "./tools.js";
+import { findTools, handlerReach } from "./tools.js";
 import { flowDiagnostics, type FlowRule } from "./flows.js";
-import { resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
@@ -26,8 +25,6 @@ import {
   isInNodeModules,
   isUnitNode,
   readModuleAnnotation,
-  unitNodeForDeclaration,
-  unitNodeForSymbol,
   type Unit,
   type Use,
 } from "./units.js";
@@ -274,18 +271,23 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   // Tools an AI model can call: listed always; a diagnostic when they reach something dangerous.
   const tools: ToolReport[] = [];
   const toolPolicy = options.tools ?? "warn";
+  const registered = new Set<Node>();
   for (const sourceFile of sourceFiles) {
     for (const t of findTools(sourceFile)) {
-      const registrar = units.get(enclosingUnitNode(t.call))!;
-      const reaches = [...toolReach(t, registrar, units, reach, edgesFrom.get(registrar) ?? [])].sort();
-      const { line, column } = sourceFile.getLineAndColumnAtPos(t.call.getStart());
-      tools.push({ name: t.name, framework: t.framework, file: sourceFile.getFilePath(), line, function: registrar.name, reaches });
+      // A `tools` object shared by several calls is registered once.
+      if (registered.has(t.site)) continue;
+      registered.add(t.site);
+      const registrar = units.get(enclosingUnitNode(t.site))!;
+      const reaches = [...handlerReach(t, { units, reach, edgesFrom })].sort();
+      const file = t.site.getSourceFile();
+      const { line, column } = file.getLineAndColumnAtPos(t.site.getStart());
+      tools.push({ name: t.name, framework: t.framework, file: file.getFilePath(), line, function: registrar.name, reaches });
       const risky = reaches.filter(isRiskyForTools);
       if (toolPolicy === "trust" || risky.length === 0) continue;
       diagnostics.push({
         severity: toolPolicy === "error" ? "error" : "warning",
         code: "PERM008",
-        file: sourceFile.getFilePath(),
+        file: file.getFilePath(),
         line,
         column,
         function: registrar.name,
@@ -323,39 +325,15 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
 // --- tools -------------------------------------------------------------------
 
 /**
- * What a tool's handler can reach. A handler that is a unit (a named function, a method, a
- * function-valued property) reaches what that unit reaches. An inline callback isn't a unit:
- * its uses and calls are charged to the code around it, so those inside its body count.
- * A handler that can't be found could be anything.
- */
-function toolReach(tool: ToolRegistration, registrar: Unit, units: Map<Node, Unit>, reach: Reach, edges: readonly Edge[]): Set<string> {
-  const handler = tool.handler;
-  if (!handler) return new Set([UNVERIFIABLE]);
-  const named = Node.isIdentifier(handler) || Node.isPropertyAccessExpression(handler) ? handler.getSymbol() : undefined;
-  const unitNode = named ? unitNodeForSymbol(resolveAlias(named)) : unitNodeForDeclaration(handler);
-  const unit = unitNode && units.get(unitNode);
-  if (unit) return new Set(reach.get(unit)!.keys());
-  if (named || (!Node.isArrowFunction(handler) && !Node.isFunctionExpression(handler))) return new Set([UNVERIFIABLE]);
-
-  const sf = handler.getSourceFile();
-  const start = sf.getLineAndColumnAtPos(handler.getStart());
-  const end = sf.getLineAndColumnAtPos(handler.getEnd());
-  const inside = (p: { line: number; column: number }) =>
-    (p.line > start.line || (p.line === start.line && p.column >= start.column)) && (p.line < end.line || (p.line === end.line && p.column <= end.column));
-  const out = new Set<string>();
-  for (const use of registrar.uses) if (inside(use)) out.add(formatCapability(use.capability));
-  for (const edge of edges) if (inside(edge)) for (const key of reach.get(edge.to)!.keys()) out.add(key);
-  return out;
-}
-
-/**
  * What a model shouldn't be able to trigger unchecked: running code or commands, writing
- * files or data, sending to a host that isn't fixed, and actions adapters define
- * (`payments.refund`, `email.send`). Reading from a known host or a table is what tools are for.
+ * files or data, sending to a host that isn't fixed, reading a file, table, or variable that
+ * isn't fixed, and actions adapters define (`payments.refund`, `email.send`). Reading from a
+ * known host, file, table, or variable is what tools are for.
  */
 export function isRiskyForTools(capability: string): boolean {
-  // Bare `net` is any host: the model can choose where data goes.
-  if (capability === "net") return true;
+  // Without a scope, the model can choose: where data goes (`net`), or which file, table, or
+  // secret it reads back (`fs.read`, `db.read`, `env`, which is also the whole environment).
+  if (["net", "fs.read", "db.read", "env"].includes(capability)) return true;
   // Everything else is risky except reads: exec, writes, unverifiable code, and app-level actions.
   return !["net", "fs.read", "db.read", "env"].includes(capability.split("(")[0]!);
 }

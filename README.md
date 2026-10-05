@@ -66,9 +66,10 @@ In words: *this change makes the code send data to `api.data-broker.io` from
 It also flags two things code review rarely catches:
 
 - **🤖 Tools you give an AI model.** A function registered as an AI tool (MCP,
-  the Vercel AI SDK, OpenAI Agents, LangChain) can be triggered by whoever
-  controls the model's input. PermLang lists every tool and what it can reach,
-  and warns when a model could run commands, write data, or send to any address.
+  the Vercel AI SDK, OpenAI Agents, LangChain, LlamaIndex) can be triggered by
+  whoever controls the model's input. PermLang lists every tool and what it can
+  reach, and warns when a model could run commands, write data, send to any
+  address, or read any file or secret it names.
 - **🔒 Where secrets may go.** A rule like *"the Stripe key may only be sent to
   Stripe"* fails any change that lets the key reach another server.
 
@@ -143,8 +144,9 @@ assistant, or a person. It's built for the pull request nobody reads line by lin
 
 **How do I see what my MCP server's tools can do?**
 Run `npx permlang check src`. The report lists every tool registered with MCP,
-the Vercel AI SDK, OpenAI Agents, or LangChain, what each can reach, and warns
-when a model could use one to run commands, write data, or send to any address.
+the Vercel AI SDK, OpenAI Agents, LangChain, or LlamaIndex, what each can reach,
+and warns when a model could use one to run commands, write data, send to any
+address, or read any file or secret it names.
 [More on AI tools](docs/reference.md#tools-given-to-ai-models).
 
 **How is it different from CodeQL or Semgrep?**

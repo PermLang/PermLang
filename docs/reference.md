@@ -258,11 +258,19 @@ reach, through everything it calls:
 
 | Framework | Recognized |
 | --- | --- |
-| Vercel AI SDK (`ai`) | `tool({ execute })`, `dynamicTool(...)` |
-| MCP (`@modelcontextprotocol/sdk`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and `setRequestHandler(CallToolRequestSchema, handler)`, which serves every tool (named `*`) |
-| OpenAI Agents (`@openai/agents`) | `tool({ name, execute })` |
-| LangChain (`@langchain/core`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, and other `new ...Tool(...)` classes |
-| Anthropic, Mastra, LlamaIndex | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler |
+| Vercel AI SDK (`ai`, `@ai-sdk/*`) | `tool({ execute })`, `dynamicTool(...)`; plain objects in a `tools` option, such as `generateText({ tools: { shell: { execute } } })` or `new ToolLoopAgent({ tools })`, written in the call or in a constant; provider tools such as `anthropic.tools.bash_20250124({ execute })` |
+| MCP (`@modelcontextprotocol/sdk`, and version 2's `@modelcontextprotocol/server`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and the handler that serves every tool (named `*`): `setRequestHandler(CallToolRequestSchema, handler)`, or `setRequestHandler("tools/call", handler)` in version 2 |
+| OpenAI Agents (`@openai/agents`, `@openai/agents-*`) | `tool({ name, execute })`, and the built-in tools that run here: `shellTool({ shell })`, `computerTool({ computer })`, `applyPatchTool({ editor })` |
+| LangChain (`@langchain/*`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, other `new ...Tool(...)` classes, and your own subclasses of `StructuredTool` or `Tool` (what their `_call` reaches) |
+| LlamaIndex (`llamaindex`, `@llamaindex/*`) | `FunctionTool.from(fn, ...)` and `tool(fn, ...)` |
+| Anthropic (`@anthropic-ai/*`), Mastra (`@mastra/*`) | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler |
+
+A package counts by its family, because one package often re-exports another's
+(`@openai/agents` re-exports `tool` from `@openai/agents-core`). The handler is
+the last function argument when there is one (MCP's callback, LangChain's
+`func`), else the definition's function-valued `execute`, `run`, or `func`, else a
+built-in tool's `shell`, `computer`, or `editor` object, whose methods are what
+runs. A schema property that happens to be called `run` isn't a handler.
 
 Every tool is listed in the report, with what it reaches. When a tool reaches
 something a model shouldn't trigger unchecked, there's a `PERM008` warning at
@@ -272,18 +280,38 @@ the registration:
 - writing files or data (`fs.write`, `db.write`);
 - sending to a host that isn't fixed (bare `net`), since the model can choose
   where data goes;
+- reading a file, table, or environment variable that isn't fixed (bare
+  `fs.read`, `db.read`, `env`, which also means reading the whole environment),
+  since the model can choose what it reads and gets back;
 - app-level actions from adapters, such as `payments.refund` or `email.send`.
 
-Reading files, tables, environment variables, or a fixed host doesn't warn: that's
+Reading a fixed file, table, environment variable, or host doesn't warn: that's
 what tools are for. Set `"tools"` in `permlang.config.json` to `"error"` to fail
 the build instead, or `"trust"` to only list them.
 
 In the pull-request comment, new access a tool can reach is marked *An AI model
 can trigger this*, with the tool's name.
 
-A handler PermLang can't find (passed in from elsewhere, say) counts as
-unverifiable. Tools registered through a wrapper of your own aren't recognized
-yet.
+What counts as unverifiable, and what reaches nothing:
+
+- A handler PermLang can't follow (a parameter, or a variable that can be
+  reassigned) counts as unverifiable.
+- A tool written without a handler, where its definition has a place for one,
+  counts as unverifiable too: the AI SDK hands its calls back to your app, or,
+  for a provider tool like `bash_20250124()`, runs them in whatever sandbox the
+  call is given.
+- A tool that can't take a handler runs at the model provider and reaches
+  nothing here: OpenAI's `webSearchTool()` and hosted `shellTool({ environment })`,
+  Anthropic's code execution.
+
+Not recognized yet:
+
+- Tools registered through a wrapper of your own.
+- Plain-object tools passed through anything but the call itself or a constant
+  (a function's parameter, say).
+- Tool lists that are only schemas, such as the `tools: [...]` of the Anthropic or
+  OpenAI SDK's message calls. Your own code answers the model's calls there,
+  wherever it handles them, and PermLang can't link that code to the tool.
 
 ## Project configuration
 
@@ -565,7 +593,7 @@ src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/unmapped.ts     packages with no adapter, and imports with no types
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
-src/tools.ts        tool registrations for AI models, and their handlers
+src/tools.ts        tool registrations for AI models, their handlers, and what those reach
 src/flows.ts        data-flow rules: parsing, and finding functions that break them
 src/deps.ts         new dependencies in a change
 src/check.ts        comparing declared vs. actual per unit
