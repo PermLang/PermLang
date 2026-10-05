@@ -43,25 +43,31 @@ export function findTools(sourceFile: SourceFile): ToolRegistration[] {
     const declaration = resolvedDeclaration(node);
     if (!declaration) return;
     const pkg = packageOf(declaration);
-    if (!pkg || !AI_PACKAGES.has(pkg)) return;
+    // The Vercel AI SDK declares tool() in @ai-sdk/provider-utils and re-exports it from ai.
+    if (!pkg || (!AI_PACKAGES.has(pkg) && !pkg.startsWith("@ai-sdk/"))) return;
+    const framework = pkg.startsWith("@ai-sdk/") ? "ai" : pkg;
     const name = calleeName(node, declaration);
     if (!name) return;
     const args = node.getArguments();
 
     // MCP's low-level API: one handler serves every tool call.
     if (name === "setRequestHandler") {
-      if (args[0] && /CallToolRequestSchema/.test(args[0].getText())) out.push({ name: "*", framework: pkg, call: node, handler: args[1] });
+      if (args[0] && /CallToolRequestSchema/.test(args[0].getText())) out.push({ name: "*", framework, call: node, handler: args[1] });
       return;
     }
     const isTool = Node.isNewExpression(node) ? TOOL_CLASS.test(name) : TOOL_FUNCTION.test(name);
     if (!isTool) return;
-    out.push({ name: toolName(node), framework: pkg, call: node, handler: handlerOf(args) });
+    out.push({ name: toolName(node), framework, call: node, handler: handlerOf(args) });
   });
   return out;
 }
 
-/** The called function's or class's name, from its declaration. */
+/** The called function's or class's name, from its declaration, without a bundler's rename suffix. */
 function calleeName(call: CallExpression | NewExpression, declaration: Node): string | undefined {
+  return declaredName(call, declaration)?.replace(/\$\d+$/, "");
+}
+
+function declaredName(call: CallExpression | NewExpression, declaration: Node): string | undefined {
   if (Node.isNewExpression(call)) {
     const cls = Node.isConstructorDeclaration(declaration) || Node.isConstructSignatureDeclaration(declaration) ? declaration.getParent() : declaration;
     return cls && "getName" in cls ? (cls as { getName(): string | undefined }).getName() : undefined;

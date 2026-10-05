@@ -13,8 +13,14 @@ const typeRoots = [path.resolve("node_modules/@types")];
 
 // Just enough of each framework's types to resolve calls to them.
 const frameworks = `
+// Shaped like the real AI SDK v7: tool() lives in @ai-sdk/provider-utils under a bundler-renamed
+// name (tool$1), and ai re-exports it.
+declare module "@ai-sdk/provider-utils" {
+  function tool$1<T>(definition: T): T;
+  export { tool$1 as tool };
+}
 declare module "ai" {
-  export function tool<T>(definition: T): T;
+  export { tool } from "@ai-sdk/provider-utils";
   export function generateText(options: object): Promise<{ text: string }>;
 }
 declare module "@modelcontextprotocol/sdk/server/mcp.js" {
@@ -180,6 +186,8 @@ describe("tools given to AI models", () => {
     // The `ai` adapter maps the SDK's functions to network access; `tool()` only describes a tool.
     const inFile = report.functions.filter((f) => f.file.endsWith("vercel.ts"));
     expect(inFile.flatMap((f) => f.actual).sort()).toEqual(["exec", "net(api.weather.example)"]);
+    // ...and @ai-sdk/provider-utils, where it's declared, is a known package.
+    expect(report.unmapped.map((u) => u.package)).not.toContain("@ai-sdk/provider-utils");
   });
 
   it("follows the tools policy", () => {
