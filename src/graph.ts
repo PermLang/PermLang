@@ -301,6 +301,17 @@ export function pathTo(reach: Reach, unit: Unit, key: string): string[] {
   return path;
 }
 
+/** The unit whose own code uses `key`: `unit` itself, or the last one on the chain from it. */
+export function holderOf(reach: Reach, unit: Unit, key: string): Unit {
+  let holder = unit;
+  let p = reach.get(unit)?.get(key);
+  while (p?.edge) {
+    holder = p.edge.to;
+    p = reach.get(holder)?.get(key);
+  }
+  return holder;
+}
+
 function isStringType(type: Type): boolean {
   return type.isString() || type.isStringLiteral() || type.isTemplateLiteral();
 }

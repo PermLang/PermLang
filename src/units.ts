@@ -2,9 +2,9 @@
 // constructors, accessors, function-valued variables and properties, and each
 // file's top-level code. Anonymous callbacks belong to the unit around them.
 
-import { Node, type ClassDeclaration, type ClassExpression, type JSDoc, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
+import { Node, ts, type ClassDeclaration, type ClassExpression, type JSDoc, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
 import { functionComments, moduleComments, readPermAnnotation, type PermAnnotation } from "./annotations.js";
-import type { Capability } from "./capability.js";
+import { UNVERIFIABLE, type Capability } from "./capability.js";
 
 export interface Use {
   verb: "calls" | "reads" | "uses";
@@ -27,6 +27,11 @@ export interface Unit {
   module: PermAnnotation | undefined;
   /** Capabilities used directly in the unit's body. */
   uses: Use[];
+  /**
+   * Declared in one of the project's own .d.ts files, for JavaScript the checker doesn't
+   * analyze, so it's unverifiable. Calls reach it, but it isn't reported or locked itself.
+   */
+  declarationOnly?: true;
 }
 
 export function isAnnotated(unit: Unit): boolean {
@@ -135,7 +140,8 @@ export function unitNodesForSymbol(symbol: MorphSymbol): Node[] {
 
 export function unitNodeForDeclaration(d: Node): Node | undefined {
   const sf = d.getSourceFile();
-  if (sf.isDeclarationFile() || isInNodeModules(sf)) return undefined;
+  if (isInNodeModules(sf)) return undefined;
+  if (sf.isDeclarationFile()) return declaredUnitNode(d);
   if ((Node.isFunctionDeclaration(d) || Node.isMethodDeclaration(d)) && !d.hasBody()) return d.getImplementation();
   if (isClass(d)) return constructorUnitNode(d);
   if (isUnitNode(d)) return d;
@@ -146,6 +152,72 @@ export function unitNodeForDeclaration(d: Node): Node | undefined {
 
 export function isInNodeModules(sf: SourceFile): boolean {
   return sf.getFilePath().split("/").includes("node_modules");
+}
+
+// --- JavaScript declared in the project's own .d.ts files -------------------
+
+/**
+ * The unit a value declared in a .d.ts module stands for: a function (all of its
+ * overloads), a class's constructor (the class), a class member, or a variable
+ * (including everything in its type). Members of interfaces and type aliases have none:
+ * they're types, whose implementations dispatch finds. Ambient declarations
+ * (`declare module "x"`, `declare global`, or a .d.ts with no imports or exports)
+ * describe packages and what the runtime provides, not the project's code.
+ */
+function declaredUnitNode(d: Node): Node | undefined {
+  if (!ts.isExternalModule(d.getSourceFile().compilerNode)) return undefined;
+  const chain = [d, ...d.getAncestors()];
+  if (chain.some((n) => Node.isModuleDeclaration(n) && (Node.isStringLiteral(n.getNameNode()) || n.getName() === "global"))) return undefined;
+  const holder = chain.find(
+    (n) =>
+      Node.isFunctionDeclaration(n) || Node.isVariableDeclaration(n) || Node.isClassDeclaration(n) || Node.isConstructorDeclaration(n) ||
+      Node.isMethodDeclaration(n) || Node.isPropertyDeclaration(n) || Node.isGetAccessorDeclaration(n) || Node.isSetAccessorDeclaration(n),
+  );
+  if (!holder) return undefined;
+  if (Node.isConstructorDeclaration(holder)) return holder.getParent();
+  // Overloads are one unit: the first declaration of the same kind.
+  return holder.getSymbol()?.getDeclarations().find((x) => x.getKind() === holder.getKind()) ?? holder;
+}
+
+/** A unit for JavaScript declared in a .d.ts: reaching it is unverifiable. */
+export function createDeclaredUnit(node: Node): Unit {
+  const sourceFile = node.getSourceFile();
+  const { line, column } = sourceFile.getLineAndColumnAtPos(node.getStart());
+  const call = `JavaScript declared in ${sourceFile.getBaseName()}`;
+  return {
+    node,
+    file: sourceFile.getFilePath(),
+    name: unitName(node),
+    line,
+    exported: false,
+    own: undefined,
+    module: undefined,
+    uses: [{ verb: "calls", capability: { name: UNVERIFIABLE }, call, line, column }],
+    declarationOnly: true,
+  };
+}
+
+/**
+ * Whether a .d.ts describes the project's own code rather than a dependency: its nearest
+ * package.json is also the nearest one for some file being checked. A generated client in
+ * a folder with its own package.json (Prisma's custom output), or another workspace
+ * package's build output, is a dependency.
+ */
+export function ownDeclarationFiles(sourceFiles: readonly SourceFile[]): (declarationFile: SourceFile) => boolean {
+  const roots = new Map<string, string>();
+  const project = sourceFiles[0]?.getProject();
+  const rootOf = (dir: string): string => {
+    const known = roots.get(dir);
+    if (known !== undefined) return known;
+    // ts-morph paths use `/`, with a drive letter on Windows: C:/app/src → C:/app → C:.
+    const slash = dir.lastIndexOf("/");
+    const parent = slash > 0 ? dir.slice(0, slash) : undefined;
+    const root = project?.getFileSystem().fileExistsSync(`${dir}/package.json`) ? dir : parent === undefined ? "" : rootOf(parent);
+    roots.set(dir, root);
+    return root;
+  };
+  const own = new Set(sourceFiles.map((sf) => rootOf(sf.getDirectoryPath())));
+  return (declarationFile) => own.has(rootOf(declarationFile.getDirectoryPath()));
 }
 
 // --- names, comments, exports ------------------------------------------------
