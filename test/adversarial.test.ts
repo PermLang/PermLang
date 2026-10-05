@@ -163,6 +163,8 @@ const silent: Record<string, string> = {
   fp19_timer_callbacks: "import { promisify } from \"node:util\";\nexport const sleep = promisify(setTimeout);\nexport function t() { window.setTimeout(() => {}, 10); setTimeout.call(null, () => {}, 0); }",
   fp20_web_classes: "export function t() { return new Headers({ a: \"b\" }).get(\"a\") ?? new URL(\"/x\", \"https://good.example\").href; }",
   fp28_timer_apply_callback: "export function t() { setTimeout.apply(null, [() => {}, 10]); }",
+  // Classes with no constructor of their own, passed as values (dependency injection lists, say).
+  fp30_class_values: "class Plain { x = 1; }\nclass Child extends Plain {}\nexport const providers = [Plain, Child];\nexport function t() { return Reflect.construct(Plain, []); }",
   fp21_comparison: "export function t(f: unknown) { return f === fetch || f !== WebSocket; }",
   // A barrel re-exporting a capability module touches nothing by itself (i05 casts it).
   fp22_barrel: "export * from \"node:child_process\";",

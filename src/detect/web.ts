@@ -86,7 +86,9 @@ export function capabilitiesOf(declaration: Node, args: readonly Node[], adapter
  */
 export function constructorCapabilities(type: Type, adapters: AdapterIndex, args: readonly Node[] = []): Capability[] {
   for (const signature of type.getConstructSignatures()) {
-    const declaration = signature.getDeclaration();
+    // A class with no constructor and no base class has a signature with no declaration, which
+    // ts-morph can't wrap (it throws), so it's checked on the compiler's signature first.
+    const declaration = signature.compilerSignature.declaration && signature.getDeclaration();
     const capabilities = declaration ? capabilitiesOf(declaration, args, adapters, args.length > 0 ? "called" : "value") : [];
     if (capabilities.length > 0) return capabilities;
     const stream = fsStreamClass(signature.getReturnType());
