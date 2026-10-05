@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { loadAdapters } from "../src/adapters.js";
 import { checkTsConfig, type Report } from "../src/check.js";
 
 // --- stand-ins for the packages, under node_modules ---------------------------------
@@ -49,13 +50,14 @@ export type TarCommand<A, S> = { (): A; (opt: { file?: string; cwd?: string }, e
 declare class Unpack { constructor(opt?: { cwd?: string }); }
 declare class UnpackSync extends Unpack {}
 declare class Pack { constructor(opt?: { cwd?: string }); add(path: string): this; }
+declare class PackSync extends Pack { constructor(opt: { cwd?: string }); }
 declare class WriteEntry { constructor(path: string, opt?: object); }
-export declare const create: TarCommand<Pack, Pack>;
+export declare const create: TarCommand<Pack, PackSync>;
 export declare const extract: TarCommand<Unpack, UnpackSync>;
 export declare const list: TarCommand<object, object>;
-export declare const replace: TarCommand<Pack, Pack>;
-export declare const update: TarCommand<Pack, Pack>;
-export { create as c, extract as x, list as t, replace as r, update as u, Unpack, UnpackSync, Pack, WriteEntry };`,
+export declare const replace: TarCommand<Pack, PackSync>;
+export declare const update: TarCommand<Pack, PackSync>;
+export { create as c, extract as x, list as t, replace as r, update as u, Unpack, UnpackSync, Pack, PackSync, WriteEntry };`,
 
   // cheerio 1.2: fromURL fetches the page; load parses a string.
   "cheerio/index.d.ts": `
@@ -163,7 +165,7 @@ import * as tar from "tar";
 /** @perm env(NONE) */ export function create(f: string) { return [tar.c({ file: f }, ["a"]), tar.r({ file: f }, ["b"]), tar.u({ file: f }, ["c"])]; }
 /** @perm env(NONE) */ export function list(f: string) { return tar.t({ file: f }); }
 /** @perm env(NONE) */ export function unpack() { return [new tar.Unpack({ cwd: "/" }), new tar.UnpackSync({ cwd: "/" })]; }
-/** @perm env(NONE) */ export function pack() { return [new tar.Pack({ cwd: "/" }), new tar.WriteEntry("a")]; }
+/** @perm env(NONE) */ export function pack() { return [new tar.Pack({ cwd: "/" }), new tar.PackSync({ cwd: "/" }), new tar.WriteEntry("a")]; }
 `,
   "cheerio.ts": `
 import { fromURL, load } from "cheerio";
@@ -201,7 +203,8 @@ const OLDER_SOURCES: Record<string, string> = {
   "tar.ts": `
 import * as tar from "tar";
 /** @perm env(NONE) */ export function extract(f: string) { return [tar.x({ file: f }), tar.extract({ file: f })]; }
-/** @perm env(NONE) */ export function replace(f: string) { return [tar.r({ file: f }, ["/etc/passwd"]), tar.u({ file: f }, ["a"])]; }
+/** @perm env(NONE) */ export function replace(f: string) { return tar.r({ file: f }, ["/etc/passwd"]); }
+/** @perm env(NONE) */ export function update(f: string) { return tar.u({ file: f }, ["a"]); }
 /** @perm env(NONE) */ export function create(f: string) { return tar.c({ file: f }, ["a"]); }
 /** @perm env(NONE) */ export function list(f: string) { return [tar.t({ file: f }), tar.list({ file: f })]; }
 `,
@@ -297,10 +300,26 @@ describe("tar", () => {
   it.each([
     ["extract", ["fs.read", "fs.write"]],
     ["replace", ["fs.read", "fs.write"]],
+    ["update", ["fs.read", "fs.write"]],
     ["create", ["fs.read", "fs.write"]],
     ["list", ["fs.read"]],
   ])("tar 6: %s", (name, expected) => {
     expect(actual("tar.ts", name, older)).toEqual(expected);
+  });
+});
+
+describe("tar's aliases", () => {
+  // Typings so far declare c, x, t, r, and u as consts of the commands' types, and
+  // give UnpackSync and WriteEntrySync no constructor of their own, so calls resolve
+  // to the command or base class. The others are mapped in case a typing declares them.
+  it("maps each alias like what it stands for", () => {
+    const tar = loadAdapters([]).adapters.find((a) => a.package === "tar")!;
+    const pairs = [["c", "create"], ["x", "extract"], ["t", "list"], ["r", "replace"], ["u", "update"],
+      ["UnpackSync.constructor", "Unpack.constructor"], ["WriteEntrySync.constructor", "WriteEntry.constructor"]];
+    for (const [alias, original] of pairs) {
+      expect(tar.functions.get(alias!), alias).toEqual(tar.functions.get(original!));
+      expect(tar.functions.get(alias!), alias).toBeDefined();
+    }
   });
 });
 
