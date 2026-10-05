@@ -213,6 +213,11 @@ describe("reported as the access it is", () => {
   it("a31_window_self", () => expect(capabilities("a31_window_self")).toEqual(["net"]));
   // new URL(path, base) with literal parts names its host.
   it("a22_new_url", () => expect(capabilities("a22_new_url")).toEqual(["net(evil.example)"]));
+  // Read past a cast, named in the message as written.
+  it("e05_any_member_as_value", () => expect(errorsIn("e05_any_member_as_value").map((d) => d.call)).toEqual(["(globalThis as any).fetch as a value"]));
+  // .call and .apply with a literal list are calls with arguments; a member chain past a cast is followed.
+  it("h01_beacon_call", () => expect(capabilities("h01_beacon_call")).toEqual(["net(evil.example)"]));
+  it("i09_globalthis_process_env", () => expect(capabilities("i09_globalthis_process_env")).toEqual(["env(SECRET)"]));
 });
 
 describe("silent", () => {
