@@ -24,7 +24,7 @@ function check(compilerOptions: object, files: Record<string, string>): Report {
   return checkTsConfig(path.join(dir, "tsconfig.json"), { strictness: "development" });
 }
 
-afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+afterAll(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true, maxRetries: 5 })));
 
 const errors = (report: Report, fn: string) =>
   report.diagnostics.filter((d) => d.function === fn && d.severity === "error").map((d) => `${d.code} ${d.capability}`);

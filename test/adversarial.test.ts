@@ -193,7 +193,8 @@ beforeAll(() => {
   report = checkTsConfig(path.join(dir, "tsconfig.json"), { strictness: "development" });
 }, 120_000);
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+// Windows can briefly hold a file in the folder (a virus scanner, say), so retry.
+afterAll(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5 }));
 
 const errorsIn = (name: string) =>
   report.diagnostics.filter((d) => d.severity === "error" && path.basename(d.file) === `${name}.ts`);
