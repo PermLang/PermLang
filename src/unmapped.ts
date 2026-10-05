@@ -94,8 +94,30 @@ export function unresolvedImports(sourceFiles: readonly SourceFile[]): Unresolve
       if (ASSET.test(specifier) || HANDLED.has(bareName(specifier)) || found.has(specifier) || resolves(specifierNode, node)) continue;
       found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: node.getStartLineNumber(), node });
     }
+    const process = found.has(NODE_PROCESS) ? undefined : unresolvedProcess(sourceFile);
+    if (process) found.set(NODE_PROCESS, { specifier: NODE_PROCESS, file: sourceFile.getFilePath(), line: process.getStartLineNumber(), node: process });
   }
   return [...found.values()];
+}
+
+// The global `process` is Node's process module, and its types come from @types/node.
+const NODE_PROCESS = "node:process";
+
+/**
+ * The first use of a global `process` that doesn't resolve: Node's types are missing, so
+ * process.kill(), process.chdir() and the like can't be checked. (`process.env` is still read
+ * by name; see detect/env.ts.) Found in the 0.3 review.
+ */
+function unresolvedProcess(sourceFile: SourceFile): Node | undefined {
+  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+    if (id.getText() !== "process" || id.getSymbol() !== undefined) continue;
+    const parent = id.getParent();
+    // A property name (`x.process`, `{ process: 1 }`) isn't the global.
+    if (Node.isPropertyAccessExpression(parent) && parent.getNameNode() === id) continue;
+    if (parent && !Node.isShorthandPropertyAssignment(parent) && "getNameNode" in parent && (parent as { getNameNode(): Node }).getNameNode() === id) continue;
+    return id;
+  }
+  return undefined;
 }
 
 /**
