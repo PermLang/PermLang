@@ -2,11 +2,13 @@
 
 import {
   Node,
+  SyntaxKind,
   type CallExpression,
   type NewExpression,
   type ObjectLiteralExpression,
   type Symbol as MorphSymbol,
   type TaggedTemplateExpression,
+  type VariableDeclaration,
 } from "ts-morph";
 import type { Capability } from "../capability.js";
 
@@ -46,6 +48,9 @@ export function callText(call: CallLike): string {
  * The value is traced, never taken from the type: the checker doesn't require
  * code to type-check, and `u as "https://good.example/"` has a literal type
  * without a literal value.
+ *
+ * Enums and `as const` objects can still be changed at runtime, so a value read
+ * from one that the program writes to anywhere is unknown (see isWritten).
  */
 export function literalString(arg: Node | undefined, depth = 0): string | undefined {
   if (!arg || depth > 8) return undefined;
@@ -57,30 +62,122 @@ export function literalString(arg: Node | undefined, depth = 0): string | undefi
     : (Node.isPropertyAccessExpression(arg) ? arg.getNameNode() : arg).getSymbol();
   const declaration = symbol && resolveAlias(symbol).getDeclarations()[0];
   if (!declaration) return undefined;
-  if (Node.isEnumMember(declaration)) return literalString(declaration.getInitializer(), depth + 1);
+  if (Node.isEnumMember(declaration)) {
+    return isWritten(declaration.getParent()) ? undefined : literalString(declaration.getInitializer(), depth + 1);
+  }
   if (Node.isVariableDeclaration(declaration)) {
     return isConst(declaration) ? literalString(declaration.getInitializer(), depth + 1) : undefined;
   }
-  if (Node.isPropertyAssignment(declaration) && inConstObject(declaration)) {
-    return literalString(declaration.getInitializer(), depth + 1);
-  }
-  return undefined;
+  if (!Node.isPropertyAssignment(declaration)) return undefined;
+  const holder = constObjectHolder(declaration);
+  return holder && !isWritten(holder) ? literalString(declaration.getInitializer(), depth + 1) : undefined;
 }
 
 function isConst(declaration: Node): boolean {
   return Node.isVariableDeclaration(declaration) && declaration.getVariableStatement()?.getDeclarationKind() === "const";
 }
 
-/** A property of `const X = { ... } as const` (possibly nested), which can't be reassigned. */
-function inConstObject(property: Node): boolean {
+/** The `const X` holding `{ ... } as const` that a property belongs to (possibly nested), if it is one. */
+function constObjectHolder(property: Node): VariableDeclaration | undefined {
   let node = property.getParent();
   while (node && Node.isObjectLiteralExpression(node)) {
     const parent = node.getParent();
     if (parent && Node.isAsExpression(parent) && parent.getTypeNode()?.getText() === "const") {
       const holder = parent.getParent();
-      return holder !== undefined && isConst(holder);
+      return Node.isVariableDeclaration(holder) && isConst(holder) ? holder : undefined;
     }
     node = parent && Node.isPropertyAssignment(parent) ? parent.getParent() : undefined;
+  }
+  return undefined;
+}
+
+// --- Fixed values the program changes --------------------------------------------
+//
+// An `as const` object's properties and an enum's members are readonly only to the
+// type checker: `Object.assign(CONFIG, { url })` or `(Endpoint as any).Url = url`
+// changes them at runtime. So every reference to the object, anywhere in the
+// program, is checked for a write: an assignment, `delete`, `++`/`--`, or
+// destructuring into one of its members (`CONFIG.url = ...`, `CONFIG.a.b = ...`);
+// a cast (after which anything can happen to it); or being the target of
+// Object.assign, Object.defineProperty, Reflect.set, and the like.
+//
+// Not followed: the object stored in another variable or passed to a function
+// that then writes to it. That's a known limit.
+
+// Per program, so that a project edited and checked again (through the library API) is read afresh.
+const written = new WeakMap<object, WeakMap<Node, boolean>>();
+
+const WRITING_FUNCTIONS = new Set([
+  "Object.assign", "Object.defineProperty", "Object.defineProperties", "Object.setPrototypeOf",
+  "Reflect.set", "Reflect.defineProperty", "Reflect.deleteProperty", "Reflect.setPrototypeOf",
+]);
+
+/** Whether the program may change an enum or `as const` object after it's created. */
+function isWritten(holder: Node): boolean {
+  const program = holder.getProject().getProgram().compilerObject;
+  const cache = written.get(program) ?? new WeakMap<Node, boolean>();
+  written.set(program, cache);
+  const cached = cache.get(holder);
+  if (cached !== undefined) return cached;
+  const name = Node.isVariableDeclaration(holder) || Node.isEnumDeclaration(holder) ? holder.getNameNode() : undefined;
+  let result = !Node.isIdentifier(name);
+  try {
+    if (Node.isIdentifier(name)) result = name.findReferencesAsNodes().some((reference) => writesThrough(reference));
+  } catch {
+    result = true; // references that can't be found can't be checked
+  }
+  cache.set(holder, result);
+  return result;
+}
+
+/** Whether one reference to an object writes to it. */
+function writesThrough(reference: Node): boolean {
+  let chain: Node = reference;
+  const parentOfName = reference.getParent();
+  // `config.CONFIG`, through a namespace import: the access is the reference.
+  if (Node.isPropertyAccessExpression(parentOfName) && parentOfName.getNameNode() === reference) chain = parentOfName;
+  let members = 0;
+  for (let parent = chain.getParent(); parent; parent = chain.getParent()) {
+    if (Node.isAsExpression(parent) || Node.isTypeAssertion(parent)) {
+      if (parent.getTypeNode()?.getText() !== "const") return true;
+    } else if (Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent)) {
+      if (parent.getExpression() !== chain) break;
+      members++;
+    } else if (!Node.isParenthesizedExpression(parent) && !Node.isNonNullExpression(parent) && !Node.isSatisfiesExpression(parent)) {
+      break;
+    }
+    chain = parent;
+  }
+  if (isWritingCallTarget(chain)) return true;
+  return members > 0 && isAssignedTo(chain);
+}
+
+/** `Object.assign(target, ...)` and the like, with `target` as given. */
+function isWritingCallTarget(target: Node): boolean {
+  const call = target.getParent();
+  if (!Node.isCallExpression(call) || call.getArguments()[0] !== target) return false;
+  const callee = unwrapExpression(call.getExpression());
+  return Node.isPropertyAccessExpression(callee) && WRITING_FUNCTIONS.has(`${callee.getExpression().getText()}.${callee.getName()}`);
+}
+
+/** The target of an assignment, `delete`, `++`/`--`, or a destructuring assignment. */
+function isAssignedTo(target: Node): boolean {
+  let node = target;
+  for (let parent = node.getParent(); parent; node = parent, parent = parent.getParent()) {
+    if (Node.isDeleteExpression(parent)) return true;
+    if (Node.isPrefixUnaryExpression(parent) || Node.isPostfixUnaryExpression(parent)) {
+      const op = parent.getOperatorToken();
+      return op === SyntaxKind.PlusPlusToken || op === SyntaxKind.MinusMinusToken;
+    }
+    if (Node.isBinaryExpression(parent)) {
+      const op = parent.getOperatorToken().getKind();
+      return parent.getLeft() === node && op >= SyntaxKind.FirstAssignment && op <= SyntaxKind.LastAssignment;
+    }
+    if (Node.isForOfStatement(parent) || Node.isForInStatement(parent)) return parent.getInitializer() === node;
+    // Inside a destructuring pattern on the left of `=`: `({ a: CONFIG.url } = evil)`, `[CONFIG.url] = evil`.
+    const inPattern = Node.isArrayLiteralExpression(parent) || Node.isObjectLiteralExpression(parent) ||
+      Node.isPropertyAssignment(parent) || Node.isSpreadElement(parent) || Node.isSpreadAssignment(parent);
+    if (!inPattern) return false;
   }
   return false;
 }
