@@ -152,25 +152,45 @@ describe("capabilities", () => {
     );
   });
 
+  // Where each path really is, from a working directory whose folder names differ from the
+  // generated ones, so that `../a` can't land back inside it by coincidence.
+  const cwd = "/w1/w2/w3/w4/w5/w6/w7/w8/w9/w10";
+  const inside = (declared: string, used: string) => {
+    const [d, u] = [declared.replaceAll("\\", "/"), used.replaceAll("\\", "/")];
+    // A relative path's place under an absolute one depends on where the program runs.
+    if (path.posix.isAbsolute(d) !== path.posix.isAbsolute(u)) return false;
+    const [D, U] = [path.posix.resolve(cwd, d), path.posix.resolve(cwd, u)];
+    return U === D || U.startsWith(D.endsWith("/") ? D : `${D}/`);
+  };
+  const relativePath = fc
+    .tuple(fc.array(fc.constantFrom("a", "b", ".", "..", "..a"), { minLength: 1, maxLength: 6 }), fc.constantFrom("/", "\\"), fc.boolean())
+    .map(([segments, separator, trailing]) => segments.join(separator) + (trailing ? separator : ""));
+  const filePath = fc.tuple(fc.boolean(), relativePath).map(([absolute, p]) => (absolute ? "/" : "") + p);
+
   it("a path covers exactly the paths inside it", () => {
-    // Where each path really is, from a working directory whose folder names differ from the
-    // generated ones, so that `../a` can't land back inside it by coincidence.
-    const cwd = "/w1/w2/w3/w4/w5/w6/w7/w8/w9/w10";
-    const inside = (declared: string, used: string) => {
-      const [d, u] = [declared.replaceAll("\\", "/"), used.replaceAll("\\", "/")];
-      // A relative path's place under an absolute one depends on where the program runs.
-      if (path.posix.isAbsolute(d) !== path.posix.isAbsolute(u)) return false;
-      const [D, U] = [path.posix.resolve(cwd, d), path.posix.resolve(cwd, u)];
-      return U === D || U.startsWith(D.endsWith("/") ? D : `${D}/`);
-    };
-    const filePath = fc
-      .tuple(fc.boolean(), fc.array(fc.constantFrom("a", "b", ".", "..", "..a"), { minLength: 1, maxLength: 6 }), fc.constantFrom("/", "\\"), fc.boolean())
-      .map(([absolute, segments, separator, trailing]) => (absolute ? "/" : "") + segments.join(separator) + (trailing ? separator : ""));
     fc.assert(
       fc.property(fc.constantFrom("fs.read", "fs.write"), filePath, filePath, (name, declared, used) => {
         expect(covers([{ name, arg: declared }], { name, arg: used })).toBe(inside(declared, used));
       }),
       { numRuns: 1000 },
+    );
+  });
+
+  it("keeps Windows network shares and drive-relative paths under their own root", () => {
+    // `\\server\share\x` is absolute, but not under `/`; `C:x` is relative to drive C's own working directory.
+    const roots: [string, (d: string, u: string) => boolean][] = [
+      ["\\\\", (d, u) => inside(`/${d}`, `/${u}`)],
+      ["//", (d, u) => inside(`/${d}`, `/${u}`)],
+      ["C:", inside],
+    ];
+    fc.assert(
+      fc.property(fc.constantFrom("fs.read", "fs.write"), filePath, relativePath, relativePath, (name, other, declared, used) => {
+        for (const [root, covered] of roots) {
+          expect(covers([{ name, arg: other }], { name, arg: root + used })).toBe(false);
+          expect(covers([{ name, arg: root + declared }], { name, arg: root + used })).toBe(covered(declared, used));
+        }
+      }),
+      { numRuns: 500 },
     );
   });
 });

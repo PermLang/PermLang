@@ -211,6 +211,15 @@ determined statically, for example `fetch(url)` or a template path like
 `` `./data/${name}` ``. *(Provisional: this answers open question 1 in the design
 doc and may change after review.)*
 
+Paths match whole folders after `..` is resolved: `fs.read(./data)` covers
+`./data/a.json` but not `./database.json` or `./data/../x`. A path only matches
+paths under the same root. A relative path never matches an absolute one, since
+where it lands depends on where the program runs. On Windows, a drive (`C:\`), a
+network share (`\\server\share`), and a drive-relative path (`C:x`, which is
+relative to drive C's own working directory) are each separate roots, so
+`fs.write(/evil)` doesn't cover `\\evil\share\x`, and `fs.read(.)` doesn't cover
+`C:..\x`. Drive letters match in any case.
+
 ## Data-flow rules
 
 `@perm` says what a function may touch. A flow rule says where protected data
