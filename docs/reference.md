@@ -95,8 +95,20 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   sensitive objects (`fs[method]()`, `globalThis[name]()`) or behind an index
   signature (`table[name]()`). The only way to accept it is `@perm-unsafe`,
   which also stops it from failing the function's callers.
-- **Strictness levels, a lock file, a permission diff for pull requests, and a
-  GitHub Action.** See below.
+- **Project configuration (PERM005).** GitHub workflows, Actions, and
+  `package.json` scripts are recorded in the lock like code: token permissions,
+  secrets, Actions and whether they're pinned, install hooks. See
+  [project configuration](#project-configuration).
+- **Tools given to AI models (PERM008).** Functions registered as AI tools, and
+  what a model can trigger through them. See
+  [tools given to AI models](#tools-given-to-ai-models).
+- **Data-flow rules (PERM009).** Where a secret or sensitive data may be sent.
+  See [data-flow rules](#data-flow-rules).
+- **New dependencies** in the permission diff, with what PermLang sees of each
+  and its install scripts.
+- **Strictness levels, a lock file, a permission diff for pull requests, a
+  GitHub Action with line annotations and code scanning, and SARIF output.** See
+  below.
 
 ### Known limits
 
@@ -143,6 +155,28 @@ Other gaps, not yet in fixtures:
   decorated member.
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
   order, so adding one can renumber the others and show spurious lock changes.
+
+## Configuration
+
+`permlang.config.json`, next to the lock file. Every setting is optional.
+
+```json
+{
+  "strictness": "development",
+  "unmapped": "warn",
+  "tools": "warn",
+  "adapters": ["./permlang/adapters/acme-sms.json"],
+  "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] }]
+}
+```
+
+| Setting | Values | Meaning |
+| --- | --- | --- |
+| `strictness` | `sketch`, `development` (default), `production` | What fails the build. See [strictness levels](#strictness-levels). The `--strictness` option overrides it. |
+| `unmapped` | `warn` (default), `error`, `trust` | Calls into packages with no adapter, and imports with no types. See [packages without an adapter](#packages-without-an-adapter). The `--unmapped` option overrides it. |
+| `tools` | `warn` (default), `error`, `trust` | AI tools that reach something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
+| `adapters` | paths | Your own adapter manifests, relative to the config file. See [adapter manifests](#adapter-manifests). |
+| `flows` | rules | Where protected data may go. See [data-flow rules](#data-flow-rules). |
 
 ## Diagnostic codes
 
@@ -350,8 +384,8 @@ Set `"strictness"` in `permlang.config.json`, or pass `--strictness`:
 
 ## The lock file and the permission diff
 
-`permlang lock` writes `permlang.lock.json`: what every function can reach. Commit
-it. From then on:
+`permlang lock` writes `permlang.lock.json`: what every function can reach, and what
+every workflow, Action, and `package.json` script grants. Commit it. From then on:
 
 - **`permlang check` fails when the code reaches something the lock doesn't
   record** (PERM005), at every strictness level, sketch included. New access
@@ -530,10 +564,14 @@ src/dispatch.ts     implementations reachable through interfaces and base classe
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/unmapped.ts     packages with no adapter, and imports with no types
+src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
+src/tools.ts        tool registrations for AI models, and their handlers
+src/flows.ts        data-flow rules: parsing, and finding functions that break them
+src/deps.ts         new dependencies in a change
 src/check.ts        comparing declared vs. actual per unit
 src/lock.ts         permlang.lock.json: build, read, compare
 src/diff.ts         the permission diff, as text or a pull-request comment
-src/report.ts       text and JSON output
+src/report.ts       text, JSON, GitHub annotation, and SARIF output
 src/cli.ts          the permlang command
 src/index.ts        the library API
 src/spec/           .perm specs: parsing and checking
