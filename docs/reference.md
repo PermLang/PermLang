@@ -39,11 +39,36 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
     (`const env = process.env; env.KEY`). Spreading or enumerating the
-    environment needs bare `env`.
+    environment needs bare `env`. `process.env` is read the same way without
+    Node's types, or with a project's own `declare const process`; a `process`
+    that doesn't resolve also gets a PERM007 warning, since its other APIs
+    can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
+    `env(KEY)`, except what Vite sets itself (`MODE`, `DEV`, `PROD`, `SSR`,
+    `BASE_URL`). `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
+    (`./.env` by default).
   - `exec`: `child_process` (`exec`, `execFile`, `spawn`, `fork`, and their
-    `Sync` forms).
-  - `net`: also `http`, `https`, `http2`, `net`, and `tls` (host from a URL or
-    from an options object's `hostname` / `host`).
+    `Sync` forms), `process.kill`, `process.execve`, and `cluster.fork` /
+    `setupPrimary`.
+  - `net`: also `http`, `https`, `http2`, `net`, `tls`, `WebSocket`,
+    `EventSource`, `WebTransport`, `navigator.sendBeacon`, and
+    `XMLHttpRequest`. The host comes from a URL, or from an options object the
+    way Node reads it: the `http` family connects to `hostname` before `host`
+    and ignores a `url` option; after a URL, an options `hostname` replaces the
+    URL's host but a `host` doesn't (Node's URL parsing sets `hostname`); `net`
+    and `tls` connect to `host` (or `connect(port, host)`) and ignore
+    `hostname`. Other libraries' options must name one host in all of `url`,
+    `hostname`, and `host`. A spread, an accessor, a computed key, or a
+    `socketPath`, `lookup`, or `createConnection` option (or a `path` for `net`
+    and `tls`) could send the connection anywhere, so it needs bare `net`.
+  - `fs.read` / `fs.write`: `readFile` and `createReadStream` with a writing
+    `flag` / `flags` option (`"w"`, `"a+"`, or one that can't be read) write the
+    file, and used as values they could be called with any flags, as `open` can.
+    `new fs.Utf8Stream({ dest })`, `ReadStream`, and `WriteStream` open their
+    path. `fchmod`, `fchown`, and `futimes` (and a `FileHandle`'s `chmod`,
+    `chown`, and `utimes`) change a file however it was opened, so they need
+    `fs.write`. `process.chdir(dir)` needs `fs.read(dir)` and `fs.write(dir)`,
+    because every relative path the program uses afterwards resolves inside
+    `dir`.
   - `db`: **Prisma** (open question 2, provisionally answered). The table is the
     model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
     SQL (`$queryRaw`, `$executeRaw`, ...) needs bare `db.read` and `db.write`.
@@ -79,8 +104,18 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   what the function reaches.
 - **Adversarial coverage.** Tricks that try to hide access are caught:
   - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
-    `paths.forEach(unlinkSync)`, `send.call(...)` (a `const` alias is fine,
-    because calls through it resolve to the original);
+    `paths.forEach(unlinkSync)`, `{ fetch }`. `send.call(thisArg, url)` and
+    `send.apply(thisArg, [url])` are checked as calls, with their arguments. Calls
+    through a `const` alias resolve to the original; the alias used as a value
+    (`const run = execSync; run.call(null, cmd)`, `Reflect.apply(run, ...)`,
+    `urls.map(get)` with `const get = fetch`) is a use of what it holds. Testing
+    whether a function exists (`if (globalThis.fetch)`, `!WebSocket`,
+    `x instanceof WebSocket`) isn't a use;
+  - capability classes reached indirectly: through an alias
+    (`const WS = WebSocket`), a subclass, `super(url)`, a `typeof WebSocket`
+    parameter, or `Reflect.construct(WebSocket, ...)`;
+  - browser APIs in indirect forms: `navigator.sendBeacon.call(...)`,
+    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`;
   - calls through an interface or base class, which reach every first-party
     implementation, including object literals written against the type;
   - `super()`, implicit constructors, and instance field initializers;
@@ -91,10 +126,15 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `import()`).
 - **Unverifiable code (PERM004).** Code whose effects can't be determined is
   an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
-  `require()`, `import(variable)`, `vm`, `new Worker`, and computed calls on
-  sensitive objects (`fs[method]()`, `globalThis[name]()`) or behind an index
-  signature (`table[name]()`). The only way to accept it is `@perm-unsafe`,
-  which also stops it from failing the function's callers.
+  `require()`, `import(variable)`, `vm`, `new Worker` (Node's, and the
+  browser's `Worker`, `SharedWorker`, and `importScripts()`), native code and
+  hooks (`process.dlopen`, `crypto.setEngine`, `module.register`,
+  `registerHooks`, `runMain`, `module.require`, `new Module()`), the
+  inspector's `Session.post`, `process.binding()`, `process.getBuiltinModule(name)`
+  with a computed name (a literal name is like importing the module), and
+  computed calls on sensitive objects (`fs[method]()`, `globalThis[name]()`)
+  or behind an index signature (`table[name]()`). The only way to accept it is
+  `@perm-unsafe`, which also stops it from failing the function's callers.
 - **Project configuration (PERM005).** GitHub workflows, Actions, and
   `package.json` scripts are recorded in the lock like code: token permissions,
   secrets, Actions and whether they're pinned, install hooks. See
@@ -124,10 +164,19 @@ so the list can't go stale.
   with known capabilities becomes `any`, the escape itself is checked:
   - A member read off a cast is looked up on the original type and reported as
     the access it is: `(globalThis as any).fetch(url)`,
-    `(childProcess as any)["exec"](cmd)`, `(process as any).env.KEY`. Casts to
-    `Record<string, any>` and through `unknown` count too.
-  - A capability module that escapes any other way (stored, passed, or returned as
-    `any`, or read with a computed key) is unverifiable (PERM004).
+    `(childProcess as any)["exec"](cmd)`, `(process as any).env.KEY`,
+    `(globalThis.process as any).env.KEY`, and down a chain of members
+    (`(window as any).navigator.sendBeacon(url)`) or into a constructor
+    (`new (globalThis as any).WebSocket(url)`). Casts to `Record<string, any>`
+    and through `unknown` count too.
+  - A capability module is any value whose type is one: a namespace or default
+    import, `import cp = require(...)`, the result of `await import(...)` or
+    `process.getBuiltinModule(...)`, or a module of the project's own that
+    re-exports one. One that escapes any other way (stored, passed, or returned
+    as `any`; passed on as `unknown` or `object`; listed with `Object.values`,
+    `entries`, or `keys`; read with a computed key, also by `Reflect.get`; or
+    given to a callback parameter typed `any`, as in
+    `Promise.resolve(cp).then((m: any) => ...)`) is unverifiable (PERM004).
   - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
     and `(require as any)(...)` are still `require`.
 
@@ -145,12 +194,29 @@ so the list can't go stale.
 - Implicit calls made inside a library function: `Promise.resolve(x)` calling
   `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
+- `as const` objects and enum members are trusted as fixed values, though code
+  can change them at runtime. Every reference to one is checked for a write (an
+  assignment, `delete`, `++`, or destructuring into a member; a cast; or
+  `Object.assign`, `Object.defineProperty`, `Reflect.set`, and the like with it
+  as the target), and values read from a written object are unknown. An object
+  passed to a function that writes to it, or stored in another variable first,
+  isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)).
+  Treating every such value as unknown instead would turn most uses of
+  constants into bare capabilities.
 
 Other gaps, not yet in fixtures:
 
 - Third-party packages without an adapter: what they touch is trusted. They are
   listed in every report and warned about (PERM006; see below).
 - A `ProcessEnv` received as a parameter typed as a plain object.
+- The browser loading a resource for the page (an image's `src`, a script or
+  stylesheet element, a CSS `url()`), which reaches the network without a
+  network API call.
+- Calling a method on an object Node's built-ins return isn't new access:
+  `socket.write()` after `net.connect()`, `child.kill()` after `spawn()`. The
+  access is checked where the object was made, so an object made somewhere
+  PermLang can't see (a `ChildProcess` constructed directly and spawned through
+  its undocumented `spawn` method, say) isn't reported.
 - A decorator's arguments run when the class is defined, but are charged to the
   decorated member.
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
@@ -188,7 +254,7 @@ Other gaps, not yet in fixtures:
 | `PERM004` | error | Code whose effects can't be determined statically, such as `eval` or a capability hidden behind `any`. |
 | `PERM005` | error, or warning when access was removed | The code reaches something `permlang.lock.json` doesn't record, or no longer reaches something it does. |
 | `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
-| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
+| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. Also the global `process` when Node's types are missing (reported as `node:process`). |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
 | `PERM009` | error | A function reads data a flow rule protects and can send it somewhere the rule doesn't allow. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
@@ -347,8 +413,20 @@ argument N:
 }
 ```
 
+`{host:N}` reads a URL, a template with a literal host, `new URL(...)`, or an
+options object whose `url`, `hostname`, and `host` all name the same host (for
+the `net` and `tls` modules, the options' `host`, as Node reads it). A spread,
+an accessor, a computed key, or a `socketPath`, `lookup`, or `createConnection`
+option makes it unknown. `{host:N+}` reads argument N the way Node's
+`http.request(input, options)` does: `hostname` before `host`, no `url` option,
+and an options argument after a URL can replace its host with `hostname`. A
+placeholder that can't be read gives the bare capability, so the call needs,
+say, `net`.
+
 `default` applies to every other method in the package (not constructors). An
-empty list maps a function to nothing. Add your own adapters in
+empty list maps a function to nothing. Keys must match how the package's types
+declare the function: `process.kill` is declared on the `Process` interface, so
+its key is `Process.kill`, not `kill`. Add your own adapters in
 `permlang.config.json`; they take precedence over the built-in ones:
 
 ```json
@@ -376,7 +454,10 @@ Node's pure built-ins and common libraries (zod, date-fns, React, ...).
 Built-in adapters cover axios, Stripe, nodemailer, `node-fetch`, `undici`, Redis
 (`redis`, `ioredis`), Kafka, Bull/BullMQ, ClickHouse, AI SDKs (`ai`, `openai`,
 `@anthropic-ai/sdk`, ...), MCP clients, several web APIs, `@nestjs/config`,
-`maxmind`, `tar`, and the Node modules that carry capabilities. Where an
+`maxmind`, `tar`, and the Node modules that carry capabilities (`process`,
+`cluster`, `inspector`, `module`, `crypto`'s `setEngine`, and the rest). In
+projects without lib.dom, Node's web globals (`Headers`, `Request`, `WebSocket`,
+...) are typed by `undici-types`, which has its own adapter. Where an
 adapter can't know a service's hosts, it uses bare `net`. PermLang runs itself
 with `"unmapped": "error"` and a team adapter for ts-morph (see
 [`permlang.config.json`](../permlang.config.json)).
@@ -568,11 +649,11 @@ other. Every fixture file must be a module (have an import or export).
 src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
-src/detect/         direct uses: fetch, fs, env, Prisma, Drizzle, SQL, adapter-mapped calls, values, unverifiable code
+src/detect/         direct uses: fetch, fs, env, browser and Node globals, Prisma, Drizzle, SQL, adapter-mapped calls, values, unverifiable code
 src/dispatch.ts     implementations reachable through interfaces and base classes
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
-src/unmapped.ts     packages with no adapter, and imports with no types
+src/unmapped.ts     packages with no adapter, and imports (and `process`) with no types
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
 src/tools.ts        tool registrations for AI models, and their handlers
 src/flows.ts        data-flow rules: parsing, and finding functions that break them
