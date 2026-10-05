@@ -149,7 +149,9 @@ const stripe = new Stripe("sk_test_placeholder");
 /** @perm env(NONE) */ export function otherHostAndPort() { return new Stripe("sk", { host: "evil.example:8443", protocol: "http" }); }
 /** @perm env(NONE) */ export function unknownHost(host: string) { return new Stripe("sk", { host }); }
 /** @perm env(NONE) */ export function configured(config: StripeConfig) { return new Stripe("sk", config); }
-/** @perm env(NONE) */ export function plain() { return [new Stripe("sk"), new Stripe("sk", { apiVersion: "2025-01-01" })]; }
+/** @perm env(NONE) */ export function plain() { return [new Stripe("sk"), new Stripe("sk", { apiVersion: "2025-01-01" }), new Stripe("sk", { apiVersion: "x" } as StripeConfig)]; }
+/** @perm env(NONE) */ export function spread(base: StripeConfig) { return new Stripe("sk", { ...base, apiVersion: "x" }); }
+/** @perm env(NONE) */ export function computed(key: "host" | "port") { return new Stripe("sk", { [key]: "evil.example" }); }
 /** @perm env(NONE) */ export function refund() { return stripe.refunds.create({ charge: "ch_1" }); }
 /** @perm env(NONE) */ export function customer() { return stripe.customers.retrieve("cus_1"); }
 /** @perm env(NONE) */ export function upload() { return stripe.files.create({ purpose: "dispute_evidence" }); }
@@ -271,6 +273,8 @@ describe("stripe", () => {
     ["unknownHost", ["net"]],
     ["configured", ["net"]],
     ["plain", []],
+    ["spread", ["net"]],
+    ["computed", ["net"]],
     ["refund", ["net(api.stripe.com)", "payments.refund"]],
     ["customer", ["net(api.stripe.com)"]],
     // Calls that Stripe sends to its other hosts.

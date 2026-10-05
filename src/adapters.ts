@@ -208,19 +208,13 @@ export class AdapterIndex {
     const listed = key === undefined ? undefined : adapters.find((a) => a.functions.has(key))?.functions.get(key);
     const isConstructor = Node.isConstructorDeclaration(declaration) || Node.isConstructSignatureDeclaration(declaration);
     const templates = listed ?? (isConstructor ? undefined : adapters.find((a) => a.default)?.default);
-    return (templates ?? []).flatMap((t) => instantiate(t, args) ?? []);
+    return (templates ?? []).flatMap((t) => (typeof t.arg === "object" && t.arg.optional ? configHost(t.name, args[t.arg.index]) : [instantiate(t, args)]));
   }
 }
 
-function instantiate(t: Template, args: readonly Node[]): Capability | undefined {
+function instantiate(t: Template, args: readonly Node[]): Capability {
   if (t.arg === undefined || typeof t.arg === "string") return t.arg === undefined ? { name: t.name } : { name: t.name, arg: t.arg };
   const arg = args[t.arg.index];
-  // {host:N?}: only when argument N can set a host; dynamic when it may set one that can't be known.
-  if (t.arg.optional) {
-    const set = arg === undefined ? null : hostOverride(arg);
-    if (set === null) return undefined;
-    return set === undefined ? { name: t.name, dynamic: true } : { name: t.name, arg: set };
-  }
   let value = t.arg.kind === "host" ? hostOf(arg) : literalString(arg);
   // {host:N+}: a later options argument can replace the host, as in Node's
   // http.request(url, { hostname }). Options that might carry one make it unknown.
@@ -284,4 +278,24 @@ function functionKey(d: Node): string | undefined {
   const container = containerName(named);
   if (!container) return member === "()" ? undefined : member;
   return member === "()" ? `${container}()` : `${container}.${member}`;
+}
+
+/**
+ * {host:N?}: the host a client's config sends to, as Stripe's `{ host }` does, only
+ * when the config can set one. A config that isn't written out (a variable, a
+ * spread, a computed key) could, so its host is unknown.
+ */
+function configHost(name: string, written: Node | undefined): Capability[] {
+  let config = written;
+  while (config && (Node.isAsExpression(config) || Node.isSatisfiesExpression(config) || Node.isParenthesizedExpression(config))) config = config.getExpression();
+  if (!config || config.getType().getCallSignatures().length > 0) return [];
+  if (!Node.isObjectLiteralExpression(config)) return config.getType().isObject() ? [{ name, dynamic: true }] : [];
+  const setsHost = config.getProperties().some((p) => {
+    if (!Node.isPropertyAssignment(p) && !Node.isShorthandPropertyAssignment(p)) return true;
+    const key = p.getNameNode();
+    return Node.isComputedPropertyName(key) || ["host", "hostname", "url"].includes(Node.isStringLiteral(key) ? key.getLiteralValue() : key.getText());
+  });
+  if (!setsHost) return [];
+  const host = hostOf(config);
+  return [host === undefined ? { name, dynamic: true } : { name, arg: host }];
 }
