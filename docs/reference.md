@@ -78,9 +78,14 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     is itself SQL (a postgres.js fragment or `sql(name)` helper). The reader fails
     closed: it names tables only for a single `SELECT`, `INSERT`, `UPDATE`, or
     `DELETE` it fully understands. Anything else (`WITH`, `UNION`, DDL, `COPY`,
-    `PRAGMA`, dialect-specific quoting or comments, more than one statement) can
-    touch any table, as can SQL built with string concatenation or a template passed
-    to `query()`; these need bare `db.read` and `db.write`. So does any client
+    `PRAGMA`, more than one statement) can touch any table, as can text that
+    databases read differently (MySQL's `--` with no space after it, backslashes,
+    executable comments such as `/*! ... */`), a function it doesn't know to be
+    harmless (including `lower` called through a schema, `evil.lower(x)`, or a quoted
+    name), a parenthesized list after an `INSERT` table that isn't a list of
+    columns, a quoted name it can't report as written (`"audit.log"`), and SQL nested
+    more than 64 levels deep. So can SQL built with string concatenation or a
+    template passed to `query()`. These need bare `db.read` and `db.write`. So does any client
     method PermLang doesn't know, so new APIs can't pass silently. Schema-qualified
     names are declared as written (`db.read(public.users)`).
 - **Adapter manifests.** JSON files mapping a library's functions to
