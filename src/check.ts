@@ -11,13 +11,16 @@ import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
 import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
+import { moduleComments, strayPermTags, type AnnotationError } from "./annotations.js";
 import { projectFiles } from "./project-files.js";
 import { findTools, type ToolRegistration } from "./tools.js";
 import { flowDiagnostics, type FlowRule } from "./flows.js";
 import { resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
+import { forEachDescendant } from "./walk.js";
 import { collectEdges, holderOf, pathTo, propagate, type Edge, type GraphContext, type Reach } from "./graph.js";
 import {
+  annotationComments,
   createDeclaredUnit,
   createUnit,
   declaredCapabilities,
@@ -192,13 +195,21 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   for (const sourceFile of sourceFiles) {
     const module = readModuleAnnotation(sourceFile, adapters.vocabulary);
     const exports = exportedDeclarations(sourceFile);
-    const add = (node: Node) => units.set(node, createUnit(node, module, exports, adapters.vocabulary));
+    // Every comment an annotation is read from; any other @perm attaches to nothing.
+    const consumed = new Set(moduleComments(sourceFile).map((c) => c.start));
+    const add = (node: Node) => {
+      units.set(node, createUnit(node, module, exports, adapters.vocabulary));
+      for (const c of annotationComments(node)) consumed.add(c.start);
+    };
 
     add(sourceFile);
-    sourceFile.forEachDescendant((node) => {
+    forEachDescendant(sourceFile, (node) => {
       if (isUnitNode(node)) add(node);
     });
     for (const e of module?.errors ?? []) diagnostics.push(annotationError(sourceFile.getFilePath(), "<module>", e));
+    for (const { error, node } of strayPermTags(sourceFile, consumed)) {
+      diagnostics.push(strayAnnotation(sourceFile.getFilePath(), units.get(enclosingUnitNode(node))!.name, error));
+    }
 
     for (const { node, uses } of detectInFile(sourceFile, adapters)) {
       const unit = units.get(enclosingUnitNode(node))!;
@@ -529,6 +540,22 @@ function annotationFix(unit: Unit, key: string): string {
     return named ? `add /** @perm ${key} */ above class ${named}.` : `add a constructor to the class, with /** @perm ${key} */.`;
   }
   return `add /** @perm ${key} */ to ${unit.name}.`;
+}
+
+/** An @perm or @perm-unsafe tag that no function or file takes, so nothing checks it. */
+function strayAnnotation(file: string, name: string, e: AnnotationError): Diagnostic {
+  return {
+    severity: "error",
+    code: "PERM002",
+    file,
+    line: e.line,
+    column: e.column,
+    function: name,
+    capability: e.text,
+    call: "",
+    message: `this ${e.text} isn't on a function, so it applies to nothing and nothing checks it.`,
+    fix: "put it on a function, method, constructor, or accessor (or a class without a constructor), or cover the whole file with /** @module @perm ... */.",
+  };
 }
 
 function annotationError(file: string, name: string, e: { text: string; reason: string; line: number; column: number }): Diagnostic {

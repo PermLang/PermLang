@@ -58,3 +58,22 @@ describe("declaration files for the project's own JavaScript", () => {
     expect(report.diagnostics.find((d) => d.code === "PERM004")?.message).toMatch(/reaching run → JavaScript declared in legacy\.d\.ts\n/);
   });
 });
+
+describe("suggested fixes", () => {
+  it("point at something an annotation attaches to", () => {
+    const report = checkTsConfig(project({
+      "src/app.ts": [
+        'import { execSync } from "node:child_process";',
+        'execSync("ls");',
+        "export class Loader {",
+        '  data = fetch("https://loader.example/");',
+        "}",
+        "eval(\"1\");",
+      ].join("\n"),
+    }));
+    const fix = (code: string, capability: string) => report.diagnostics.find((d) => d.code === code && d.capability === capability)?.fix;
+    expect(fix("PERM003", "exec")).toBe("add /** @module @perm exec */ at the top of the file.");
+    expect(fix("PERM003", "net(loader.example)")).toBe("add /** @perm net(loader.example) */ above class Loader.");
+    expect(fix("PERM004", "unverifiable")).toBe("rewrite it so what it calls is known statically, or move it into a function marked @perm-unsafe with a reason.");
+  });
+});

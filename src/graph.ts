@@ -8,19 +8,23 @@
 //   - every implementation a call through an interface or base class may reach;
 //   - every member a computed key could select (`handlers[kind]()`);
 //   - a class's implicit constructor running its base constructor;
-//   - importing a module, which runs its top-level code.
+//   - importing a module, which runs its top-level code;
+//   - a function handing a call an object of functions (`app.route({ handler() {...} })`,
+//     or a const holding one): the callee can call any of them, like a function passed to it;
+//   - a decorator, which runs where the class is defined (a member's is charged to the member).
 
 import { Node, SyntaxKind, type Identifier, type SourceFile, type Type } from "ts-morph";
 import type { AdapterIndex } from "./adapters.js";
 import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js";
 import { classifyComputedCall, computedCallee } from "./detect/computed.js";
 import { loadOf, loadTarget } from "./detect/modules.js";
-import { callText, literalString, resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
+import { callText, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike } from "./detect/shared.js";
 import { descendantsOfKind } from "./walk.js";
 import type { Hierarchy } from "./dispatch.js";
 import {
   constructorUnitNode,
   enclosingUnitNode,
+  objectsHandedToCalls,
   unitNodeForDeclaration,
   unitNodeForSymbol,
   unitNodesForSymbol,
@@ -74,6 +78,14 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     // A member read through an interface or base class (`s.url`, `urls.map(s.send)`,
     // `s.send.call(...)`) may be any implementation's.
     for (const d of resolved.getDeclarations()) for (const impl of ctx.hierarchy.implementations(d)) add(id, impl, site, text);
+  }
+
+  // An object of functions a function hands to a call: `app.route({ url, handler(q) {...} })`,
+  // or a const holding one, `app.use(routes)`. (Handed out by the file's top-level code,
+  // they're entry points instead; see units.ts.)
+  for (const { call, members } of objectsHandedToCalls(sourceFile)) {
+    if (Node.isSourceFile(enclosingUnitNode(call))) continue;
+    for (const member of members) add(call, member, call, callText(call));
   }
 
   // Property reads that run getters without an `a.b`: `const { g } = b`, `b["g"]`.
@@ -221,25 +233,24 @@ function isInValuePosition(id: Identifier): boolean {
 
 function isValueReference(id: Identifier): boolean {
   const parent = id.getParent();
-  // The name being declared is not a reference to it. (`a.f` also has a name node, but is a reference.)
+  // The name being declared is not a reference to it. (`a.f` also has a name node, but is a
+  // reference, and so is a decorator's: `@logged` calls logged.)
   if (
     parent &&
     !Node.isPropertyAccessExpression(parent) &&
+    !Node.isDecorator(parent) &&
     "getNameNode" in parent &&
     (parent as { getNameNode(): Node }).getNameNode() === id
   ) {
     return false;
   }
   for (const ancestor of id.getAncestors()) {
-    if (
-      Node.isTypeNode(ancestor) ||
-      Node.isJSDoc(ancestor) ||
-      Node.isImportDeclaration(ancestor) ||
-      Node.isExportDeclaration(ancestor) ||
-      Node.isExportAssignment(ancestor)
-    ) {
+    if (Node.isTypeNode(ancestor) || Node.isJSDoc(ancestor) || Node.isImportDeclaration(ancestor) || Node.isExportDeclaration(ancestor)) {
       return false;
     }
+    // `export default handler` exports it (see units.ts) without running it; in
+    // `export default withAuth(handler)`, it's handed to a call like any other reference.
+    if (Node.isExportAssignment(ancestor)) return unwrapExpression(ancestor.getExpression()) !== id;
     if (Node.isStatement(ancestor)) break;
   }
   return true;
