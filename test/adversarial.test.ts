@@ -205,7 +205,7 @@ const silent: Record<string, string> = {
   // `!` converts to a boolean without calling anything; a namespace that isn't exported is private.
   en_fp13_logical_not: "const o = { valueOf() { void fetch(\"https://x.example/\"); return 1; } };\nexport function t() { return !o; }",
   en_fp14_private_namespace: "namespace Hidden { export function run() { return fetch(\"https://x.example/\"); } }\nexport const n = 1;\nvoid Hidden;",
-  en_fp15_extends_library_class: "export class Bus extends EventTarget {}\nexport function t() { return new Bus(); }",
+  en_fp15_extends_library_class: "import { EventEmitter } from \"node:events\";\nexport class Bus extends EventEmitter {}\nexport function t() { return new Bus(); }",
   en_fp06_missing_members: "interface Uplink { transmit(u: string): void; hangUp(): void }\nconst partial = { transmit(u: string) { void fetch(u); } };\nexport function t(l: Uplink, u: string) { l.transmit(u); return partial; }",
 };
 
