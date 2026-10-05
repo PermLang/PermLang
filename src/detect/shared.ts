@@ -203,12 +203,20 @@ function templateHost(head: string): string | undefined {
   }
 }
 
+// Options that decide where a connection goes without naming a host: a local socket, a custom
+// DNS lookup, or a custom connection. Node's http and net, axios, and others all accept them.
+const REDIRECTING_OPTIONS = ["socketPath", "lookup", "createConnection"];
+
 /**
- * The host an argument names: a URL string or template, or an options object
- * with a literal `url`, `hostname`, or `host`. Undefined when it can't be known.
+ * The host an argument names: a URL string or template, `new URL(...)`, or an options object
+ * whose `url`, `hostname`, and `host` (those it sets) all name the same literal host.
+ * Undefined when it can't be known, including when an option could send the connection
+ * elsewhere (a spread or computed key that could set any of them, an accessor, or one of
+ * REDIRECTING_OPTIONS).
  */
-export function hostOf(arg: Node | undefined): string | undefined {
-  if (!arg) return undefined;
+export function hostOf(written: Node | undefined): string | undefined {
+  if (!written) return undefined;
+  const arg = unwrapExpression(written);
   const text = literalString(arg);
   if (text !== undefined) {
     try {
@@ -231,17 +239,78 @@ export function hostOf(arg: Node | undefined): string | undefined {
     }
   }
   if (Node.isObjectLiteralExpression(arg)) {
-    const prop = (name: string) => {
-      const p = arg.getProperty(name);
-      return p && Node.isPropertyAssignment(p) ? p.getInitializer() : undefined;
-    };
-    const url = prop("url");
-    if (url) return hostOf(url);
-    const host = literalString(prop("hostname")) ?? literalString(prop("host"));
-    // `host` may carry a port: "internal.example:8080".
-    return host?.replace(/:\d+$/, "").toLowerCase() || undefined;
+    if (redirects(arg, REDIRECTING_OPTIONS)) return undefined;
+    let host: string | undefined;
+    for (const key of ["url", "hostname", "host"]) {
+      const value = propertyValue(arg, key);
+      if (value === "absent") continue;
+      const named = value === "unknown" ? undefined : key === "url" ? hostOf(value) : hostName(value);
+      if (named === undefined || (host !== undefined && named !== host)) return undefined;
+      host = named;
+    }
+    return host;
   }
   return undefined;
+}
+
+/**
+ * Where Node's http.request(input, options) connects, and https's, http.get's, and
+ * ClientRequest's. Node reads `hostname` before `host` and ignores an options object's `url`.
+ * After a URL or URL string, options are merged over it: their `hostname` replaces the URL's
+ * host, but their `host` doesn't, because the URL sets `hostname`. (lib/_http_client.js; the
+ * reference has a test of each order.)
+ */
+export function nodeRequestHost(args: readonly Node[], index: number): string | undefined {
+  const input = args[index] && unwrapExpression(args[index]);
+  if (!input) return undefined;
+  if (Node.isObjectLiteralExpression(input)) {
+    if (redirects(input, REDIRECTING_OPTIONS)) return undefined;
+    const hostname = propertyValue(input, "hostname");
+    // Without a hostname or host, Node connects to localhost; the reference treats that as unknown.
+    return hostname === "absent" ? optionHost(input, "host") : hostname === "unknown" ? undefined : hostName(hostname);
+  }
+  const host = hostOf(input);
+  const options = args[index + 1] && unwrapExpression(args[index + 1]);
+  // A callback, or nothing that can carry options.
+  if (!options || options.getType().getCallSignatures().length > 0) return host;
+  if (!Node.isObjectLiteralExpression(options)) return options.getType().isObject() ? undefined : host;
+  if (redirects(options, REDIRECTING_OPTIONS)) return undefined;
+  const hostname = propertyValue(options, "hostname");
+  return hostname === "absent" ? host : hostname === "unknown" ? undefined : hostName(hostname);
+}
+
+/**
+ * Where Node's net.connect and tls.connect connect: an options object's `host` (its `hostname`
+ * is ignored, and a `path` is a local socket), or `connect(port, host)`.
+ */
+export function nodeSocketHost(args: readonly Node[], index: number): string | undefined {
+  const first = args[index] && unwrapExpression(args[index]);
+  if (!first) return undefined;
+  if (Node.isObjectLiteralExpression(first)) {
+    return redirects(first, ["path", "socket", ...REDIRECTING_OPTIONS]) ? undefined : optionHost(first, "host");
+  }
+  const type = first.getType();
+  if (!type.isNumber() && !type.isNumberLiteral()) return undefined; // a socket path, or options that can't be read
+  const options = args[index + 2] && unwrapExpression(args[index + 2]);
+  if (options && (!Node.isObjectLiteralExpression(options) || redirects(options, ["path", "socket", ...REDIRECTING_OPTIONS]))) return undefined;
+  const host = args[index + 1];
+  return host ? hostName(host) : undefined;
+}
+
+/** Whether an options object sets, or may set, any of `keys`. */
+function redirects(options: ObjectLiteralExpression, keys: readonly string[]): boolean {
+  return keys.some((key) => propertyValue(options, key) !== "absent");
+}
+
+/** The literal host an option names; undefined if it's not set, or can't be read. */
+function optionHost(options: ObjectLiteralExpression, key: string): string | undefined {
+  const value = propertyValue(options, key);
+  return value === "absent" || value === "unknown" ? undefined : hostName(value);
+}
+
+/** A literal host name, without a port (`host: "internal.example:8080"`), in lower case. */
+function hostName(value: Node): string | undefined {
+  return literalString(value)?.replace(/:\d+$/, "").toLowerCase() || undefined;
 }
 
 /** The global `URL` class, not a local one with the same name. */
