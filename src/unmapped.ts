@@ -9,7 +9,7 @@ import { packageOf, type AdapterIndex } from "./adapters.js";
 import { isAsset, isUrlSpecifier, loadOf, loadTarget } from "./detect/modules.js";
 import { resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
 import { SQL_PACKAGES } from "./detect/sql.js";
-import { forEachDescendant } from "./walk.js";
+import { forEachDescendant, lineAndColumn } from "./walk.js";
 
 export interface UnmappedPackage {
   package: string;
@@ -51,7 +51,7 @@ export function unmappedPackages(sourceFiles: readonly SourceFile[], adapters: A
         package: pkg,
         calls: 1,
         file: sourceFile.getFilePath(),
-        line: node.getStartLineNumber(),
+        line: lineAndColumn(sourceFile, node.getStart()).line,
         node,
         files: 1,
         fileSet: new Set([sourceFile.getFilePath()]),
@@ -106,7 +106,7 @@ export function unresolvedImports(sourceFiles: readonly SourceFile[]): Unresolve
       const specifier = specifierNode.getLiteralValue();
       if (isAsset(specifier) || isUrlSpecifier(specifier)) continue;
       if (HANDLED.has(bareName(specifier)) || found.has(specifier) || resolves(specifierNode, node)) continue;
-      found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: node.getStartLineNumber(), node });
+      found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: lineAndColumn(sourceFile, node.getStart()).line, node });
     }
   }
   return [...found.values()];

@@ -15,9 +15,9 @@ import { moduleComments, strayPermTags, type AnnotationError } from "./annotatio
 import { projectFiles } from "./project-files.js";
 import { findTools, type ToolRegistration } from "./tools.js";
 import { flowDiagnostics, type FlowRule } from "./flows.js";
-import { resolveAlias } from "./detect/shared.js";
+import { clearResolutionCache, resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
-import { forEachDescendant } from "./walk.js";
+import { forEachDescendant, lineAndColumn } from "./walk.js";
 import { collectEdges, holderOf, pathTo, propagate, type Edge, type GraphContext, type Reach } from "./graph.js";
 import {
   annotationComments,
@@ -182,6 +182,7 @@ export function checkTsConfig(tsConfigFilePath: string, options: CheckOptions = 
  * @perm fs.read
  */
 export function checkProject(project: Project, options: CheckOptions = {}): Report {
+  clearResolutionCache();
   const loaded = loadAdapters(options.adapters ?? []);
   if (loaded.errors.length > 0) throw new AdapterError(loaded.errors);
   const adapters = new AdapterIndex(loaded.adapters);
@@ -198,8 +199,9 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     // Every comment an annotation is read from; any other @perm attaches to nothing.
     const consumed = new Set(moduleComments(sourceFile).map((c) => c.start));
     const add = (node: Node) => {
-      units.set(node, createUnit(node, module, exports, adapters.vocabulary));
-      for (const c of annotationComments(node)) consumed.add(c.start);
+      const comments = annotationComments(node);
+      units.set(node, createUnit(node, module, exports, adapters.vocabulary, comments));
+      for (const c of comments) consumed.add(c.start);
     };
 
     add(sourceFile);
@@ -213,7 +215,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
 
     for (const { node, uses } of detectInFile(sourceFile, adapters)) {
       const unit = units.get(enclosingUnitNode(node))!;
-      const { line, column } = sourceFile.getLineAndColumnAtPos(node.getStart());
+      const { line, column } = lineAndColumn(sourceFile, node.getStart());
       for (const u of uses) unit.uses.push({ ...u, line, column });
     }
   }
@@ -268,7 +270,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         code: "PERM006",
         file: u.file,
         line: u.line,
-        column: u.node.getSourceFile().getLineAndColumnAtPos(u.node.getStart()).column,
+        column: lineAndColumn(u.node.getSourceFile(), u.node.getStart()).column,
         function: unit.name,
         capability: u.package,
         call: "",

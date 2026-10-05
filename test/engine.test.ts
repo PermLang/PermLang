@@ -5,8 +5,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fc from "fast-check";
 import { afterAll, describe, expect, it } from "vitest";
-import { checkTsConfig, type Report } from "../src/check.js";
+import { Project, ts } from "ts-morph";
+import { checkProject, checkTsConfig, type Report } from "../src/check.js";
+import { pathTo, propagate, type Edge } from "../src/graph.js";
+import type { Unit } from "../src/units.js";
+import { lineAndColumn } from "../src/walk.js";
 
 const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
 const dirs: string[] = [];
@@ -89,5 +94,68 @@ describe("classes built by expressions", () => {
       ].join("\n"),
     }));
     expect(report.functions.map((f) => f.name).sort()).toEqual(["Named.constructor", "make.<class>.constructor", "t"]);
+  });
+});
+
+describe("reusing a ts-morph Project", () => {
+  it("gives fresh results after the code changes", () => {
+    const dir = path.dirname(project({}));
+    const reused = new Project({ compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, strict: true, types: ["node"], typeRoots } });
+    const file = reused.createSourceFile(path.join(dir, "a.ts"), 'import { basename as run } from "node:path";\nexport function t(x: string) { return run(x); }\n');
+    expect(checkProject(reused).functions).toEqual([]);
+    // Only the import changes: the same call now runs a command.
+    file.getImportDeclarations()[0]!.setModuleSpecifier("node:child_process");
+    file.getImportDeclarations()[0]!.getNamedImports()[0]!.setName("execSync");
+    expect(checkProject(reused).functions.map((f) => [f.name, f.actual])).toEqual([["t", ["exec"]]]);
+  });
+});
+
+describe("long call chains", () => {
+  // A chain of 20,000 functions, each calling the next; the last runs a command.
+  const unit = (i: number): Unit => ({ node: undefined as never, file: "a.ts", name: `f${i}`, line: i + 1, exported: false, own: undefined, module: undefined, uses: [] });
+  const chain = Array.from({ length: 20_000 }, (_, i) => unit(i));
+  chain.at(-1)!.uses.push({ verb: "calls", capability: { name: "exec" }, call: 'execSync("ls")', line: 20_000, column: 1 });
+  const edges: Edge[] = chain.slice(1).map((to, i) => ({ from: chain[i]!, to, call: `f${i + 1}()`, line: i + 1, column: 1 }));
+
+  it("propagate in linear time", () => {
+    const started = performance.now();
+    const reach = propagate(chain, edges);
+    for (const u of chain) pathTo(reach, u, "exec");
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(reach.get(chain[0]!)!.has("exec")).toBe(true);
+  });
+
+  it("shorten long paths in messages, keeping both ends", () => {
+    const reach = propagate(chain, edges);
+    const shown = pathTo(reach, chain[0]!, "exec");
+    expect(shown.length).toBeLessThan(30);
+    expect(shown.slice(0, 2)).toEqual(["f1", "f2"]);
+    expect(shown.slice(-2)).toEqual(["f19999", 'execSync("ls")']);
+    expect(pathTo(reach, chain[19_997]!, "exec")).toEqual(["f19998", "f19999", 'execSync("ls")']);
+  });
+});
+
+describe("positions", () => {
+  it("match ts-morph's line and column for any text", () => {
+    const files = new Project({ useInMemoryFileSystem: true });
+    fc.assert(
+      fc.property(fc.array(fc.constantFrom("a", " ", "\n", "\r", "\r\n", "\u2028", "é", "😀"), { maxLength: 60 }), (parts) => {
+        const file = files.createSourceFile("/x.ts", parts.join(""), { overwrite: true });
+        for (let pos = 0; pos <= file.getFullText().length; pos++) {
+          expect(lineAndColumn(file, pos)).toEqual(file.getLineAndColumnAtPos(pos));
+        }
+      }),
+    );
+  });
+
+  it("are found quickly in a file with thousands of functions", () => {
+    const lines = ['import { execSync } from "node:child_process";'];
+    for (let i = 9_999; i >= 1; i--) lines.push(`function f${i}() { f${i - 1}(); }`);
+    lines.push('function f0() { execSync("ls"); }', "export function t() { f9999(); }");
+    const tsconfig = project({ "src/chain.ts": lines.join("\n") });
+    const started = performance.now();
+    const report = checkTsConfig(tsconfig);
+    expect(performance.now() - started).toBeLessThan(30_000);
+    expect(report.diagnostics.map((d) => `${d.line} ${d.code} ${d.function}`)).toEqual(["10002 PERM003 t"]);
   });
 });

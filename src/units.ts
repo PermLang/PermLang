@@ -6,7 +6,7 @@ import { Node, SyntaxKind, ts, type ClassDeclaration, type ClassExpression, type
 import { functionComments, jsDocComments, moduleComments, readPermAnnotation, type Comment, type PermAnnotation } from "./annotations.js";
 import { UNVERIFIABLE, type Capability } from "./capability.js";
 import { resolveAlias, unwrapExpression, type CallLike } from "./detect/shared.js";
-import { descendantsOfKind } from "./walk.js";
+import { descendantsOfKind, lineAndColumn } from "./walk.js";
 
 export interface Use {
   verb: "calls" | "reads" | "uses";
@@ -53,15 +53,16 @@ export function createUnit(
   module: PermAnnotation | undefined,
   exports: ReadonlySet<Node>,
   vocabulary: ReadonlySet<string>,
+  comments: readonly Comment[] = annotationComments(node),
 ): Unit {
   const sourceFile = node.getSourceFile();
   return {
     node,
     file: sourceFile.getFilePath(),
     name: unitName(node),
-    line: Node.isSourceFile(node) ? 1 : node.getStartLineNumber(),
+    line: Node.isSourceFile(node) ? 1 : lineAndColumn(sourceFile, node.getStart()).line,
     exported: isExported(node, exports),
-    own: Node.isSourceFile(node) ? undefined : readPermAnnotation(annotationComments(node), sourceFile, vocabulary),
+    own: Node.isSourceFile(node) ? undefined : readPermAnnotation(comments, sourceFile, vocabulary),
     module,
     uses: [],
   };
@@ -197,7 +198,7 @@ function declaredUnitNode(d: Node): Node | undefined {
 /** A unit for JavaScript declared in a .d.ts: reaching it is unverifiable. */
 export function createDeclaredUnit(node: Node): Unit {
   const sourceFile = node.getSourceFile();
-  const { line, column } = sourceFile.getLineAndColumnAtPos(node.getStart());
+  const { line, column } = lineAndColumn(sourceFile, node.getStart());
   const call = `JavaScript declared in ${sourceFile.getBaseName()}`;
   return {
     node,
@@ -409,7 +410,10 @@ function jsDocsOf(node: Node): Comment[] {
   const docs = jsDocComments(node);
   // An overloaded function's @perm may sit on any of its signatures.
   if (Node.isFunctionDeclaration(node) || Node.isMethodDeclaration(node)) {
-    return [...node.getOverloads().flatMap(jsDocComments), ...docs];
+    // (Found through the symbol: ts-morph's getOverloads() scans every sibling, which is
+    // slow in a file with thousands of functions.)
+    const overloads = (node.getSymbol()?.getDeclarations() ?? []).filter((d) => d !== node && d.getKind() === node.getKind());
+    return [...overloads.flatMap(jsDocComments), ...docs];
   }
   // A class expression's comment sits on what holds it: `/** @perm net */ export const C = class {...}`.
   const holder = node.getParent();

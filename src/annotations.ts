@@ -6,7 +6,7 @@
 
 import { ts, type Node, type SourceFile } from "ts-morph";
 import { parsePermList, type Capability } from "./capability.js";
-import { forEachDescendant } from "./walk.js";
+import { forEachDescendant, lineAndColumn } from "./walk.js";
 
 export interface AnnotationError {
   text: string;
@@ -97,7 +97,7 @@ export function readPermAnnotation(
   const capabilities: Capability[] = [];
   const errors: AnnotationError[] = [];
   let unsafe: UnsafeOverride | undefined;
-  const at = (pos: number) => sourceFile.getLineAndColumnAtPos(pos);
+  const at = (pos: number) => lineAndColumn(sourceFile, pos);
 
   for (const { text, start } of comments) {
     for (const tag of blockTags(text, PERM_TAG)) {
@@ -147,7 +147,7 @@ export function strayPermTags(sourceFile: SourceFile, consumed: ReadonlySet<numb
       const text = doc.getText(sourceFile.compilerNode);
       for (const [tag, pattern] of [["@perm", PERM_TAG], ["@perm-unsafe", UNSAFE_TAG]] as const) {
         for (const m of blockTags(text, pattern)) {
-          out.push({ error: { text: tag, reason: "it applies to nothing", ...sourceFile.getLineAndColumnAtPos(start + m.index) }, node });
+          out.push({ error: { text: tag, reason: "it applies to nothing", ...lineAndColumn(sourceFile, start + m.index) }, node });
         }
       }
     }

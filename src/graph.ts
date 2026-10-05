@@ -19,7 +19,7 @@ import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js
 import { classifyComputedCall, computedCallee } from "./detect/computed.js";
 import { loadOf, loadTarget } from "./detect/modules.js";
 import { callText, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike } from "./detect/shared.js";
-import { descendantsOfKind } from "./walk.js";
+import { descendantsOfKind, forEachDescendant, lineAndColumn } from "./walk.js";
 import type { Hierarchy } from "./dispatch.js";
 import {
   constructorUnitNode,
@@ -55,14 +55,14 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     const from = ctx.unitOf(enclosingUnitNode(fromNode));
     const to = target && ctx.unitOf(target);
     if (!from || !to) return;
-    const { line, column } = sourceFile.getLineAndColumnAtPos(site.getStart());
+    const { line, column } = lineAndColumn(sourceFile, site.getStart());
     edges.push({ from, to, call: text, line, column });
   };
   const addFromModule = (target: Node | undefined, site: Node) => {
     const from = ctx.unitOf(sourceFile);
     const to = target && ctx.unitOf(target);
     if (!from || !to) return;
-    const { line, column } = sourceFile.getLineAndColumnAtPos(site.getStart());
+    const { line, column } = lineAndColumn(sourceFile, site.getStart());
     edges.push({ from, to, call: site.getText().replace(/\s+/g, " "), line, column });
   };
 
@@ -176,7 +176,7 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
   }
 
   // Calls: the resolved declaration, dispatch to implementations, computed members.
-  sourceFile.forEachDescendant((node) => {
+  forEachDescendant(sourceFile, (node) => {
     if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
     const call: CallLike = node;
     const text = callText(call);
@@ -227,7 +227,7 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
   for (const cls of [...descendantsOfKind(sourceFile, SyntaxKind.ClassDeclaration), ...descendantsOfKind(sourceFile, SyntaxKind.ClassExpression)]) {
     if (constructorUnitNode(cls) !== cls) continue;
     const from = ctx.unitOf(cls);
-    const { line, column } = sourceFile.getLineAndColumnAtPos(cls.getStart());
+    const { line, column } = lineAndColumn(sourceFile, cls.getStart());
     for (const base of baseClasses(cls)) {
       const to = ctx.unitOf(constructorUnitNode(base));
       if (from && to) edges.push({ from, to, call: `extends ${cls.getExtends()!.getExpression().getText().replace(/\s+/g, " ").slice(0, 60)}`, line, column });
@@ -330,57 +330,182 @@ export type Provenance = { capability: Capability; use: Use; edge?: undefined } 
 /** Every capability each unit can reach, keyed by its formatted form. */
 export type Reach = Map<Unit, Map<string, Provenance>>;
 
+/**
+ * What every unit can reach. Linear in the size of the graph: units are grouped into
+ * strongly connected components (functions that call each other, directly or not), and
+ * the components are visited callees first, so each one is finished once. A unit takes
+ * each capability through the first call, in source order, that reaches it.
+ */
 export function propagate(units: Iterable<Unit>, edges: readonly Edge[]): Reach {
   const reach: Reach = new Map();
-  for (const unit of units) {
+  const ensure = (unit: Unit) => {
+    if (reach.has(unit)) return;
     const own = new Map<string, Provenance>();
     for (const use of unit.uses) {
       const key = formatCapability(use.capability);
       if (!own.has(key)) own.set(key, { capability: use.capability, use });
     }
     reach.set(unit, own);
+  };
+  for (const unit of units) ensure(unit);
+  const outgoing = new Map<Unit, Edge[]>();
+  for (const edge of edges) {
+    ensure(edge.from);
+    ensure(edge.to);
+    const list = outgoing.get(edge.from);
+    if (list) list.push(edge);
+    else outgoing.set(edge.from, [edge]);
   }
+  for (const list of outgoing.values()) list.sort((a, b) => a.line - b.line || a.column - b.column);
 
-  // Fixed point: recursion and cycles converge because keys are only ever added.
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const edge of edges) {
-      const into = reach.get(edge.from)!;
-      for (const [key, p] of reach.get(edge.to)!) {
-        if (into.has(key)) continue;
-        // @perm-unsafe vouches for code the checker can't see; that doesn't fail its callers.
-        if (key === UNVERIFIABLE && edge.to.own?.unsafe) continue;
-        into.set(key, { capability: p.capability, edge });
-        changed = true;
+  // @perm-unsafe vouches for code the checker can't see; that doesn't fail its callers.
+  const carries = (edge: Edge, key: string) => key !== UNVERIFIABLE || !edge.to.own?.unsafe;
+
+  for (const component of componentsCalleesFirst([...reach.keys()], outgoing)) {
+    const inside = new Set(component);
+    // What the component's units reach through calls out of it, all finished already.
+    for (const unit of component) {
+      const into = reach.get(unit)!;
+      for (const edge of outgoing.get(unit) ?? []) {
+        if (inside.has(edge.to)) continue;
+        for (const [key, p] of reach.get(edge.to)!) {
+          if (!into.has(key) && carries(edge, key)) into.set(key, { capability: p.capability, edge });
+        }
+      }
+    }
+    if (component.length === 1 && !(outgoing.get(component[0]!) ?? []).some((e) => e.to === component[0])) continue;
+    // Recursion: spread each capability through the component breadth first, so every
+    // provenance points one step closer to the use, and paths can't loop.
+    const callers = new Map<Unit, Edge[]>();
+    for (const unit of component) {
+      for (const edge of outgoing.get(unit) ?? []) {
+        if (!inside.has(edge.to)) continue;
+        const list = callers.get(edge.to);
+        if (list) list.push(edge);
+        else callers.set(edge.to, [edge]);
+      }
+    }
+    const keys = new Set(component.flatMap((u) => [...reach.get(u)!.keys()]));
+    for (const key of keys) {
+      const queue = component.filter((u) => reach.get(u)!.has(key));
+      for (let i = 0; i < queue.length; i++) {
+        const p = reach.get(queue[i]!)!.get(key)!;
+        for (const edge of callers.get(queue[i]!) ?? []) {
+          const into = reach.get(edge.from)!;
+          if (into.has(key) || !carries(edge, key)) continue;
+          into.set(key, { capability: p.capability, edge });
+          queue.push(edge.from);
+        }
       }
     }
   }
   return reach;
 }
 
-/** The chain from `unit` to the call that uses `key`, e.g. ["b", "c", 'writeFileSync(...)']. */
-export function pathTo(reach: Reach, unit: Unit, key: string): string[] {
-  const path: string[] = [];
-  let p = reach.get(unit)?.get(key);
-  // Each provenance points at one recorded earlier, so this terminates.
-  while (p?.edge) {
-    path.push(p.edge.to.name);
-    p = reach.get(p.edge.to)?.get(key);
+/** Strongly connected components (Tarjan's algorithm, without recursion), each after every component it calls into. */
+function componentsCalleesFirst(units: readonly Unit[], outgoing: ReadonlyMap<Unit, readonly Edge[]>): Unit[][] {
+  const index = new Map<Unit, number>();
+  const low = new Map<Unit, number>();
+  const stack: Unit[] = [];
+  const onStack = new Set<Unit>();
+  const out: Unit[][] = [];
+  const visit = (unit: Unit) => {
+    index.set(unit, index.size);
+    low.set(unit, index.get(unit)!);
+    stack.push(unit);
+    onStack.add(unit);
+  };
+  for (const root of units) {
+    if (index.has(root)) continue;
+    visit(root);
+    const frames: { unit: Unit; next: number }[] = [{ unit: root, next: 0 }];
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1]!;
+      const edges = outgoing.get(frame.unit) ?? [];
+      if (frame.next < edges.length) {
+        const to = edges[frame.next++]!.to;
+        if (!index.has(to)) {
+          visit(to);
+          frames.push({ unit: to, next: 0 });
+        } else if (onStack.has(to)) {
+          low.set(frame.unit, Math.min(low.get(frame.unit)!, index.get(to)!));
+        }
+        continue;
+      }
+      frames.pop();
+      const parent = frames[frames.length - 1];
+      if (parent) low.set(parent.unit, Math.min(low.get(parent.unit)!, low.get(frame.unit)!));
+      if (low.get(frame.unit) !== index.get(frame.unit)) continue;
+      const component: Unit[] = [];
+      for (let member = stack.pop()!; ; member = stack.pop()!) {
+        onStack.delete(member);
+        component.push(member);
+        if (member === frame.unit) break;
+      }
+      out.push(component.reverse());
+    }
   }
-  if (p) path.push(p.use.call);
-  return path;
+  return out;
+}
+
+// Paths in messages keep their first steps and their last ones: a chain thousands of
+// functions deep can't be read, and listing it for every function would take forever.
+const HEAD = 20;
+const TAIL = 3;
+
+/** A chain to a use, as shown: its length, its first HEAD and last TAIL entries, and the unit that uses it. */
+interface Chain {
+  length: number;
+  head: string[];
+  tail: string[];
+  holder: Unit;
+}
+
+const chains = new WeakMap<Reach, Map<Unit, Map<string, Chain>>>();
+
+function chainOf(reach: Reach, unit: Unit, key: string): Chain | undefined {
+  let memo = chains.get(reach);
+  if (!memo) chains.set(reach, (memo = new Map()));
+  const known = (u: Unit) => memo.get(u)?.get(key);
+  // Walk to the use, or to a chain already worked out, then fill in the way back.
+  const walked: { unit: Unit; p: Provenance }[] = [];
+  for (let u: Unit | undefined = unit; u && !known(u); ) {
+    const p: Provenance | undefined = reach.get(u)?.get(key);
+    if (!p) break;
+    walked.push({ unit: u, p });
+    u = p.edge?.to;
+  }
+  for (let i = walked.length - 1; i >= 0; i--) {
+    const { unit: u, p } = walked[i]!;
+    let chain: Chain;
+    if (!p.edge) chain = { length: 1, head: [p.use.call], tail: [p.use.call], holder: u };
+    else {
+      const next = known(p.edge.to)!;
+      const name = p.edge.to.name;
+      chain = {
+        length: next.length + 1,
+        head: [name, ...next.head.slice(0, HEAD - 1)],
+        tail: next.length >= TAIL ? next.tail : [name, ...next.tail],
+        holder: next.holder,
+      };
+    }
+    if (!memo.has(u)) memo.set(u, new Map());
+    memo.get(u)!.set(key, chain);
+  }
+  return known(unit);
+}
+
+/** The chain from `unit` to the call that uses `key`, e.g. ["b", "c", 'writeFileSync(...)']; very long ones are shortened. */
+export function pathTo(reach: Reach, unit: Unit, key: string): string[] {
+  const chain = chainOf(reach, unit, key);
+  if (!chain) return [];
+  if (chain.length <= HEAD + TAIL) return [...chain.head, ...chain.tail.slice(chain.tail.length - (chain.length - chain.head.length))];
+  return [...chain.head, `… ${chain.length - HEAD - TAIL} more …`, ...chain.tail];
 }
 
 /** The unit whose own code uses `key`: `unit` itself, or the last one on the chain from it. */
 export function holderOf(reach: Reach, unit: Unit, key: string): Unit {
-  let holder = unit;
-  let p = reach.get(unit)?.get(key);
-  while (p?.edge) {
-    holder = p.edge.to;
-    p = reach.get(holder)?.get(key);
-  }
-  return holder;
+  return chainOf(reach, unit, key)?.holder ?? unit;
 }
 
 const PRIMITIVE = ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.BooleanLike |

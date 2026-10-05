@@ -14,7 +14,7 @@ import { fetchCapability, isUnresolvedFetch } from "./fetch.js";
 import { declarationCapabilities, isTimer } from "./functions.js";
 import { isUrlSpecifier, loadOf, loadTarget } from "./modules.js";
 import { argumentsOf, callText, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
-import { forEachDescendant } from "../walk.js";
+import { descendantsOfKind, forEachDescendant } from "../walk.js";
 import { valueUses } from "./values.js";
 import { webCapabilities } from "./web.js";
 
@@ -43,7 +43,7 @@ const unverifiable: Capability[] = [{ name: UNVERIFIABLE }];
 
 /** `import "data:..."`, `export * from "https://..."`: code that isn't in the project runs on import. */
 function urlImports(sourceFile: SourceFile): DetectedUse[] {
-  const declarations = [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations(), ...sourceFile.getDescendantsOfKind(SyntaxKind.ImportEqualsDeclaration)];
+  const declarations = [...sourceFile.getImportDeclarations(), ...sourceFile.getExportDeclarations(), ...descendantsOfKind(sourceFile, SyntaxKind.ImportEqualsDeclaration)];
   return declarations.flatMap((node) => {
     const specifier = moduleSpecifierOf(node);
     if (specifier === undefined || !isUrlSpecifier(specifier)) return [];

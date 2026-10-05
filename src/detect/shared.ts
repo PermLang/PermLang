@@ -82,7 +82,14 @@ function inConstObject(property: Node): boolean {
 }
 
 // Several passes resolve the same calls; signature resolution is the expensive part.
-const resolved = new WeakMap<Node, Node | undefined>();
+// The cache lasts one check: ts-morph keeps a call's node when the code around it is
+// edited, so a Project checked again after an edit would get the old answers.
+let resolved = new WeakMap<Node, Node | undefined>();
+
+/** Forgets every resolved call. checkProject calls this before it starts. */
+export function clearResolutionCache(): void {
+  resolved = new WeakMap();
+}
 
 /** The declaration of the signature a call resolves to: the overload, method, or call signature actually used. */
 export function resolvedDeclaration(call: CallLike): Node | undefined {
