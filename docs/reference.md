@@ -294,12 +294,12 @@ reach, through everything it calls:
 
 | Framework | Recognized |
 | --- | --- |
-| Vercel AI SDK (`ai`, `@ai-sdk/*`) | `tool({ execute })`, `dynamicTool(...)`; plain objects in a `tools` option, such as `generateText({ tools: { shell: { execute } } })` or `new ToolLoopAgent({ tools })`, written in the call or in a constant; provider tools such as `anthropic.tools.bash_20250124({ execute })` |
+| Vercel AI SDK (`ai`, `@ai-sdk/*`) | `tool({ execute })`, `dynamicTool(...)`; plain objects in a `tools` option, such as `generateText({ tools: { shell: { execute } } })` or `new ToolLoopAgent({ tools })`, written in the call or in a constant, spreads included; provider tools such as `anthropic.tools.bash_20250124({ execute })` |
 | MCP (`@modelcontextprotocol/sdk`, and version 2's `@modelcontextprotocol/server`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and the handler that serves every tool (named `*`): `setRequestHandler(CallToolRequestSchema, handler)`, or `setRequestHandler("tools/call", handler)` in version 2 |
 | OpenAI Agents (`@openai/agents`, `@openai/agents-*`) | `tool({ name, execute })`, and the built-in tools that run here: `shellTool({ shell })`, `computerTool({ computer })`, `applyPatchTool({ editor })` |
-| LangChain (`@langchain/*`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, other `new ...Tool(...)` classes, and your own subclasses of `StructuredTool` or `Tool` (what their `_call` reaches) |
+| LangChain (`@langchain/*`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, other `new ...Tool(...)` classes, prebuilt tools that extend `Tool` (such as `new Calculator()`), and your own subclasses of `StructuredTool` or `Tool`, including class expressions (what their `_call` reaches) |
 | LlamaIndex (`llamaindex`, `@llamaindex/*`) | `FunctionTool.from(fn, ...)` and `tool(fn, ...)` |
-| Anthropic (`@anthropic-ai/*`), Mastra (`@mastra/*`) | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler |
+| Anthropic (`@anthropic-ai/*`), Mastra (`@mastra/*`) | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler, and plain objects with one in a `tools` list (the Anthropic SDK's `toolRunner({ tools: [{ name, run }] })`) |
 
 A package counts by its family, because one package often re-exports another's
 (`@openai/agents` re-exports `tool` from `@openai/agents-core`). The handler is
@@ -331,22 +331,29 @@ can trigger this*, with the tool's name.
 
 What counts as unverifiable, and what reaches nothing:
 
-- A handler PermLang can't follow (a parameter, or a variable that can be
-  reassigned) counts as unverifiable. A library function given as the handler
-  (`execute: execSync`) reaches what PermLang knows that function does.
-- A tool written without a handler, where its definition has a place for one,
-  counts as unverifiable too: the AI SDK hands its calls back to your app, or,
-  for a provider tool like `bash_20250124()`, runs them in whatever sandbox the
-  call is given.
-- A tool that can't take a handler runs at the model provider and reaches
-  nothing here: OpenAI's `webSearchTool()` and hosted `shellTool({ environment })`,
-  Anthropic's code execution.
+- A handler PermLang can't follow counts as unverifiable: a parameter, a
+  variable that can be reassigned, a value from a package with no types, or
+  constants that refer to each other. A library function given as the handler
+  (`execute: execSync`) reaches what PermLang knows that function does. A
+  library's object or class instance (`shell: sandboxShell`,
+  `editor: new RemoteEditor()`), or a computer factory typed only with the
+  library's interface, is unverifiable: the framework calls its methods, and
+  their code can't be seen.
+- A tool without a handler here counts as unverifiable too, unless its type says
+  it runs at the model provider: the AI SDK hands its calls back to your app, a
+  provider tool like `bash_20250124()` runs them in whatever sandbox the call is
+  given, and a library's prebuilt tool runs its own code.
+- A tool whose framework types it as running at the provider reaches nothing
+  here: OpenAI Agents' `HostedTool` (`webSearchTool()`, `fileSearchTool(...)`, a
+  hosted `shellTool({ environment })`) and the AI SDK's `ProviderExecutedTool`
+  (Anthropic's code execution). A type of your own with such a name doesn't count.
 
 Not recognized yet:
 
 - Tools registered through a wrapper of your own.
 - Plain-object tools passed through anything but the call itself or a constant
-  (a function's parameter, say).
+  (a function's parameter, say), including a whole `tools` list or record passed
+  in that way.
 - Tool lists that are only schemas, such as the `tools: [...]` of the Anthropic or
   OpenAI SDK's message calls. Your own code answers the model's calls there,
   wherever it handles them, and PermLang can't link that code to the tool.

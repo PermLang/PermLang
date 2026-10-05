@@ -47,6 +47,7 @@ declare module "@modelcontextprotocol/sdk/types.js" {
   export const CallToolRequestSchema: object;
   export const ListToolsRequestSchema: object;
 }
+declare module "untyped-runner";
 declare module "task-runner" {
   export function tool(definition: { execute: () => unknown }): void;
   export function runAll(options: { tools: Record<string, { execute: () => unknown }> }): void;
@@ -177,6 +178,41 @@ export const madeTool = tool({ name: "made", description: "Built by a call", exe
 export function serveAny(server: Server, schema: object) {
   server.setRequestHandler(schema, async () => execSync("make"));
 }`,
+  // A namespace import of the schemas, and a schema computed at run time, which could be tool calls.
+  schemaForms: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import * as types from "@modelcontextprotocol/sdk/types.js";
+import { execSync } from "node:child_process";
+declare function schemaFor(method: string): object;
+export function serveBroken(server: Server) {
+  // A pull request's code may not compile: this must not stop the check.
+  // @ts-expect-error -- no arguments
+  server.setRequestHandler();
+}
+export function serveAll(server: Server) {
+  server.setRequestHandler(types.CallToolRequestSchema, async () => execSync("make a"));
+  server.setRequestHandler(types.ListToolsRequestSchema, async () => ({ tools: [] }));
+  server.setRequestHandler(schemaFor("tools/call"), async () => execSync("make b"));
+}`,
+  // Handlers and definitions that can't be followed: each could be anything.
+  unfollowable: `import { tool } from "@openai/agents";
+import { run } from "untyped-runner";
+declare const injectedHandler: (input: string) => string;
+declare function pickHandler(): (input: string) => string;
+let reassignable = pickHandler();
+export const fromUntyped = tool({ name: "untyped", description: "From a package with no types", execute: run });
+export const fromGlobal = tool({ name: "global", description: "Off an untyped global", execute: (globalThis as any).runTool });
+export const fromDeclared = tool({ name: "declared", description: "A constant with no value here", execute: injectedHandler });
+export const fromLet = tool({ name: "reassignable", description: "A variable that can change", execute: reassignable });
+// A definition loaded at run time; and one cast to a type of your own named like a hosted tool.
+interface HostedTool { name: string }
+export const loaded = tool(JSON.parse(process.env.TOOL_JSON ?? "{}"));
+export const disguised = tool(JSON.parse("{}") as HostedTool);`,
+  // Constants that refer to each other don't make the check loop.
+  loops: `import { tool } from "@openai/agents";
+const first: any = second;
+const second: any = first;
+export const looped = tool({ name: "looped", description: "Loops", execute: first });
+export const loopedDefinition = tool(first);`,
   // The schema is compared by symbol, so renaming the import doesn't hide the handler.
   renamedSchema: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema as CallTool, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -210,6 +246,8 @@ describe("tools given to AI models", () => {
       "@modelcontextprotocol/sdk *",
       "@modelcontextprotocol/sdk *",
       "@modelcontextprotocol/sdk *",
+      "@modelcontextprotocol/sdk *",
+      "@modelcontextprotocol/sdk *",
       "@modelcontextprotocol/sdk dump_env",
       "@modelcontextprotocol/sdk ping",
       "@modelcontextprotocol/sdk read_file",
@@ -218,14 +256,22 @@ describe("tools given to AI models", () => {
       "@modelcontextprotocol/sdk save_note",
       "@openai/agents browse",
       "@openai/agents cleanup",
+      "@openai/agents declared",
       "@openai/agents deploy",
+      "@openai/agents disguised",
+      "@openai/agents global",
       "@openai/agents held",
       "@openai/agents injected",
+      "@openai/agents loaded",
+      "@openai/agents looped",
+      "@openai/agents loopedDefinition",
       "@openai/agents made",
       "@openai/agents raw",
+      "@openai/agents reassignable",
       "@openai/agents run",
       "@openai/agents spread",
       "@openai/agents tool",
+      "@openai/agents untyped",
       "ai deleteUser",
       "ai tool",
       "ai weather",
@@ -255,6 +301,28 @@ describe("tools given to AI models", () => {
     const report = run();
     const inFile = Object.fromEntries(report.tools.filter((t) => t.file.endsWith("indirect.ts")).map((t) => [t.name, t.reaches.join(", ")]));
     expect(inFile).toEqual({ held: "exec", tool: "unverifiable", spread: "unverifiable", made: "unverifiable", "*": "exec" });
+  });
+
+  it("recognizes CallToolRequestSchema through a namespace import, and a schema it can't identify", () => {
+    const handlers = run().tools.filter((t) => t.file.endsWith("schemaForms.ts"));
+    expect(handlers.map((t) => `${t.name} ${t.line} ${t.reaches.join(",")}`)).toEqual(["* 11 exec", "* 13 exec"]);
+  });
+
+  it("treats a handler or definition it can't follow as unverifiable", () => {
+    const inFile = Object.fromEntries(run().tools.filter((t) => t.file.endsWith("unfollowable.ts")).map((t) => [t.name, t.reaches.join(", ")]));
+    expect(inFile).toEqual({
+      untyped: "unverifiable",
+      global: "unverifiable",
+      declared: "unverifiable",
+      reassignable: "unverifiable",
+      loaded: "unverifiable",
+      disguised: "unverifiable",
+    });
+  });
+
+  it("doesn't loop on constants that refer to each other", () => {
+    const inFile = Object.fromEntries(run().tools.filter((t) => t.file.endsWith("loops.ts")).map((t) => [t.name, t.reaches.join(", ")]));
+    expect(inFile).toEqual({ looped: "unverifiable", loopedDefinition: "unverifiable" });
   });
 
   it("skips a property named like a handler whose value isn't a function", () => {
@@ -299,14 +367,24 @@ describe("tools given to AI models", () => {
       "warning indirect.ts:5 held",
       "warning indirect.ts:7 tool",
       "warning langchain.ts:3 shell",
+      "warning loops.ts:4 looped",
+      "warning loops.ts:5 loopedDefinition",
       "warning lowlevel.ts:5 *",
       "warning mcp.ts:5 save_note",
       "warning mcpSchemaRun.ts:5 run_command",
       "warning mcpSchemaRun.ts:6 read_file",
       "warning mcpSchemaRun.ts:7 dump_env",
       "warning renamedSchema.ts:6 *",
+      "warning schemaForms.ts:11 *",
+      "warning schemaForms.ts:13 *",
       "warning shorthand.ts:6 run",
       "warning shorthand.ts:8 deploy",
+      "warning unfollowable.ts:12 loaded",
+      "warning unfollowable.ts:13 disguised",
+      "warning unfollowable.ts:6 untyped",
+      "warning unfollowable.ts:7 global",
+      "warning unfollowable.ts:8 declared",
+      "warning unfollowable.ts:9 reassignable",
       "warning vercel.ts:4 deleteUser",
     ]);
     const shell = warnings.find((d) => d.capability === "shell")!;
@@ -332,11 +410,11 @@ describe("tools given to AI models", () => {
     expect(run({ strictness: "development", tools: "error" }).diagnostics.filter((d) => d.code === "PERM008").every((d) => d.severity === "error")).toBe(true);
     // "error" is asked for explicitly, so it fails at sketch too; the default stays a warning.
     const atSketch = (tools?: "error") => run({ strictness: "sketch", ...(tools ? { tools } : {}) }).diagnostics.filter((d) => d.code === "PERM008").map((d) => d.severity);
-    expect(atSketch("error")).toEqual(Array(19).fill("error"));
-    expect(atSketch()).toEqual(Array(19).fill("warning"));
+    expect(atSketch("error")).toEqual(Array(29).fill("error"));
+    expect(atSketch()).toEqual(Array(29).fill("warning"));
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
-    expect(run({ tools: "trust" }).tools).toHaveLength(23);
+    expect(run({ tools: "trust" }).tools).toHaveLength(33);
   });
 
   it("counts an MCP client's connection as network access, and a server talking to its client as none", () => {
@@ -427,6 +505,53 @@ import { readFileSync } from "node:fs";
 export const shellTool = FunctionTool.from(({ cmd }: { cmd: string }) => execSync(cmd).toString(), { name: "shell", description: "Run a command" });
 export const readTool = tool(({ path }: { path: string }) => readFileSync(path, "utf8"), { name: "read_file", description: "Read a file" });
 export const configTool = FunctionTool.from({ name: "config", description: "Read the config", parameters: {}, execute: () => readFileSync("./config.json", "utf8") });`,
+    // OpenAI Agents' built-in tools given objects in other ways.
+    agentsMore: `import { applyPatchTool, computerTool, fileSearchTool, shellTool, type Computer } from "@openai/agents";
+import { RemoteEditor, connectDesktop, sandboxShell } from "agent-sandbox";
+import { connect } from "legacy-desktop";
+import { execSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
+async function runCommands(action: { commands: string[] }) {
+  return { output: action.commands.map((c) => execSync(c).toString()) };
+}
+function typeText(text: string) {
+  return Promise.resolve(void writeFileSync("./typed", text));
+}
+// The object's run is a function declared elsewhere.
+export const byReference = shellTool({ shell: { run: runCommands } });
+// A library's objects, or one spread from it: what runs can't be seen.
+export const library = shellTool({ shell: sandboxShell });
+export const spread = shellTool({ shell: { ...sandboxShell } });
+export const libraryEditor = applyPatchTool({ editor: new RemoteEditor() });
+// A computer written inline: its functions run, its settings don't.
+export const browser = computerTool({
+  computer: {
+    environment: "browser",
+    dimensions: [1024, 768],
+    async screenshot() {
+      return execSync("screenshot").toString();
+    },
+    click: async () => void writeFileSync("./clicks", "1"),
+    type: typeText,
+  },
+});
+// Computers built when a run starts: by a provider's create, by a factory typed as the library's
+// interface, or by an untyped one.
+class Kiosk implements Computer {
+  environment = "browser" as const;
+  dimensions: [number, number] = [800, 600];
+  async screenshot() { return ""; }
+  async click() {}
+  async type(text: string) { writeFileSync("./kiosk", text); }
+}
+export const kiosk = computerTool({ computer: { create: () => new Kiosk() } });
+export const remote = computerTool({ computer: async (): Promise<Computer> => connectDesktop() });
+export const legacy = computerTool({ computer: () => connect() });
+// Searches files stored at OpenAI.
+export const files = fileSearchTool("vs_123");`,
+    // A library's prebuilt tool runs code PermLang can't see.
+    prebuilt: `import { Calculator } from "@langchain/community/tools/calculator";
+export const calculator = new Calculator();`,
     // Your own LangChain tool classes: StructuredTool runs _call.
     langchain: `import { DynamicStructuredTool, StructuredTool } from "@langchain/core/tools";
 import { exec } from "node:child_process";
@@ -445,7 +570,43 @@ class NotesTool extends DynamicStructuredTool {
     super({ name: "save_note", description: "Save a note", schema: {}, func: async ({ text }: { text: string }) => writeFileSync("./notes.md", text) });
   }
 }
-export const tools = [new ShellTool(), new NotesTool()];`,
+// A class expression held in a constant.
+const GrepTool = class extends StructuredTool {
+  name = "grep";
+  description = "Search files";
+  schema = {};
+  protected async _call({ pattern }: { pattern: string }) {
+    exec("grep -r " + pattern);
+    return "ok";
+  }
+};
+export const tools = [new ShellTool(), new NotesTool(), new GrepTool()];`,
+    // Tools option forms: spreads, a shorthand, a list, and a record passed in from elsewhere.
+    options: `import { generateText, tool, type ToolSet } from "ai";
+import Anthropic from "@anthropic-ai/sdk";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+const shared = { lookup: { description: "Look up a file", inputSchema: {}, execute: async ({ path }: { path: string }) => readFileSync(path, "utf8") } };
+export async function withSpread(prompt: string) {
+  const tools = { ...shared, now: tool({ description: "The time", inputSchema: {}, execute: async () => Date.now() }) };
+  return generateText({ prompt, tools });
+}
+export async function passedIn(prompt: string, tools: ToolSet) {
+  return generateText({ prompt, tools });
+}
+const RUN_NAME = "run_script";
+export async function runner(client: Anthropic, script: string) {
+  return client.beta.messages.toolRunner({
+    tools: [
+      { name: RUN_NAME, input_schema: {}, run: async () => execSync(script).toString() },
+      { name: \`check_\${script}\`, input_schema: {}, run: async () => "ok" },
+    ],
+  });
+}
+// Records spread into each other.
+const left: any = { ...right };
+const right: any = { ...left };
+export const looping = generateText({ prompt: "hi", tools: left });`,
   };
   const check = (options: CheckOptions = {}) => checkTsConfig(path.join(project, "tsconfig.json"), { strictness: "sketch", ...options });
   const reaches = (report: Report, file: string) =>
@@ -454,6 +615,31 @@ export const tools = [new ShellTool(), new NotesTool()];`,
   beforeAll(() => {
     project = mkdtempSync(path.join(tmpdir(), "permlang-tools-published-"));
     for (const [file, text] of Object.entries(publishedPackages)) {
+      mkdirSync(path.dirname(path.join(project, "node_modules", file)), { recursive: true });
+      writeFileSync(path.join(project, "node_modules", file), text);
+    }
+    // Packages of the app's own choosing: a sandbox library, and one with no types.
+    const extra: Record<string, string> = {
+      "agent-sandbox/package.json": JSON.stringify({ name: "agent-sandbox", version: "1.0.0", types: "./index.d.ts" }),
+      "agent-sandbox/index.d.ts": `import type { Computer, Editor, Shell } from "@openai/agents";
+export declare const sandboxShell: Shell;
+export declare class RemoteEditor implements Editor {
+  createFile(path: string, diff: string): Promise<void>;
+  updateFile(path: string, diff: string): Promise<void>;
+  deleteFile(path: string): Promise<void>;
+}
+export declare function connectDesktop(): Promise<Computer>;
+`,
+      "legacy-desktop/package.json": JSON.stringify({ name: "legacy-desktop", version: "1.0.0", main: "./index.js" }),
+      "legacy-desktop/index.js": "exports.connect = () => ({});\n",
+      "@anthropic-ai/sdk/package.json": JSON.stringify({ name: "@anthropic-ai/sdk", version: "0.0.0-test", types: "./index.d.ts" }),
+      "@anthropic-ai/sdk/index.d.ts": `type RunnableTool = { name: string; input_schema: object; run: (input: any) => unknown };
+export default class Anthropic {
+  beta: { messages: { toolRunner(options: { tools: RunnableTool[] }): Promise<unknown> } };
+}
+`,
+    };
+    for (const [file, text] of Object.entries(extra)) {
       mkdirSync(path.dirname(path.join(project, "node_modules", file)), { recursive: true });
       writeFileSync(path.join(project, "node_modules", file), text);
     }
@@ -501,7 +687,30 @@ export const tools = [new ShellTool(), new NotesTool()];`,
   });
 
   it("follows your own LangChain tool classes to what they run", () => {
-    expect(reaches(check(), "langchain")).toEqual({ shell: "exec", save_note: "fs.write(./notes.md)" });
+    // Named by their name field, else by the class.
+    expect(reaches(check(), "langchain")).toEqual({ shell: "exec", NotesTool: "fs.write(./notes.md)", grep: "exec" });
+  });
+
+  it("treats a library's prebuilt tool class as unverifiable", () => {
+    expect(reaches(check(), "prebuilt")).toEqual({ calculator: "unverifiable" });
+  });
+
+  it("follows built-in tools' objects and factories, and can't see into a library's", () => {
+    expect(reaches(check(), "agentsMore")).toEqual({
+      byReference: "exec",
+      library: "unverifiable",
+      spread: "unverifiable",
+      libraryEditor: "unverifiable",
+      browser: "exec, fs.write(./clicks), fs.write(./typed)",
+      kiosk: "fs.write(./kiosk)",
+      remote: "unverifiable",
+      legacy: "unverifiable",
+      files: "nothing",
+    });
+  });
+
+  it("finds tools in tools options written with spreads and lists, and not ones passed in", () => {
+    expect(reaches(check(), "options")).toEqual({ lookup: "fs.read", now: "nothing", run_script: "exec", tool: "nothing" });
   });
 
   it("warns only about the ones a model shouldn't trigger unchecked", () => {
@@ -511,13 +720,25 @@ export const tools = [new ShellTool(), new NotesTool()];`,
       "agents.ts localShell",
       "agents.ts patcher",
       "agents.ts shell",
-      "langchain.ts save_note",
+      "agentsMore.ts browser",
+      "agentsMore.ts byReference",
+      "agentsMore.ts kiosk",
+      "agentsMore.ts legacy",
+      "agentsMore.ts library",
+      "agentsMore.ts libraryEditor",
+      "agentsMore.ts remote",
+      "agentsMore.ts spread",
+      "langchain.ts NotesTool",
+      "langchain.ts grep",
       "langchain.ts shell",
       "llama.ts read_file",
       "llama.ts shell",
       "mcpv2.ts *",
       "mcpv2.ts run",
+      "options.ts lookup",
+      "options.ts run_script",
       "plain.ts shell",
+      "prebuilt.ts calculator",
       "provider.ts bash",
       "provider.ts sandboxBash",
     ]);

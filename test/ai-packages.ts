@@ -78,10 +78,11 @@ export declare function applyPatchTool(options: { name?: string; editor: Editor 
 export declare function tool(options: ToolOptions): FunctionTool;
 `,
   "@openai/agents-openai/package.json": pkg("@openai/agents-openai", "./dist/index.d.ts"),
-  "@openai/agents-openai/dist/index.d.ts": `export { webSearchTool } from './tools';
+  "@openai/agents-openai/dist/index.d.ts": `export { fileSearchTool, webSearchTool } from './tools';
 `,
   "@openai/agents-openai/dist/tools.d.ts": `import { HostedTool } from '@openai/agents-core';
 export declare function webSearchTool(options?: { searchContextSize?: 'low' | 'medium' | 'high' }): HostedTool;
+export declare function fileSearchTool(vectorStoreIds: string | string[], options?: { maxNumResults?: number }): HostedTool;
 `,
 
   // --- MCP SDK version 2: the server package's index re-exports minified names from a chunk.
@@ -177,6 +178,17 @@ declare class FunctionTool<T, R extends JSONValue | Promise<JSONValue>> {
 declare const tool: typeof FunctionTool.from;
 
 export { FunctionTool, tool };
+`,
+
+  // --- LangChain community's prebuilt tools: a library's class, whose code can't be seen.
+  "@langchain/community/package.json": JSON.stringify({ name: "@langchain/community", version: "0.0.0-test", exports: { "./tools/calculator": { import: { types: "./tools/calculator.d.ts" }, require: { types: "./tools/calculator.d.ts" } } } }),
+  "@langchain/community/tools/calculator.d.ts": `import { Tool } from "@langchain/core/tools";
+export declare class Calculator extends Tool {
+  name: string;
+  description: string;
+  constructor();
+  protected _call(input: string): Promise<string>;
+}
 `,
 
   // --- LangChain: the tools entry point re-exports dist/tools; StructuredTool runs \`_call\`.
