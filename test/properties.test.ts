@@ -84,7 +84,10 @@ describe("output for GitHub", () => {
           expect(rules[r.ruleIndex]!.id).toBe(r.ruleId);
           expect(typeof rules[r.ruleIndex]!.shortDescription.text).toBe("string");
           const { artifactLocation, region } = r.locations[0].physicalLocation;
-          expect([artifactLocation.uri, region.startLine, region.startColumn]).toEqual([file, d.line, d.column]);
+          // A URI: only unreserved characters and `/` stay as they are; each segment decodes back.
+          expect(artifactLocation.uri).toMatch(/^[\w.~%!*'()/-]*$/);
+          const decoded = (artifactLocation.uri as string).split("/").map(decodeURIComponent).join("/");
+          expect([decoded, region.startLine, region.startColumn]).toEqual([file, d.line, d.column]);
         });
       }),
     );

@@ -379,7 +379,7 @@ describe("permlang check --sarif", () => {
     };
     const [result] = sarif.runs[0]!.results;
     expect(result!.ruleId).toBe("PERM003");
-    expect(result!.locations[0]!.physicalLocation.artifactLocation.uri).toBe("my lib/app.ts");
+    expect(result!.locations[0]!.physicalLocation.artifactLocation.uri).toBe("my%20lib/app.ts");
     expect(result!.locations[0]!.physicalLocation.region.startLine).toBe(2);
   });
 });
