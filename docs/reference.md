@@ -198,6 +198,12 @@ Other gaps, not yet in fixtures:
   reported as `LEADS`.
 - A mysql2 value typed `any` that has a `toSqlString()` method: mysql2 pastes its
   text into the query, but nothing in its type shows that.
+- A Drizzle `` sql`...` `` fragment's tables are charged to the code where the
+  fragment is written. One kept in a shared constant counts toward its module's
+  top-level code (and so toward every importer), not toward each query that uses it.
+- Prisma relations are read from the payload types that Prisma 5 and later
+  generate. With an older client, any `include`, `select`, or nested argument that
+  could name a relation needs bare `db.read` (and `db.write` in `data`).
 
 ## Configuration
 
