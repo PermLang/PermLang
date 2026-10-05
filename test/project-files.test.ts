@@ -491,6 +491,23 @@ describe("which files are read", () => {
     });
   });
 
+  it("reads each file once, even through a folder link that loops back", (ctx) => {
+    const root = repo({
+      ".github/actions/a/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: evil/x@main\n",
+      "package.json": JSON.stringify({ workspaces: ["packages/**"] }),
+      "packages/p/package.json": JSON.stringify({ scripts: { postinstall: "node p.js" } }),
+    });
+    try {
+      // A junction on Windows needs no special permission.
+      const type = process.platform === "win32" ? "junction" : "dir";
+      symlinkSync(path.join(root, ".github", "actions"), path.join(root, ".github", "actions", "a", "loop"), type);
+      symlinkSync(path.join(root, "packages"), path.join(root, "packages", "p", "loop"), type);
+    } catch {
+      ctx.skip();
+    }
+    expect(Object.keys(inventory(root))).toEqual([".github/actions/a/action.yml", "packages/p/package.json"]);
+  });
+
   it("strips a byte-order mark, as npm and GitHub do", () => {
     const root = repo({
       "package.json": `\uFEFF${JSON.stringify({ name: "x", scripts: { postinstall: "node evil.js" } })}`,

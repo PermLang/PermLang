@@ -25,7 +25,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { lstatSync, readdirSync, readFileSync, readlinkSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, type Dirent } from "node:fs";
 import path from "node:path";
 import type { FunctionReport } from "./check.js";
 import { MANIFESTS, readManifest, readPnpmWorkspace, workspaceFolders } from "./package-files.js";
@@ -175,29 +175,37 @@ class Entry implements Sink {
 
 /**
  * Files in `dir` whose names match, sorted. A link that leads nowhere is included, to be
- * recorded as unverifiable rather than skipped. A folder that isn't there has no files;
- * one that can't be listed stops the check.
+ * recorded as unverifiable rather than skipped. Recursive listings follow folder links,
+ * as a runner does, but visit each folder once, so a link that loops back ends. A folder
+ * that isn't there has no files; one that can't be listed stops the check.
  */
-function listFiles(dir: string, recursive: boolean, match: RegExp): string[] {
-  let names: string[];
+function listFiles(dir: string, recursive: boolean, match: RegExp, seen = new Set<string>()): string[] {
+  let entries: Dirent[];
   try {
     if (!statSync(dir).isDirectory()) return [];
-    names = readdirSync(dir, { recursive, encoding: "utf8" });
+    const real = realpathSync(dir);
+    if (seen.has(real)) return [];
+    seen.add(real);
+    entries = readdirSync(dir, { withFileTypes: true });
   } catch (e) {
     if (["ENOENT", "ENOTDIR"].includes((e as NodeJS.ErrnoException).code ?? "")) return [];
     throw e;
   }
-  return names
-    .filter((name) => match.test(path.basename(name)))
-    .map((name) => path.join(dir, name))
-    .filter((file) => {
-      try {
-        return statSync(file).isFile();
-      } catch {
-        return true;
-      }
-    })
-    .sort();
+  const out: string[] = [];
+  for (const entry of entries) {
+    const file = path.join(dir, entry.name);
+    if (match.test(entry.name) && isFileOrBroken(file)) out.push(file);
+    else if (recursive && (entry.isDirectory() || entry.isSymbolicLink())) out.push(...listFiles(file, true, match, seen));
+  }
+  return out.sort();
+}
+
+function isFileOrBroken(file: string): boolean {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return true;
+  }
 }
 
 /** Whether there's anything at `file`, a link that leads nowhere included. */
