@@ -327,7 +327,7 @@ function propertyUse(property: MorphSymbol, access: Node, adapters: AdapterIndex
   const args = call ? argumentsOf(call) : [];
   if (Node.isNewExpression(call)) return use(constructorCapabilities(property.getTypeAtLocation(access), adapters, args));
   for (const declaration of resolveAlias(property).getDeclarations()) {
-    const found = use(capabilitiesOf(declaration, args, adapters, call));
+    const found = use(capabilitiesOf(declaration, args, adapters, call ? "called" : "value", call));
     if (found) return found;
   }
   // `(process as any).getBuiltinModule("child_process")` returns the module typed `any`.

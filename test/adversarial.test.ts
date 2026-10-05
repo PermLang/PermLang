@@ -112,6 +112,7 @@ const caught: Record<string, string> = {
   h05_shared_worker: "export function t(u: string) { return new SharedWorker(u); }",
   h06_webtransport: "export function t() { return new WebTransport(\"https://evil.example/x\"); }",
   h07_settimeout_call_string: "export function t() { setTimeout.call(null, \"fetch('https://evil.example/x')\", 0); }",
+  h08_settimeout_apply_list: "export function t(args: [string, number]) { setTimeout.apply(null, args); }",
   // Capability modules reaching `any` in ways other than a namespace import (the 0.3 review).
   i01_import_equals_cast: "import cp = require(\"child_process\");\nexport function t() { return (cp as any).exec(\"id\"); }",
   i02_import_equals_stored: "import cp = require(\"child_process\");\nexport function t() { const m: any = cp; return m.exec(\"id\"); }",
@@ -161,6 +162,7 @@ const silent: Record<string, string> = {
   fp18_class_constant: "export function t() { return WebSocket.OPEN + XMLHttpRequest.DONE; }",
   fp19_timer_callbacks: "import { promisify } from \"node:util\";\nexport const sleep = promisify(setTimeout);\nexport function t() { window.setTimeout(() => {}, 10); setTimeout.call(null, () => {}, 0); }",
   fp20_web_classes: "export function t() { return new Headers({ a: \"b\" }).get(\"a\") ?? new URL(\"/x\", \"https://good.example\").href; }",
+  fp28_timer_apply_callback: "export function t() { setTimeout.apply(null, [() => {}, 10]); }",
   fp21_comparison: "export function t(f: unknown) { return f === fetch || f !== WebSocket; }",
   // A barrel re-exporting a capability module touches nothing by itself (i05 casts it).
   fp22_barrel: "export * from \"node:child_process\";",

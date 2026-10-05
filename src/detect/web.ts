@@ -29,6 +29,12 @@ const TIMERS = new Set(["setTimeout", "setInterval", "setImmediate"]);
 
 const unverifiable: Capability = { name: UNVERIFIABLE };
 
+/**
+ * How a function is reached: called with arguments as written, called with arguments that
+ * can't be read (`fn.apply(thisArg, list)`), or used as a value (called later, with anything).
+ */
+export type Reach = "called" | "called with unknown arguments" | "value";
+
 /** `declaration` is the resolved signature of `call`, if any. */
 export function webCapabilities(call: CallLike, declaration: Node | undefined): Capability[] {
   const args = argumentsOf(call);
@@ -38,14 +44,11 @@ export function webCapabilities(call: CallLike, declaration: Node | undefined): 
     if (stream) return fsCapabilities(stream.name, stream.direct ? args : []);
     if (!declaration && constructsGlobal(call.getExpression())) return [net(args[0])];
   }
-  return declaration ? platformCapabilities(declaration, args, true) : [];
+  return declaration ? platformCapabilities(declaration, args, "called") : [];
 }
 
-/**
- * What calling a platform API that needs code touches; [] if `declaration` isn't one.
- * `called` is false for a function used as a value, whose arguments are unknown.
- */
-export function platformCapabilities(declaration: Node, args: readonly Node[], called: boolean): Capability[] {
+/** What reaching a platform API that needs code touches; [] if `declaration` isn't one. */
+export function platformCapabilities(declaration: Node, args: readonly Node[], reach: Reach): Capability[] {
   const source = platformSource(declaration);
   if (!source) return [];
   const constructed = constructedClass(declaration);
@@ -58,20 +61,22 @@ export function platformCapabilities(declaration: Node, args: readonly Node[], c
   if (isGlobalLibFunction(declaration, "importScripts")) return [unverifiable];
   const name = "getName" in declaration ? (declaration as { getName(): string | undefined }).getName() : undefined;
   if (name === undefined) return [];
-  if (called && TIMERS.has(name) && isTimer(declaration) && evaluatesString(args[0])) return [unverifiable];
+  // A timer used as a value is harmless (`promisify(setTimeout)`); called with a string, it runs it.
+  const evaluates = reach === "called with unknown arguments" || (reach === "called" && evaluatesString(args[0]));
+  if (evaluates && TIMERS.has(name) && isTimer(declaration)) return [unverifiable];
   const container = containerName(declaration);
   if (name === "sendBeacon" && container === "Navigator") return [net(args[0])];
   if (name === "open" && container === "XMLHttpRequest") return [net(args[1])];
-  if (container === "Process") return processCapabilities(name, args, called);
+  if (container === "Process") return processCapabilities(name, args, reach);
   return [];
 }
 
 /**
- * What calling `declaration` with `args` touches: a platform API matched here, or whatever
- * functions.ts finds. `call` is the call itself, when there is one.
+ * What reaching `declaration` with `args` touches: a platform API matched here, or whatever
+ * functions.ts finds. `call` is the call itself, when it's a plain call of the function.
  */
-export function capabilitiesOf(declaration: Node, args: readonly Node[], adapters: AdapterIndex, call?: CallLike): Capability[] {
-  const platform = platformCapabilities(declaration, args, call !== undefined);
+export function capabilitiesOf(declaration: Node, args: readonly Node[], adapters: AdapterIndex, reach: Reach = "value", call?: CallLike): Capability[] {
+  const platform = platformCapabilities(declaration, args, reach);
   return platform.length > 0 ? platform : declarationCapabilities(declaration, args, adapters, call);
 }
 
@@ -82,7 +87,7 @@ export function capabilitiesOf(declaration: Node, args: readonly Node[], adapter
 export function constructorCapabilities(type: Type, adapters: AdapterIndex, args: readonly Node[] = []): Capability[] {
   for (const signature of type.getConstructSignatures()) {
     const declaration = signature.getDeclaration();
-    const capabilities = declaration ? capabilitiesOf(declaration, args, adapters) : [];
+    const capabilities = declaration ? capabilitiesOf(declaration, args, adapters, args.length > 0 ? "called" : "value") : [];
     if (capabilities.length > 0) return capabilities;
     const stream = fsStreamClass(signature.getReturnType());
     if (stream) return fsCapabilities(stream.name, stream.direct ? args : []);
@@ -90,11 +95,11 @@ export function constructorCapabilities(type: Type, adapters: AdapterIndex, args
   return [];
 }
 
-function processCapabilities(name: string, args: readonly Node[], called: boolean): Capability[] {
+function processCapabilities(name: string, args: readonly Node[], reach: Reach): Capability[] {
   // A literal name is like importing the module: what's called on the result is checked.
   if (name === "getBuiltinModule") return literalString(args[0]) === undefined ? [unverifiable] : [];
   if (name === "loadEnvFile") {
-    const path = called ? (args.length === 0 ? "./.env" : literalString(args[0])) : undefined;
+    const path = reach === "called" ? (args.length === 0 ? "./.env" : literalString(args[0])) : undefined;
     return [path === undefined ? { name: "fs.read", dynamic: true } : { name: "fs.read", arg: path }, { name: "env" }];
   }
   return [];

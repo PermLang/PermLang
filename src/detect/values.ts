@@ -15,7 +15,7 @@ import { Node, SyntaxKind, type Identifier, type SourceFile, type Symbol as Morp
 import type { AdapterIndex } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { callText, resolveAlias, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
-import { capabilitiesOf, constructorCapabilities } from "./web.js";
+import { capabilitiesOf, constructorCapabilities, type Reach } from "./web.js";
 
 export interface ValueUse {
   node: Node;
@@ -62,7 +62,7 @@ function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, invoked: 
     const held = aliasedSymbol(declaration);
     const capabilities = held
       ? heldCapabilities(held, adapters, invoked, depth + 1)
-      : capabilitiesOf(declaration, invoked?.args ?? [], adapters, invoked?.call);
+      : capabilitiesOf(declaration, invoked?.args ?? [], adapters, invoked?.reach ?? "value");
     if (capabilities && capabilities.length > 0) return capabilities;
   }
   return undefined;
@@ -84,6 +84,7 @@ function aliasedSymbol(declaration: Node): MorphSymbol | undefined {
 interface Invocation {
   call: CallLike;
   args: Node[];
+  reach: Reach;
 }
 
 /** `fn.call(thisArg, ...args)` or `fn.apply(thisArg, [...args])`: a call of `fn` with known arguments. */
@@ -93,11 +94,11 @@ function invocation(site: Node): Invocation | undefined {
   const call = access.getParent();
   if (!Node.isCallExpression(call) || call.getExpression() !== access) return undefined;
   const [, ...rest] = call.getArguments();
-  if (access.getName() === "call") return { call, args: rest };
+  if (access.getName() === "call") return { call, args: rest, reach: "called" };
   if (access.getName() !== "apply") return undefined;
   const list = rest[0] && unwrapExpression(rest[0]);
   const known = list && Node.isArrayLiteralExpression(list) && !list.getElements().some((e) => Node.isSpreadElement(e));
-  return { call, args: known ? list.getElements() : [] };
+  return known ? { call, args: list.getElements(), reach: "called" } : { call, args: [], reach: "called with unknown arguments" };
 }
 
 /** The expression an identifier is a value reference through (`fetch`, or `axios.get` for its `get`), if any. */
