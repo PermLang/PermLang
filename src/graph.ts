@@ -63,13 +63,17 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
   };
 
   // References.
-  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+  for (const id of descendantsOfKind(sourceFile, SyntaxKind.Identifier)) {
     const symbol = referencedSymbol(id);
     if (!symbol) continue;
     const site = referenceSite(id);
     const text = Node.isCallExpression(site) || Node.isNewExpression(site) ? callText(site) : site.getText();
+    const resolved = resolveAlias(symbol);
     // All of the symbol's units: `b.value = 2` runs the setter, not the getter that shares its name.
-    for (const target of unitNodesForSymbol(resolveAlias(symbol))) add(id, target, site, text);
+    for (const target of unitNodesForSymbol(resolved)) add(id, target, site, text);
+    // A member read through an interface or base class (`s.url`, `urls.map(s.send)`,
+    // `s.send.call(...)`) may be any implementation's.
+    for (const d of resolved.getDeclarations()) for (const impl of ctx.hierarchy.implementations(d)) add(id, impl, site, text);
   }
 
   // Property reads that run getters without an `a.b`: `const { g } = b`, `b["g"]`.

