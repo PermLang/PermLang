@@ -4,6 +4,7 @@ import {
   Node,
   type CallExpression,
   type NewExpression,
+  type ObjectLiteralExpression,
   type Symbol as MorphSymbol,
   type TaggedTemplateExpression,
 } from "ts-morph";
@@ -38,7 +39,8 @@ export function callText(call: CallLike): string {
 
 /**
  * A string argument's value when it is known statically: a literal, a `const`
- * holding one, a string enum member, or a property of an `as const` object.
+ * holding one (also as a `{ name }` shorthand), a string enum member, or a
+ * property of an `as const` object.
  * Undefined when it is computed.
  *
  * The value is traced, never taken from the type: the checker doesn't require
@@ -48,9 +50,11 @@ export function callText(call: CallLike): string {
 export function literalString(arg: Node | undefined, depth = 0): string | undefined {
   if (!arg || depth > 8) return undefined;
   if (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg)) return arg.getLiteralValue();
-  if (!Node.isIdentifier(arg) && !Node.isPropertyAccessExpression(arg)) return undefined;
+  if (!Node.isIdentifier(arg) && !Node.isPropertyAccessExpression(arg) && !Node.isShorthandPropertyAssignment(arg)) return undefined;
 
-  const symbol = (Node.isPropertyAccessExpression(arg) ? arg.getNameNode() : arg).getSymbol();
+  const symbol = Node.isShorthandPropertyAssignment(arg)
+    ? arg.getValueSymbol()
+    : (Node.isPropertyAccessExpression(arg) ? arg.getNameNode() : arg).getSymbol();
   const declaration = symbol && resolveAlias(symbol).getDeclarations()[0];
   if (!declaration) return undefined;
   if (Node.isEnumMember(declaration)) return literalString(declaration.getInitializer(), depth + 1);
@@ -79,6 +83,36 @@ function inConstObject(property: Node): boolean {
     node = parent && Node.isPropertyAssignment(parent) ? parent.getParent() : undefined;
   }
   return false;
+}
+
+/**
+ * How an object literal sets property `name`: the node that holds its value (an initializer,
+ * or a `{ name }` shorthand), "absent" when the literal doesn't set it, or "unknown" when it
+ * may set it in a way that can't be read. Later properties win, so a spread, a computed key,
+ * or an accessor after the last plain `name: value` makes it unknown.
+ */
+export function propertyValue(object: ObjectLiteralExpression, name: string): Node | "absent" | "unknown" {
+  const properties = object.getProperties();
+  for (let i = properties.length - 1; i >= 0; i--) {
+    const p = properties[i]!;
+    if (Node.isSpreadAssignment(p)) return "unknown";
+    const key = propertyKey(p.getNameNode());
+    if (key === undefined) return "unknown";
+    if (key !== name) continue;
+    if (Node.isPropertyAssignment(p)) return p.getInitializer() ?? "unknown";
+    if (Node.isShorthandPropertyAssignment(p)) return p;
+    return "unknown"; // a getter, setter, or method
+  }
+  return "absent";
+}
+
+/** A property name as written (`a`, `"a"`, `1`, `["a"]`), or undefined for a computed key that can't be known. */
+function propertyKey(name: Node): string | undefined {
+  if (Node.isIdentifier(name) || Node.isPrivateIdentifier(name)) return name.getText();
+  if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralValue();
+  if (Node.isNumericLiteral(name)) return String(name.getLiteralValue());
+  if (Node.isComputedPropertyName(name)) return literalString(name.getExpression());
+  return undefined;
 }
 
 // Several passes resolve the same calls; signature resolution is the expensive part.
@@ -112,6 +146,21 @@ export function isGlobalLibFunction(declaration: Node, name: string): boolean {
     if (Node.isStringLiteral(a.getNameNode())) return false;
   }
   return true;
+}
+
+/** A string argument, which setTimeout and friends evaluate as code, even when a cast hides it from the type checker. */
+export function evaluatesString(arg: Node | undefined): boolean {
+  if (!arg) return false;
+  const inner = unwrapExpression(arg);
+  const type = inner.getType();
+  return (
+    Node.isStringLiteral(inner) ||
+    Node.isNoSubstitutionTemplateLiteral(inner) ||
+    Node.isTemplateExpression(inner) ||
+    type.isString() ||
+    type.isStringLiteral() ||
+    type.isTemplateLiteral()
+  );
 }
 
 /** Strips parentheses, `as`, `!`, and `satisfies` to reach the expression underneath. */
