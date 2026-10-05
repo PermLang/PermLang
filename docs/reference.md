@@ -210,7 +210,8 @@ Other gaps, not yet in fixtures:
   listed in every report and warned about (PERM006; see below).
 - A `ProcessEnv` received as a parameter typed as a plain object.
 - The browser loading a resource for the page (an image's `src`, a script or
-  stylesheet element, a CSS `url()`), which reaches the network without a
+  stylesheet element, a CSS `url()`) or leaving it (`location.href = url`,
+  `window.open(url)`, a form submission), which reaches the network without a
   network API call.
 - Calling a method on an object Node's built-ins return isn't new access:
   `socket.write()` after `net.connect()`, `child.kill()` after `spawn()`. The

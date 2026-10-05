@@ -321,7 +321,7 @@ function propertyUse(property: MorphSymbol, access: Node, adapters: AdapterIndex
   const call = (Node.isCallExpression(parent) || Node.isNewExpression(parent)) && parent.getExpression() === access ? parent : undefined;
   const use = (capabilities: Capability[]): EscapeUse | undefined => {
     if (capabilities.length === 0) return undefined;
-    const text = call ? callText(call) : `${access.getText().replace(/s+/g, " ")} as a value`;
+    const text = call ? callText(call) : `${access.getText().replace(/\s+/g, " ")} as a value`;
     return { node: call ?? access, uses: capabilities.map((capability) => ({ capability, call: text, verb: call ? "calls" : "uses" })) };
   };
   const args = call ? argumentsOf(call) : [];
