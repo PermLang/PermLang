@@ -116,14 +116,14 @@ export interface Report {
     line: number;
     /** The name with what it's declared in: `Reports.build` for a function in `namespace Reports`. */
     qualified: string;
+    /**
+     * Why some of what it runs can't be seen: imports whose types can't be found, names with no
+     * declaration. Worked out on demand (it needs TypeScript's full diagnostics), for `permlang spec`.
+     */
+    unseen: () => string[];
   }[];
   /** Functions registered as tools an AI model can call. */
   tools: ToolReport[];
-  /**
-   * Why some of what a unit runs can't be seen: imports whose types can't be found, names with no
-   * declaration. Worked out on demand (it needs TypeScript's full diagnostics), for `permlang spec`.
-   */
-  unseen?: (unit: { file: string; name: string; line: number }) => string[];
 }
 
 /**
@@ -333,12 +333,14 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     unsafe,
     unmapped,
     unresolved: unresolved.map((u) => u.specifier).sort(),
-    units: [...units.values()].map((u) => ({ file: u.file, name: u.name, line: u.line, qualified: qualifiedName(u, units) })),
+    units: [...units.values()].map((u) => ({
+      file: u.file,
+      name: u.name,
+      line: u.line,
+      qualified: qualifiedName(u, units),
+      unseen: () => unseenFrom(u, edgesFrom, (node) => units.get(node)),
+    })),
     tools,
-  };
-  report.unseen = (target) => {
-    const unit = [...units.values()].find((u) => u.file === target.file && u.name === target.name && u.line === target.line);
-    return unit ? unseenFrom(unit, edgesFrom, (node) => units.get(node)) : [];
   };
   if (options.lock) {
     const root = path.dirname(options.lock.file);

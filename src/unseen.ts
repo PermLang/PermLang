@@ -6,7 +6,7 @@
 
 import { Node, SyntaxKind, type SourceFile } from "ts-morph";
 import type { Edge } from "./graph.js";
-import { unresolvedImports } from "./unmapped.js";
+import { moduleReferences, unresolvedImports } from "./unmapped.js";
 import { enclosingUnitNode, type Unit } from "./units.js";
 
 /** TypeScript's "Cannot find name" diagnostics, including the ones that suggest installing types. */
@@ -42,13 +42,11 @@ function unseenIn(sourceFile: SourceFile): { node: Node; reason: string }[] {
   const specifiers = new Set(unresolvedImports([sourceFile]).map((u) => u.specifier));
   const reasonFor = (specifier: string) => `it calls into ${specifier}, whose types can't be found`;
   const bound = new Map<unknown, string>();
-  for (const { node, specifier } of moduleReferences(sourceFile)) {
+  for (const { node, specifierNode } of moduleReferences(sourceFile)) {
+    const specifier = specifierNode.getLiteralValue();
     if (!specifiers.has(specifier)) continue;
     if (Node.isCallExpression(node)) out.push({ node, reason: reasonFor(specifier) });
-    for (const name of boundNames(node)) {
-      const symbol = name.getSymbol();
-      if (symbol) bound.set(symbol.compilerSymbol, reasonFor(specifier));
-    }
+    for (const name of boundNames(node)) bound.set(name.getSymbolOrThrow().compilerSymbol, reasonFor(specifier));
   }
   if (bound.size > 0) {
     for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
@@ -60,25 +58,10 @@ function unseenIn(sourceFile: SourceFile): { node: Node; reason: string }[] {
   for (const d of sourceFile.getProject().getProgram().getSemanticDiagnostics(sourceFile)) {
     const start = d.getStart();
     if (!MISSING_NAME.has(d.getCode()) || start === undefined) continue;
-    const node = sourceFile.getDescendantAtPos(start);
-    if (node) out.push({ node, reason: `it uses ${node.getText()}, which has no declaration` });
+    // These diagnostics are on the name itself.
+    const node = sourceFile.getDescendantAtPos(start)!;
+    out.push({ node, reason: `it uses ${node.getText()}, which has no declaration` });
   }
-  return out;
-}
-
-/** Every import, `import x = require()`, and literal `import()` in a file, with its specifier. */
-function moduleReferences(sourceFile: SourceFile): { node: Node; specifier: string }[] {
-  const out: { node: Node; specifier: string }[] = sourceFile.getImportDeclarations().map((node) => ({ node, specifier: node.getModuleSpecifierValue() }));
-  sourceFile.forEachDescendant((node) => {
-    if (Node.isImportEqualsDeclaration(node)) {
-      const reference = node.getModuleReference();
-      const expression = Node.isExternalModuleReference(reference) ? reference.getExpression() : undefined;
-      if (expression && Node.isStringLiteral(expression)) out.push({ node, specifier: expression.getLiteralValue() });
-    } else if (Node.isCallExpression(node) && node.getExpression().getKind() === SyntaxKind.ImportKeyword) {
-      const [argument] = node.getArguments();
-      if (argument && (Node.isStringLiteral(argument) || Node.isNoSubstitutionTemplateLiteral(argument))) out.push({ node, specifier: argument.getLiteralValue() });
-    }
-  });
   return out;
 }
 

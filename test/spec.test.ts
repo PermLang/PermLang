@@ -110,6 +110,7 @@ describe("specs that can't be checked as written", () => {
         "perm build: src/reports.ts#build matches 2 functions: Reports.build (line 5), Admin.build (line 11), so it's not clear which one implements the spec.",
       );
       expect(result.diagnostics[0]!.fix).toBe("write the qualified name, such as implements: src/reports.ts#Reports.build.");
+      expect(formatSpecResults([result], dir)).toContain("perms     implementation is ambiguous: write its qualified name");
     });
 
     it("checks the one a qualified name picks", () => {

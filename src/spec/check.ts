@@ -16,7 +16,8 @@ export interface SpecResult {
   spec: Spec;
   implementation?: FunctionReport | { file: string; name: string; actual: string[]; via: Record<string, string[]> };
   status: "perms ok" | "perms exceeded" | "unchecked" | "not found" | "ambiguous";
-  diagnostics: Diagnostic[];
+  /** Every spec diagnostic says how to fix it. */
+  diagnostics: (Diagnostic & { fix: string })[];
   must: { count: number; verified: false };
   examples: { count: number; run: false };
 }
@@ -56,10 +57,10 @@ export function checkSpecs(specs: readonly Spec[], report: Report): SpecResult[]
     }
     // One name, possibly a getter and a setter of the same property: they're checked together.
     const implementation = combined(matches, report);
-    const unseen = [...new Set(matches.flatMap((u) => report.unseen?.(u) ?? []))].sort();
+    const unseen = [...new Set(matches.flatMap((u) => u.unseen()))].sort();
 
     const actual = implementation.actual.map(parseCapability);
-    const diagnostics: Diagnostic[] = [];
+    const diagnostics: SpecResult["diagnostics"] = [];
     for (const [i, capability] of actual.entries()) {
       if (covers(spec.perms, capability)) continue;
       const key = implementation.actual[i]!;
@@ -142,7 +143,7 @@ export function formatSpecResults(results: readonly SpecResult[], cwd = process.
     ];
     for (const d of r.diagnostics) {
       lines.push(`  ${path.relative(cwd, d.file).replaceAll("\\", "/")}:${d.line} ${d.severity} ${d.code}: ${d.message}`);
-      if (d.fix) lines.push(`    -> ${d.fix}`);
+      lines.push(`    -> ${d.fix}`);
     }
     return lines.join("\n");
   });
