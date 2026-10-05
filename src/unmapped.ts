@@ -109,6 +109,7 @@ const NODE_PROCESS = "node:process";
  * by name; see detect/env.ts.) Found in the 0.3 review.
  */
 function unresolvedProcess(sourceFile: SourceFile): Node | undefined {
+  if (!sourceFile.getFullText().includes("process")) return undefined;
   for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
     if (id.getText() !== "process" || id.getSymbol() !== undefined) continue;
     const parent = id.getParent();

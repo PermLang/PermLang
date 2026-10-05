@@ -26,7 +26,7 @@
 // Also here: process.binding() and process._linkedBinding(), internal APIs the
 // types don't declare, which reach Node's native internals (spawning processes, say).
 
-import { Node, SyntaxKind, type CallExpression, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
+import { Node, SyntaxKind, type CallExpression, type Identifier, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { requiresCapabilityModule } from "./functions.js";
@@ -70,7 +70,7 @@ export function anyEscapes(sourceFile: SourceFile, adapters: AdapterIndex): Esca
     }
     // A capability module used where its type is lost: `const m: any = cp`, `m = cp` with
     // `let m: any`, `use(cp)` with `function use(m: unknown)`, or `Object.values(cp)`.
-    if (Node.isIdentifier(node) && carriers.of(node) === "module") {
+    if (Node.isIdentifier(node) && isPassedOn(node) && carriers.of(node) === "module") {
       const lost = typeLostBy(node);
       if (lost) out.push(hidden(node, lost.isAny() ? "cast to `any`" : `passed on as \`${lost.getText()}\``));
       else if (isEnumerated(node)) out.push(hidden(node, "with its members listed"));
@@ -190,17 +190,22 @@ function isGlobalObject(value: Node): boolean {
   return declarations.length === 0 ? symbol.getName() === "globalThis" : declarations.every((d) => d.getSourceFile().isDeclarationFile());
 }
 
+/** A reference that hands the value on whole: an argument, assignment, or initializer, not a member access or a declaration. */
+function isPassedOn(identifier: Node): boolean {
+  const parent = identifier.getParent();
+  if (!parent || Node.isImportClause(parent) || Node.isNamespaceImport(parent)) return false;
+  // `cp as any` is the cast case above; `cp.exec`, `cp["exec"]` are normal calls.
+  if (Node.isAsExpression(parent) || Node.isTypeAssertion(parent) || Node.isParenthesizedExpression(parent) || Node.isSatisfiesExpression(parent)) return false;
+  if ((Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent)) && parent.getExpression() === identifier) return false;
+  if ("getNameNode" in parent && (parent as { getNameNode(): Node }).getNameNode() === identifier) return false;
+  return Node.isExpression(identifier) && !identifier.getFirstAncestor((a) => Node.isTypeNode(a));
+}
+
 /**
  * The contextual type that loses a module passed where it's expected: an argument, assignment,
  * or initializer typed `any`, `unknown`, or `object`. Undefined when the module keeps its type.
  */
-function typeLostBy(identifier: Node): Type | undefined {
-  const parent = identifier.getParent();
-  if (!parent || Node.isImportClause(parent) || Node.isNamespaceImport(parent) || identifier.getFirstAncestor((a) => Node.isTypeNode(a))) return undefined;
-  // `cp as any` is the cast case above; `cp.exec`, `cp["exec"]` are normal calls.
-  if (Node.isAsExpression(parent) || Node.isTypeAssertion(parent) || Node.isParenthesizedExpression(parent) || Node.isSatisfiesExpression(parent)) return undefined;
-  if ((Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent)) && parent.getExpression() === identifier) return undefined;
-  if (!Node.isExpression(identifier)) return undefined;
+function typeLostBy(identifier: Identifier): Type | undefined {
   const contextual = identifier.getContextualType();
   return contextual !== undefined && losesModule(contextual) ? contextual : undefined;
 }

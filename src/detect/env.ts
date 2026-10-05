@@ -22,10 +22,10 @@ export function envUses(sourceFile: SourceFile): EnvUse[] {
   const out: EnvUse[] = [];
   sourceFile.forEachDescendant((n) => {
     if (!Node.isIdentifier(n) && !Node.isPropertyAccessExpression(n) && !Node.isElementAccessExpression(n)) return;
-    if (isNameNode(n) || n.getFirstAncestor((a) => Node.isTypeNode(a))) return;
+    if (isNameNode(n)) return;
     const typed = envType(n);
     const kind = typed ?? untypedEnv(n);
-    if (!kind) return;
+    if (!kind || n.getFirstAncestor((a) => Node.isTypeNode(a))) return;
     const found = classify(n, kind, typed !== undefined);
     if (found) out.push(found);
   });
