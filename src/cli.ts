@@ -307,6 +307,8 @@ function diff(args: Args): number {
   const baseLock = lockAt(base, lockFile);
   let headLock: LockFile;
   let via: ViaPaths = {};
+  // For each capability, the AI tools that can trigger it (from analyzing the working tree).
+  const aiTools: Record<string, string[]> = {};
   // Access the code reaches that the committed lock doesn't record. A pull request that adds
   // access without running `permlang lock` must still show it: the comment is what reviewers read.
   let unrecorded: LockDiff | undefined;
@@ -324,6 +326,7 @@ function diff(args: Args): number {
       const root = path.dirname(path.resolve(lockFile));
       const report = analyze({ ...args, paths: sources }, undefined);
       via = viaPaths(report, root);
+      for (const t of report.tools) for (const c of t.reaches) (aiTools[c] ??= []).push(t.name);
       const codeLock = buildLock(report, root);
       const pending = diffLocks(diskLock, codeLock);
       if (pending.functions.some((f) => f.added.length > 0) || pending.unsafeAdded.length > 0) unrecorded = pending;
@@ -336,8 +339,8 @@ function diff(args: Args): number {
 
   const changes = diffLocks(baseLock, headLock);
   const dependencies = dependencyChanges(base, args);
-  const notes: DiffNotes = { unrecorded: unrecorded !== undefined, lockFile: path.basename(lockFile), dependencies };
-  if (args.format === "json") console.log(JSON.stringify({ base, head: args.head ?? "working tree", ...changes, via, unrecorded: unrecorded ?? null, dependencies }, null, 2));
+  const notes: DiffNotes = { unrecorded: unrecorded !== undefined, lockFile: path.basename(lockFile), dependencies, aiTools };
+  if (args.format === "json") console.log(JSON.stringify({ base, head: args.head ?? "working tree", ...changes, via, unrecorded: unrecorded ?? null, dependencies, aiTools }, null, 2));
   else console.log(args.format === "markdown" ? formatDiffMarkdown(changes, via, notes) : formatDiffText(changes, via, notes));
   return 0;
 }
@@ -354,10 +357,14 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
   if (unmapped !== undefined && !UNMAPPED_POLICIES.includes(unmapped as UnmappedPolicy)) {
     throw new UsageError(`"unmapped" must be one of: ${UNMAPPED_POLICIES.join(", ")}.`);
   }
+  if (config.tools !== undefined && !UNMAPPED_POLICIES.includes(config.tools as UnmappedPolicy)) {
+    throw new UsageError(`"tools" must be one of: ${UNMAPPED_POLICIES.join(", ")}.`);
+  }
   const options: CheckOptions = {
     adapters: [...args.adapters, ...config.adapters],
     ...(strictness ? { strictness: strictness as Strictness } : {}),
     ...(unmapped ? { unmapped: unmapped as UnmappedPolicy } : {}),
+    ...(config.tools ? { tools: config.tools as UnmappedPolicy } : {}),
     ...(lock ? { lock } : {}),
     // Workflows, Actions, and package.json scripts, from the folder the lock lives in.
     projectRoot: path.dirname(path.resolve(args.lock ?? DEFAULT_LOCK)),
@@ -426,6 +433,7 @@ function viaPaths(report: Report, root: string): ViaPaths {
 interface Config {
   strictness?: string;
   unmapped?: string;
+  tools?: string;
   adapters: string[];
 }
 
@@ -440,7 +448,7 @@ function readConfig(explicit: string | undefined): Config {
     throw new UsageError(`Can't read ${file}: ${(e as Error).message}`);
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${file}: must be a JSON object.`);
-  const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown };
+  const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown; tools?: unknown };
   const list = config.adapters ?? [];
   if (!Array.isArray(list) || !list.every((a) => typeof a === "string")) {
     throw new UsageError(`${file}: "adapters" must be a list of manifest paths.`);
@@ -452,6 +460,7 @@ function readConfig(explicit: string | undefined): Config {
     adapters: list.map((a) => path.resolve(path.dirname(file), a)),
     ...(config.strictness ? { strictness: config.strictness } : {}),
     ...(typeof config.unmapped === "string" ? { unmapped: config.unmapped } : {}),
+    ...(typeof config.tools === "string" ? { tools: config.tools } : {}),
   };
 }
 

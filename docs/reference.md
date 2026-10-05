@@ -155,6 +155,7 @@ Other gaps, not yet in fixtures:
 | `PERM005` | error, or warning when access was removed | The code reaches something `permlang.lock.json` doesn't record, or no longer reaches something it does. |
 | `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
 | `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
+| `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
 | `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
 
 Sketch strictness reports everything but fails only on `PERM005`.
@@ -174,6 +175,46 @@ Wildcards (`*`) are not allowed. A capability without an argument (`net`,
 determined statically, for example `fetch(url)` or a template path like
 `` `./data/${name}` ``. *(Provisional: this answers open question 1 in the design
 doc and may change after review.)*
+
+## Tools given to AI models
+
+A function registered as a tool for an AI model runs when the model decides to
+call it, and the model does what its input tells it to. So whoever controls that
+input (a user, a web page the model reads, an email it summarizes) can trigger
+the tool. If the tool can run commands, that's prompt injection turned into
+code execution.
+
+PermLang finds tool registrations and works out what each tool's handler can
+reach, through everything it calls:
+
+| Framework | Recognized |
+| --- | --- |
+| Vercel AI SDK (`ai`) | `tool({ execute })`, `dynamicTool(...)` |
+| MCP (`@modelcontextprotocol/sdk`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and `setRequestHandler(CallToolRequestSchema, handler)`, which serves every tool (named `*`) |
+| OpenAI Agents (`@openai/agents`) | `tool({ name, execute })` |
+| LangChain (`@langchain/core`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, and other `new ...Tool(...)` classes |
+| Anthropic, Mastra, LlamaIndex | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler |
+
+Every tool is listed in the report, with what it reaches. When a tool reaches
+something a model shouldn't trigger unchecked, there's a `PERM008` warning at
+the registration:
+
+- running commands (`exec`) or code that can't be verified;
+- writing files or data (`fs.write`, `db.write`);
+- sending to a host that isn't fixed (bare `net`), since the model can choose
+  where data goes;
+- app-level actions from adapters, such as `payments.refund` or `email.send`.
+
+Reading files, tables, environment variables, or a fixed host doesn't warn: that's
+what tools are for. Set `"tools"` in `permlang.config.json` to `"error"` to fail
+the build instead, or `"trust"` to only list them.
+
+In the pull-request comment, new access a tool can reach is marked *An AI model
+can trigger this*, with the tool's name.
+
+A handler PermLang can't find (passed in from elsewhere, say) counts as
+unverifiable. Tools registered through a wrapper of your own aren't recognized
+yet.
 
 ## Project configuration
 

@@ -106,6 +106,25 @@ describe("configuration errors", () => {
   });
 });
 
+describe("tools given to AI models", () => {
+  it("warns about a tool a model can point anywhere, and marks its new access in the comment", () => {
+    writeFileSync(path.join(dir, "my lib", "ai.d.ts"), 'declare module "ai" { export function tool<T>(definition: T): T; }\n');
+    expect(permlang("init", "my lib").code).toBe(0);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    writeFileSync(
+      path.join(dir, "my lib", "tools.ts"),
+      'import { tool } from "ai";\nexport const browse = tool({ description: "Fetch a page", execute: async ({ url }: { url: string }) => fetch(url) });\n',
+    );
+
+    const check = permlang("check", "my lib", "--strictness", "sketch");
+    expect(check.out).toContain("my lib/tools.ts:2:23 warning PERM008: tool browse (ai) can be called by an AI model, and reaches net.");
+    expect(check.out).toContain("1 tool an AI model can call:\n  my lib/tools.ts:2 browse (ai): net");
+    const md = permlang("diff", "HEAD", "my lib", "--format", "markdown").out;
+    expect(md).toMatch(/<code>\+ net<\/code> \|.*⚠️ An AI model can trigger this, through <code>browse<\/code><\/sub> \|/);
+  });
+});
+
 describe("project configuration", () => {
   it("fails a change that adds a secret to a workflow, and shows it in the comment", () => {
     const workflow = path.join(dir, ".github", "workflows", "ci.yml");

@@ -18,6 +18,18 @@ what a workflow or script grants. Upgrading itself doesn't: see below.
 - A lock written before 0.3 has no configuration in it. The first check after
   upgrading reports it as warnings, not failures; run `permlang lock` to record
   it.
+- **Tools given to AI models.** PermLang finds functions registered as tools
+  (Vercel AI SDK, MCP, OpenAI Agents, LangChain, and others), works out what
+  each one reaches, and lists them in the report. A tool that reaches commands,
+  writes, unverifiable code, a host the model can choose, or an app-level action
+  like `payments.refund` gets a `PERM008` warning, since whoever controls the
+  model's input can trigger it. `"tools": "error"` fails the build instead. The
+  pull-request comment marks new access a model can trigger.
+
+### Fixed
+
+- Declaring a tool with the Vercel AI SDK's `tool()`, or registering one on an
+  MCP server, no longer counts as network access.
 
 ## 0.2.4 (2026-10-02)
 
