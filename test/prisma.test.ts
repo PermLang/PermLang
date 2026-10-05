@@ -48,6 +48,7 @@ export type ${name}FindManyArgs = { where?: ${name}WhereInput; include?: object;
 export interface ${name}Delegate<ExtArgs = {}> {
   [K: symbol]: { types: ${ns}TypeMap<ExtArgs>["model"]["${name}"]; meta: { name: "${name}" } };
   findMany(args?: object): Promise<unknown[]>;
+  findRaw(args?: object): Promise<unknown>;
   findUnique(args: object): ${ns}Prisma__${name}Client<unknown>;
   count(args?: object): Promise<number>;
   create(args: object): ${ns}Prisma__${name}Client<unknown>;
@@ -55,11 +56,14 @@ export interface ${name}Delegate<ExtArgs = {}> {
   upsert(args: object): ${ns}Prisma__${name}Client<unknown>;
   delete(args: object): ${ns}Prisma__${name}Client<unknown>;
 }
-export interface Prisma__${name}Client<T> extends Promise<T> { ${fluent} }`;
+export interface Prisma__${name}Client<T> extends Promise<T> {
+  then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1) | null, onrejected?: ((reason: unknown) => R2) | null): Promise<R1 | R2>;
+  ${fluent}
+}`;
 }
 
 function typeMap(ns: string): string {
-  const models = MODELS.map((m) => `${m}: { payload: ${ns}$${m}Payload<ExtArgs>; operations: { findMany: { args: object }; findUnique: { args: object }; create: { args: object } } }`);
+  const models = MODELS.map((m) => `${m}: { payload: ${ns}$${m}Payload<ExtArgs>; operations: { findMany: { args: object }; findUnique: { args: object }; create: { args: object }; findRaw: { args: object } } }`);
   return `export type TypeMap<ExtArgs = {}> = { meta: { modelProps: ${MODELS.map((m) => `"${accessor(m)}"`).join(" | ")} }; model: { ${models.join("; ")} } };`;
 }
 
@@ -82,12 +86,17 @@ export type DynamicClientExtensionThis<TypeMap extends TypeMapDef, ExtArgs> = {
 export type DynamicModelExtensionThis<TypeMap extends TypeMapDef, M extends PropertyKey, ExtArgs> = {
   [P in keyof TypeMap["model"][M & string]["operations"]]: DynamicModelExtensionOperationFn<TypeMap, M, P>;
 };
+export interface PrismaPromise<T> extends Promise<T> {
+  then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1) | null, onrejected?: ((reason: unknown) => R2) | null): Promise<R1 | R2>;
+}
 export type DynamicModelExtensionOperationFn<TypeMap extends TypeMapDef, M extends PropertyKey, P extends PropertyKey> =
-  (args?: object) => DynamicModelExtensionFluentApi<TypeMap, M, P, null> & Promise<unknown>;
+  (args?: object) => DynamicModelExtensionFluentApi<TypeMap, M, P, null> & PrismaPromise<unknown>;
 export type DynamicModelExtensionFluentApi<TypeMap extends TypeMapDef, M extends PropertyKey, P extends PropertyKey, Null> = {
   [K in keyof TypeMap["model"][M & string]["payload"]["objects"]]: (args?: object) =>
-    Promise<unknown> & DynamicModelExtensionFluentApi<TypeMap, NameOf<TypeMap["model"][M & string]["payload"]["objects"][K]>, P, Null>;
-};`;
+    PrismaPromise<unknown> & DynamicModelExtensionFluentApi<TypeMap, NameOf<TypeMap["model"][M & string]["payload"]["objects"][K]>, P, Null>;
+};
+// Builds a Sql value for $queryRaw; it runs nothing itself.
+export declare function sqltag(strings: TemplateStringsArray, ...values: unknown[]): unknown;`;
 
 /** prisma-client-js: one declaration file, the models in `namespace Prisma`. */
 function jsClient(runtimeImport: string): string {
@@ -107,6 +116,7 @@ export namespace Prisma {
 ${MODELS.map((m) => modelTypes(m, "Prisma.")).join("\n")}
 ${typeMap("Prisma.")}
 export type Subset<T, U> = { [key in keyof T]: key extends keyof U ? T[key] : never };
+export const sql: typeof runtime.sqltag;
 export type SelectSubset<T, U> = { [key in keyof T]: key extends keyof U ? T[key] : never } & (T extends { select: unknown; include: unknown } ? "Please either choose \`select\` or \`include\`." : {});
 }`;
 }
@@ -216,6 +226,18 @@ const ext = prisma.$extends({});
 /** @perm env(NONE) */ export function fluent() { return prisma.user.findUnique({ where: { id: 1 } }).leads(); }
 /** @perm env(NONE) */ export function extended() { return ext.user.findMany({ include: { leads: true } }); }
 /** @perm env(NONE) */ export function extendedFluent() { return ext.lead.findUnique({ where: { id: 1 } }).owner().apiKeys(); }
+/** @perm env(NONE) */ export function fluentThen() { return prisma.user.findUnique({ where: { id: 1 } }).then((u) => u); }
+/** @perm env(NONE) */ export function fluentArgs() { return prisma.user.findUnique({ where: { id: 1 } }).leads({ where: { apiKeys: { some: {} } } }); }
+/** @perm env(NONE) */ export function nestedInput(owner: { connect?: { id: number }; create?: Prisma.UserCreateInput }) { return prisma.lead.create({ data: { name: "x", owner } }); }
+/** @perm env(NONE) */ export function paging(page: { take: number }) { return prisma.lead.findMany({ ...page, where: { id: 1 } }); }
+/** @perm env(NONE) */ export function orFilters(filters: Prisma.LeadWhereInput[]) { return prisma.lead.findMany({ where: { OR: [...filters] } }); }
+/** @perm env(NONE) */ export function quoted() { return prisma.lead.findMany({ include: { "owner": true } }); }
+/** @perm env(NONE) */ export function otherMethod() { return prisma.lead.findRaw(); }
+/** @perm env(NONE) */ export function sqlHelper() { return Prisma.sql\`SELECT 1\`; }
+/** @perm env(NONE) */ export function asValue() { return [{}].map(prisma.lead.findMany); }
+/** @perm env(NONE) */ export function extendedOther() { return ext.lead.findRaw(); }
+/** @perm env(NONE) */ export function extendedThen() { return ext.lead.findUnique({ where: { id: 1 } }).then((x) => x); }
+/** @perm env(NONE) */ export function extendedAfterList() { return ext.user.findUnique({ where: { id: 1 } }).leads().then((x) => x); }
 /** @perm env(NONE) */ export function deep() { return prisma.lead.findMany(${"{ include: { owner: { include: { leads: ".repeat(20)}true${" } } } }".repeat(20)}); }
 `,
   // prisma-client-js with a custom output folder, which copies the runtime next to it.
@@ -234,10 +256,21 @@ const prisma = new PrismaClient();
 /** @perm env(NONE) */ export function write(id: number) { return prisma.user.update({ where: { id: 1 }, data: { profile: { connect: { id } } } }); }
 `,
   // Prisma's header alone marks a generated file, whatever it imports.
-  "src/generated/headed.ts": `${HEADER}export interface AuditDelegate { findMany(args?: object): Promise<unknown[]>; }\nexport declare const audit: AuditDelegate;`,
+  "src/generated/headed.ts": `${HEADER}export interface AuditDelegate { findMany(args?: object): Promise<unknown[]>; }\nexport declare const audit: AuditDelegate;
+export type $AuditPayload = { name: "Audit"; objects: { owner: { name: string }; other: {} } };
+export interface BareDelegate { findMany(args?: object): Promise<unknown[]>; }
+export declare const bare: BareDelegate;
+export type $BarePayload = { name: "Bare" };`,
   "src/headed.ts": `
-import { audit } from "./generated/headed.ts";
+import { audit, bare } from "./generated/headed.ts";
 /** @perm env(NONE) */ export function read() { return audit.findMany(); }
+// Payloads Prisma wouldn't write: what can't be read about a relation is unknown.
+/** @perm env(NONE) */ export function oddRelations() { return audit.findMany({ include: { owner: true, other: true } }); }
+/** @perm env(NONE) */ export function noRelations() { return bare.findMany({ include: { x: true }, where: { tags: { some: {} } } }); }
+/** @perm env(NONE) */ export function noRelationsCounted() { return bare.findMany({ select: { _count: true } }); }
+/** @perm env(NONE) */ export function noRelationsPlain(id: number) { return bare.findMany({ where: { id }, select: { y: false } }); }
+/** @perm env(NONE) */ export function noRelationsList() { return bare.findMany({ where: { ids: [1] } }); }
+/** @perm env(NONE) */ export function noRelationsTyped(args: { where: { id: number } }) { return bare.findMany(args); }
 `,
   // A hand-written look-alike with no generator markers is the project's own code.
   "src/lookalike/client.d.ts": `export interface LeadDelegate { findMany(args?: object): Promise<unknown[]>; } export declare const prisma: { lead: LeadDelegate };`,
@@ -311,6 +344,12 @@ describe("recognizing Prisma", () => {
     expect(actual("src/custom-client.ts", "extended")).toEqual(["db.read", "db.read(profile)", "db.read(user)", "db.write"]);
     expect(actual("src/modern-client.ts", "read")).toEqual(["db.read(lead)", "db.read(user)"]);
     expect(actual("src/headed.ts", "read")).toEqual(["db.read(audit)"]);
+    expect(actual("src/headed.ts", "oddRelations")).toEqual(["db.read", "db.read(audit)"]);
+    expect(actual("src/headed.ts", "noRelations")).toEqual(["db.read", "db.read(bare)"]);
+    expect(actual("src/headed.ts", "noRelationsCounted")).toEqual(["db.read", "db.read(bare)"]);
+    expect(actual("src/headed.ts", "noRelationsPlain")).toEqual(["db.read(bare)"]);
+    expect(actual("src/headed.ts", "noRelationsList")).toEqual(["db.read", "db.read(bare)"]);
+    expect(actual("src/headed.ts", "noRelationsTyped")).toEqual(["db.read", "db.read(bare)"]);
   });
 });
 
@@ -349,6 +388,19 @@ describe("related tables", () => {
     ["extendedFluent", ["db.read(apiKey)", "db.read(lead)", "db.read(user)"]],
     // Deeper than any real query: the walk stops, and what's below could be anything.
     ["deep", ["db.read", "db.read(lead)", "db.read(user)"]],
+    ["fluentThen", ["db.read(user)"]],
+    ["fluentArgs", ["db.read(apiKey)", "db.read(lead)", "db.read(user)"]],
+    ["nestedInput", ["db.read", "db.write", "db.write(lead)", "db.write(user)"]],
+    ["paging", ["db.read(lead)"]],
+    ["orFilters", ["db.read", "db.read(lead)"]],
+    ["quoted", ["db.read(lead)", "db.read(user)"]],
+    // Other methods on a model (findRaw, aggregateRaw) may read or write.
+    ["otherMethod", ["db.read(lead)", "db.write(lead)"]],
+    ["sqlHelper", []],
+    ["asValue", ["db.read(lead)"]],
+    ["extendedOther", ["db.read(lead)", "db.write(lead)"]],
+    ["extendedThen", ["db.read(lead)"]],
+    ["extendedAfterList", ["db.read(lead)", "db.read(user)"]],
   ];
   it.each(cases)("%s", (name, expected) => {
     expect(actual("src/default-client.ts", name)).toEqual(expected);

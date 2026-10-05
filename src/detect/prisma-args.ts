@@ -43,6 +43,11 @@ export function modelNamed(name: string, near: SourceFile): Model {
   return { table: accessor(name), payload: aliasesIn(near).get(`$${name}Payload`)?.getType() };
 }
 
+/** A capability on a table, or on an unknown one. */
+export function scoped(name: string, table: string | undefined): Capability {
+  return table === undefined ? { name, dynamic: true } : { name, arg: table };
+}
+
 /** Prisma's accessor for a model: `UserProfile` is `prisma.userProfile`. */
 export function accessor(model: string): string {
   return model.charAt(0).toLowerCase() + model.slice(1);
@@ -75,11 +80,11 @@ class Walk {
   constructor(private readonly at: Node) {}
 
   read(model: Model): void {
-    this.found.push(model.table === undefined ? { name: "db.read", dynamic: true } : { name: "db.read", arg: model.table });
+    this.found.push(scoped("db.read", model.table));
   }
 
   write(model: Model): void {
-    this.found.push(model.table === undefined ? { name: "db.write", dynamic: true } : { name: "db.write", arg: model.table });
+    this.found.push(scoped("db.write", model.table));
   }
 
   /** Could reach any table: bare db.read, and db.write where it could write. */
@@ -133,9 +138,7 @@ class Walk {
       for (const r of relations.values()) this.read(r.model);
       return;
     }
-    this.object(node, model, "read", (key, select) => {
-      if (key === "select") this.selection(select, model);
-    });
+    this.args(node, model, "read");
   }
 
   orderBy(node: Node, model: Model): void {
@@ -233,10 +236,8 @@ function propertyKey(prop: Node): string | undefined {
   if (Node.isShorthandPropertyAssignment(prop)) return prop.getName();
   if (!Node.isPropertyAssignment(prop)) return undefined;
   const name = prop.getNameNode();
-  if (Node.isIdentifier(name)) return name.getText();
-  if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name) || Node.isNumericLiteral(name)) return name.getLiteralText();
   if (Node.isComputedPropertyName(name)) return literalString(unwrapExpression(name.getExpression()));
-  return undefined;
+  return Node.isStringLiteral(name) ? name.getLiteralValue() : name.getText();
 }
 
 function hasKey(node: Node, key: string): boolean {
@@ -272,24 +273,24 @@ function isPlainType(type: Type): boolean {
  * Whether a value of this type could name a relation, at any depth of nested
  * arguments. `any` and `unknown` could; without the relations, any object could.
  */
-function mayNameRelation(type: Type, relations: Map<string, Relation> | undefined, at: Node, depth = 0, seen = new Set<object>()): boolean {
+function mayNameRelation(type: Type, relations: Map<string, Relation> | undefined, at: Node, seen = new Set<object>()): boolean {
   if (type.isAny() || type.isUnknown()) return true;
   if (isPlainType(type) || seen.has(type.compilerType)) return false;
-  if (!relations || depth > 6) return true;
+  if (!relations) return true;
   seen.add(type.compilerType);
   // A generic type (`T extends Prisma.LeadFindManyArgs`, `Prisma.SelectSubset<T, ...>`)
   // is checked by its constraint; one whose keys aren't known yet could hold any.
   if (type.isTypeParameter()) {
     const constraint = type.getConstraint();
-    return constraint === undefined || mayNameRelation(constraint, relations, at, depth, seen);
+    return constraint === undefined || mayNameRelation(constraint, relations, at, seen);
   }
   if (type.getFlags() & (ts.TypeFlags.Conditional | ts.TypeFlags.Substitution | ts.TypeFlags.Index | ts.TypeFlags.IndexedAccess)) return true;
   const parts = type.isUnion() ? type.getUnionTypes() : type.isIntersection() ? type.getIntersectionTypes() : undefined;
-  if (parts) return parts.some((t) => mayNameRelation(t, relations, at, depth, seen));
-  if (type.isArray()) return mayNameRelation(type.getArrayElementTypeOrThrow(), relations, at, depth + 1, seen);
+  if (parts) return parts.some((t) => mayNameRelation(t, relations, at, seen));
+  if (type.isArray()) return mayNameRelation(type.getArrayElementTypeOrThrow(), relations, at, seen);
   return type.getProperties().some((p) => {
     const name = p.getName();
-    return relations.has(name) || (STRUCTURAL.has(name) && mayNameRelation(p.getTypeAtLocation(at), relations, at, depth + 1, seen));
+    return relations.has(name) || (STRUCTURAL.has(name) && mayNameRelation(p.getTypeAtLocation(at), relations, at, seen));
   });
 }
 
@@ -303,36 +304,32 @@ function relationsOf(model: Model, at: Node): Map<string, Relation> | undefined 
   if (!payload) return undefined;
   const cached = relationCache.get(payload.compilerType);
   if (cached) return cached;
-  const objects = payload.getProperty("objects")?.getTypeAtLocation(at);
+  const objects = payload.getProperty("objects");
   if (!objects) return undefined;
-  const unchecked = uncheckedCreateKeys(payload);
+  // `<Model>UncheckedCreateInput`, declared next to the payload, sets foreign keys
+  // directly, so it lists every relation except those whose key is kept in this model.
+  const unchecked = aliasesIn(objects.getDeclarations()[0]!.getSourceFile()).get(`${literalName(payload, at)}UncheckedCreateInput`);
+  const direct = new Set(unchecked?.getType().getProperties().map((p) => p.getName()));
   const relations = new Map<string, Relation>();
-  for (const p of objects.getProperties()) {
+  for (const p of objects.getTypeAtLocation(at).getProperties()) {
     let type = p.getTypeAtLocation(at).getNonNullableType();
     const many = type.isArray();
     if (many) type = type.getArrayElementTypeOrThrow();
-    const name = type.getProperty("name")?.getTypeAtLocation(at);
-    const known = name?.isStringLiteral() ? String(name.getLiteralValue()) : undefined;
+    const known = literalName(type, at);
     relations.set(p.getName(), {
       model: known === undefined ? { table: undefined, payload: undefined } : { table: accessor(known), payload: type },
       many,
-      // `<Model>UncheckedCreateInput` sets foreign keys directly, so it lists every
-      // relation except those whose key is stored in this model.
-      keyThere: unchecked === undefined || unchecked.has(p.getName()),
+      keyThere: !unchecked || direct.has(p.getName()),
     });
   }
   relationCache.set(payload.compilerType, relations);
   return relations;
 }
 
-/** The keys of `<Model>UncheckedCreateInput`, declared next to the model's payload. */
-function uncheckedCreateKeys(payload: Type): Set<string> | undefined {
-  const symbol = payload.getAliasSymbol();
-  const model = /^\$(\w+)Payload$/.exec(symbol?.getName() ?? "")?.[1];
-  const declaration = symbol?.getDeclarations()[0];
-  if (model === undefined || !declaration) return undefined;
-  const input = aliasesIn(declaration.getSourceFile()).get(`${model}UncheckedCreateInput`);
-  return input && new Set(input.getType().getProperties().map((p) => p.getName()));
+/** A payload's model name, when its `name` is a literal: `"Lead"`. */
+function literalName(payload: Type, at: Node): string | undefined {
+  const name = payload.getProperty("name")?.getTypeAtLocation(at);
+  return name?.isStringLiteral() ? String(name.getLiteralValue()) : undefined;
 }
 
 type Alias = Node & { getType(): Type };

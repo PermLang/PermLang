@@ -15,10 +15,10 @@
 // the client it generates into node_modules/.prisma/client, and a client generated
 // into a custom `output` folder, which Prisma marks (isGeneratedClient).
 
-import { Node, type SourceFile, type Type } from "ts-morph";
+import { Node, type ImportDeclaration, type SourceFile, type Type } from "ts-morph";
 import { packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
-import { accessor, argumentAccess, modelNamed, relationAccess, type Model } from "./prisma-args.js";
+import { accessor, argumentAccess, modelNamed, relationAccess, scoped, type Model } from "./prisma-args.js";
 import { argumentsOf, containerName, unwrapExpression, type CallLike } from "./shared.js";
 
 const READS = new Set([
@@ -47,25 +47,22 @@ export function prismaCapabilities(declaration: Node | undefined, call?: CallLik
   if (delegate) return forModel(method, modelNamed(delegate, near), args);
   if (RAW.test(method)) return raw;
   const fluent = /^Prisma__(\w+)Client$/.exec(container)?.[1];
-  if (fluent) return relationAccess(method, args, modelNamed(fluent, near), call ?? declaration) ?? [];
+  if (fluent) return relationAccess(method, args, modelNamed(fluent, near), declaration) ?? [];
 
   // An extended client: the runtime types, or the call site, name the model.
   const receiver = receiverOf(call);
   const typed = receiver && runtimeModel(receiver.getType(), receiver);
-  if (READS.has(method) || WRITES.has(method)) {
-    const table = typed ? accessor(typed.name) : modelAtCallSite(receiver);
-    return forModel(method, { table, payload: typed?.payload }, args);
-  }
-  if (typed && call) return relationAccess(method, args, { table: accessor(typed.name), payload: typed.payload }, call) ?? [];
+  if (typed?.fluent) return relationAccess(method, args, typed.model, receiver!) ?? [];
+  if (typed) return forModel(method, typed.model, args);
+  if (READS.has(method) || WRITES.has(method)) return forModel(method, { table: modelAtCallSite(receiver), payload: undefined }, args);
   return [];
 }
 
 function forModel(method: string, model: Model, args: Node | undefined): Capability[] {
-  const cap = (name: string): Capability => (model.table === undefined ? { name, dynamic: true } : { name, arg: model.table });
-  if (READS.has(method)) return [cap("db.read"), ...argumentAccess(args, model, "read")];
-  if (WRITES.has(method)) return [cap("db.write"), ...argumentAccess(args, model, "write")];
-  // Anything else on a delegate (findRaw, aggregateRaw, ...) may do either.
-  return [cap("db.read"), cap("db.write")];
+  if (READS.has(method)) return [scoped("db.read", model.table), ...argumentAccess(args, model, "read")];
+  if (WRITES.has(method)) return [scoped("db.write", model.table), ...argumentAccess(args, model, "write")];
+  // Anything else on a model (findRaw, aggregateRaw, ...) may do either.
+  return [scoped("db.read", model.table), scoped("db.write", model.table)];
 }
 
 /** Whether a declaration belongs to a Prisma client. Prisma's API is all types, so code with a body never does. */
@@ -88,7 +85,9 @@ const generated = new WeakMap<SourceFile, boolean>();
 function isGeneratedClient(sourceFile: SourceFile): boolean {
   let known = generated.get(sourceFile);
   if (known === undefined) {
-    known = isGeneratedFile(sourceFile) || sourceFile.getReferencingSourceFiles().some((client) => runtimeImports(client).includes(sourceFile) && isGeneratedFile(client));
+    known =
+      isGeneratedFile(sourceFile) ||
+      sourceFile.getReferencingSourceFiles().some((client) => runtimeImports(client).some((i) => i.getModuleSpecifierSourceFile() === sourceFile));
     generated.set(sourceFile, known);
   }
   return known;
@@ -98,12 +97,9 @@ function isGeneratedFile(sourceFile: SourceFile): boolean {
   return sourceFile.getFullText().trimStart().startsWith(GENERATED_HEADER) || runtimeImports(sourceFile).length > 0;
 }
 
-/** The files a source file imports as `runtime` from Prisma's runtime. */
-function runtimeImports(sourceFile: SourceFile): SourceFile[] {
-  return sourceFile.getImportDeclarations().flatMap((i) => {
-    if (i.getNamespaceImport()?.getText() !== "runtime" || !RUNTIME_IMPORT.test(i.getModuleSpecifierValue())) return [];
-    return [i.getModuleSpecifierSourceFile() ?? sourceFile];
-  });
+/** A source file's imports of Prisma's runtime as `runtime`. */
+function runtimeImports(sourceFile: SourceFile): ImportDeclaration[] {
+  return sourceFile.getImportDeclarations().filter((i) => i.getNamespaceImport()?.getText() === "runtime" && RUNTIME_IMPORT.test(i.getModuleSpecifierValue()));
 }
 
 /**
@@ -112,15 +108,17 @@ function runtimeImports(sourceFile: SourceFile): SourceFile[] {
  * `DynamicModelExtensionFluentApi<TypeMap, "User", ...>`. The type map holds the
  * model's payload, which lists its relations.
  */
-function runtimeModel(type: Type, at: Node): { name: string; payload: Type | undefined } | undefined {
+function runtimeModel(type: Type, at: Node): { model: Model; fluent: boolean } | undefined {
   for (const t of [type, ...(type.isIntersection() ? type.getIntersectionTypes() : [])]) {
     const alias = t.getAliasSymbol()?.getName();
     if (alias !== "DynamicModelExtensionThis" && alias !== "DynamicModelExtensionFluentApi") continue;
-    const [typeMap, model] = t.getAliasTypeArguments();
-    if (!typeMap || !model?.isStringLiteral()) continue;
+    const [typeMap, model] = t.getAliasTypeArguments() as [Type, Type];
+    // After a list relation, the fluent API names no model.
+    if (!model.isStringLiteral()) continue;
     const name = String(model.getLiteralValue());
     const member = (of: Type | undefined, key: string) => of?.getProperty(key)?.getTypeAtLocation(at);
-    return { name, payload: member(member(member(typeMap, "model"), name), "payload") };
+    const payload = member(member(member(typeMap, "model"), name), "payload");
+    return { model: { table: accessor(name), payload }, fluent: alias === "DynamicModelExtensionFluentApi" };
   }
   return undefined;
 }
