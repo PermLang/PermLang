@@ -160,6 +160,23 @@ export const rawTool = tool({ name: "raw", description: "Run a command", execute
 export function make(handler: (input: string) => string) {
   return tool({ name: "injected", description: "Whatever it is given", execute: handler });
 }`,
+  // Definitions and handlers PermLang can or can't follow.
+  indirect: `import { tool } from "@openai/agents";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { execSync } from "node:child_process";
+const definition = { name: "held", description: "Held in a constant", execute: async () => execSync("make") };
+export const heldTool = tool(definition);
+export function fromParameter(options: { name: string; execute: () => unknown }) {
+  return tool(options);
+}
+const base = { description: "Spread from elsewhere" };
+export const spreadTool = tool({ ...base, name: "spread" });
+declare function makeHandler(): () => unknown;
+export const madeTool = tool({ name: "made", description: "Built by a call", execute: makeHandler() });
+// A schema PermLang can't identify could be tool calls.
+export function serveAny(server: Server, schema: object) {
+  server.setRequestHandler(schema, async () => execSync("make"));
+}`,
   // The schema is compared by symbol, so renaming the import doesn't hide the handler.
   renamedSchema: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema as CallTool, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -192,6 +209,7 @@ describe("tools given to AI models", () => {
       "@langchain/core shell",
       "@modelcontextprotocol/sdk *",
       "@modelcontextprotocol/sdk *",
+      "@modelcontextprotocol/sdk *",
       "@modelcontextprotocol/sdk dump_env",
       "@modelcontextprotocol/sdk ping",
       "@modelcontextprotocol/sdk read_file",
@@ -201,9 +219,13 @@ describe("tools given to AI models", () => {
       "@openai/agents browse",
       "@openai/agents cleanup",
       "@openai/agents deploy",
+      "@openai/agents held",
       "@openai/agents injected",
+      "@openai/agents made",
       "@openai/agents raw",
       "@openai/agents run",
+      "@openai/agents spread",
+      "@openai/agents tool",
       "ai deleteUser",
       "ai tool",
       "ai weather",
@@ -227,6 +249,12 @@ describe("tools given to AI models", () => {
   it("follows a library function given as the handler, and can't follow one passed in", () => {
     expect(tool(run(), "raw").reaches).toEqual(["exec"]);
     expect(tool(run(), "injected").reaches).toEqual(["unverifiable"]);
+  });
+
+  it("follows a definition held in a constant, and treats one it can't see as unverifiable", () => {
+    const report = run();
+    const inFile = Object.fromEntries(report.tools.filter((t) => t.file.endsWith("indirect.ts")).map((t) => [t.name, t.reaches.join(", ")]));
+    expect(inFile).toEqual({ held: "exec", tool: "unverifiable", spread: "unverifiable", made: "unverifiable", "*": "exec" });
   });
 
   it("skips a property named like a handler whose value isn't a function", () => {
@@ -265,6 +293,11 @@ describe("tools given to AI models", () => {
       "warning byLibrary.ts:3 raw",
       "warning byLibrary.ts:5 injected",
       "warning byReference.ts:6 cleanup",
+      "warning indirect.ts:10 spread",
+      "warning indirect.ts:12 made",
+      "warning indirect.ts:15 *",
+      "warning indirect.ts:5 held",
+      "warning indirect.ts:7 tool",
       "warning langchain.ts:3 shell",
       "warning lowlevel.ts:5 *",
       "warning mcp.ts:5 save_note",
@@ -299,11 +332,11 @@ describe("tools given to AI models", () => {
     expect(run({ strictness: "development", tools: "error" }).diagnostics.filter((d) => d.code === "PERM008").every((d) => d.severity === "error")).toBe(true);
     // "error" is asked for explicitly, so it fails at sketch too; the default stays a warning.
     const atSketch = (tools?: "error") => run({ strictness: "sketch", ...(tools ? { tools } : {}) }).diagnostics.filter((d) => d.code === "PERM008").map((d) => d.severity);
-    expect(atSketch("error")).toEqual(Array(14).fill("error"));
-    expect(atSketch()).toEqual(Array(14).fill("warning"));
+    expect(atSketch("error")).toEqual(Array(19).fill("error"));
+    expect(atSketch()).toEqual(Array(19).fill("warning"));
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
-    expect(run({ tools: "trust" }).tools).toHaveLength(18);
+    expect(run({ tools: "trust" }).tools).toHaveLength(23);
   });
 
   it("counts an MCP client's connection as network access, and a server talking to its client as none", () => {

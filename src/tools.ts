@@ -152,7 +152,8 @@ function handlerOf(call: CallExpression | NewExpression): Pick<ToolRegistration,
   const fn = lastFunction(args);
   if (fn) return { handler: fn };
   for (const arg of args) {
-    const handler = Node.isObjectLiteralExpression(arg) ? definitionHandler(arg) : undefined;
+    const definition = objectLiteralOf(arg);
+    const handler = definition && definitionHandler(definition);
     if (handler) return { handler };
   }
   return mayTakeHandler(call) ? { handler: undefined } : { handler: undefined, hosted: true };
@@ -306,7 +307,8 @@ function toolName(call: CallExpression | NewExpression): string {
   const literal = literalString(args[0]);
   if (literal !== undefined) return literal;
   for (const arg of args) {
-    const value = Node.isObjectLiteralExpression(arg) ? nameProperty(arg) : undefined;
+    const definition = objectLiteralOf(arg);
+    const value = definition && nameProperty(definition);
     if (value !== undefined) return value;
   }
   const holder = call.getParent();

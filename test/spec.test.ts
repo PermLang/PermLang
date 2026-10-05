@@ -148,6 +148,11 @@ describe("specs that can't be checked as written", () => {
       expect(result("refund_and_notify").diagnostics[0]!.message).toMatch(/: it calls into node:child_process, whose types can't be found \(through notifyOps\)\.$/);
     });
 
+    it("covers import x = require() and import()", () => {
+      expect(result("host_name").diagnostics[0]!.message).toMatch(/: it calls into node:os, whose types can't be found.$/);
+      expect(result("load_plugin").diagnostics[0]!.message).toMatch(/: it calls into untyped-plugin, whose types can't be found.$/);
+    });
+
     it("doesn't mark an implementation that reaches none of it, even in the same file", () => {
       expect(result("format_amount").status).toBe("perms ok");
     });
@@ -157,7 +162,7 @@ describe("specs that can't be checked as written", () => {
     });
 
     it("counts as failing in the summary", () => {
-      expect(formatSpecResults(results, notypes)).toContain("4 specs, 3 failing.");
+      expect(formatSpecResults(results, notypes)).toContain("6 specs, 5 failing.");
       expect(formatSpecResults(results, notypes)).toContain("perms     unchecked: reaches code whose types can't be found");
     });
   });

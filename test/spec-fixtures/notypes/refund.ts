@@ -18,3 +18,13 @@ export function refundAndNotify(id: string) {
 export function formatAmount(cents: number) {
   return (cents / 100).toFixed(2);
 }
+
+import os = require("node:os");
+
+export function hostName() {
+  return os.hostname();
+}
+
+export async function loadPlugin() {
+  return import("untyped-plugin");
+}
