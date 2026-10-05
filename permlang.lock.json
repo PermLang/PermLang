@@ -18,8 +18,10 @@
       "ci.trigger(push)"
     ],
     ".github/workflows/release.yml#<release.yml>": [
+      "ci.action(actions/attest)",
       "ci.action(actions/checkout)",
       "ci.action(actions/setup-node)",
+      "ci.permission(attestations: write)",
       "ci.permission(contents: write)",
       "ci.permission(id-token: write)",
       "ci.trigger(release)"

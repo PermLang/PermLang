@@ -1,6 +1,6 @@
 {
   "name": "permlang",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "The permission diff for AI-written TypeScript. Declare what each function can touch; the build fails when code exceeds it.",
   "keywords": [
     "permissions",
@@ -53,6 +53,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "fast-check": "^4.10.2",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^5.0.3"

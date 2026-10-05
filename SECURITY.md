@@ -37,3 +37,24 @@ rather stay anonymous.
 A documented known limit is not a vulnerability, but ideas for closing one are
 welcome as a regular issue. So are false positives, where PermLang reports access
 that can't happen.
+
+## Verifying a release
+
+Releases are built and published by the
+[release workflow](.github/workflows/release.yml), never from a laptop. From
+0.3.2, each package is signed with a SLSA build provenance attestation, which
+says which repository, workflow, and commit built it.
+
+To check a package from npm with the [GitHub CLI](https://cli.github.com):
+
+```bash
+npm pack permlang@0.3.2
+gh attestation verify permlang-0.3.2.tgz --repo PermLang/PermLang
+```
+
+The same package is attached to each
+[GitHub release](https://github.com/PermLang/PermLang/releases), with the
+attestation as `.sigstore.json` (a Sigstore bundle, for
+`gh attestation verify --bundle` or cosign) and `.intoto.jsonl` (the signed
+provenance on its own). npm also records provenance for every version since
+0.1.1, which `npm audit signatures` checks in your project.
