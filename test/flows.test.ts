@@ -70,8 +70,9 @@ describe("data-flow rules", () => {
     expect(functions).not.toContain("configure");
   });
 
-  it("is a warning in sketch, like everything else", () => {
-    expect(flows({ strictness: "sketch" }).every((d) => d.severity === "warning")).toBe(true);
+  // Found in review: sketch, which init sets up, turned these into warnings, so a broken rule passed.
+  it("fails at every strictness level, sketch included", () => {
+    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(9).fill("error"));
   });
 
   it("checks nothing without rules", () => {

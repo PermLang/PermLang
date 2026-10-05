@@ -193,7 +193,10 @@ Other gaps, not yet in fixtures:
 | `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
 
-Sketch strictness reports everything but fails only on `PERM005`.
+At sketch strictness, the rules about `@perm` annotations (`PERM001` to `PERM004`) are
+warnings. What you ask for explicitly still fails: `PERM005` (the lock file),
+`PERM009` (flow rules), and `PERM006`, `PERM007`, or `PERM008` when their policy is
+`"error"`.
 
 ## Capabilities
 
@@ -237,6 +240,9 @@ doesn't allow, is a `PERM009` error. "Somewhere" is:
 - a host `to` doesn't list, or a host that can't be determined (`fetch(url)`);
 - a command (`exec`), or code that can't be verified (`eval`, say): either one
   could send it anywhere, so no rule can allow it.
+
+It's an error at every strictness level, sketch included: a rule is something you
+asked for.
 
 That covers sending it itself or through anything it calls. The error points at
 the call that leads there:
@@ -319,7 +325,8 @@ the registration:
 
 Reading a fixed file, table, environment variable, or host doesn't warn: that's
 what tools are for. Set `"tools"` in `permlang.config.json` to `"error"` to fail
-the build instead, or `"trust"` to only list them.
+the build instead (at every strictness level, sketch included), or `"trust"`
+to only list them.
 
 In the pull-request comment, new access a tool can reach is marked *An AI model
 can trigger this*, with the tool's name.
@@ -438,7 +445,7 @@ Set `"strictness"` in `permlang.config.json`, or pass `--strictness`:
 
 | Level | What fails |
 | --- | --- |
-| `sketch` | Nothing. Every function's permissions are inferred and reported. Start here on an existing codebase. |
+| `sketch` | Only what you ask for explicitly: access the lock file doesn't record (`PERM005`), flow rules (`PERM009`), and `"unmapped": "error"` or `"tools": "error"`. Rules about `@perm` annotations are reported as warnings, and every function's permissions are inferred. Start here on an existing codebase. |
 | `development` (default) | Annotated functions that exceed their `@perm`, invalid annotations, unverifiable code, and exported functions or top-level code without `@perm`. |
 | `production` | All of the above, plus any function (private helpers too) that reaches something without being covered by function- or module-level `@perm`. |
 

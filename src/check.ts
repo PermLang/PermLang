@@ -112,14 +112,19 @@ export interface Report {
 
 /**
  * How strictly annotations are enforced (design doc §7). An out-of-date lock
- * file fails at every level: it is the review gate, not an annotation rule.
- *   sketch       permissions are inferred and reported; nothing else fails
+ * file fails at every level: it is the review gate, not an annotation rule. So do
+ * flow rules, and "error" policies for unmapped packages and AI tools: they are
+ * asked for explicitly in the configuration.
+ *   sketch       permissions are inferred and reported; annotation rules don't fail
  *   development  exported functions and entry points must declare what they reach (default)
  *   production   every function must be covered by function- or module-level @perm
  */
 export type Strictness = "sketch" | "development" | "production";
 
 export const STRICTNESS_LEVELS: readonly Strictness[] = ["sketch", "development", "production"];
+
+/** The rules about @perm annotations, which sketch reports as warnings. */
+const ANNOTATION_RULES: ReadonlySet<Diagnostic["code"]> = new Set(["PERM001", "PERM002", "PERM003", "PERM004"]);
 
 export interface CheckOptions {
   /** Team adapter manifests, loaded before (and taking precedence over) the built-in ones. */
@@ -302,8 +307,9 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   // Data-flow rules: a function that reads protected data and can send it elsewhere.
   if (options.flows && options.flows.length > 0) diagnostics.push(...flowDiagnostics(units.values(), edges, reach, options.flows));
 
-  // Sketch reports everything but fails nothing.
-  const checked = strictness === "sketch" ? diagnostics.map((d) => ({ ...d, severity: "warning" as const })) : diagnostics;
+  // Sketch relaxes the annotation rules only. What the configuration asks for explicitly (flow
+  // rules, and "error" for unmapped packages or AI tools) fails at every level.
+  const checked = strictness === "sketch" ? diagnostics.map((d) => (ANNOTATION_RULES.has(d.code) ? { ...d, severity: "warning" as const } : d)) : diagnostics;
   const report: Report = {
     files: sourceFiles.length,
     functions,
