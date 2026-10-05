@@ -508,6 +508,15 @@ describe("which files are read", () => {
     expect(Object.keys(inventory(root))).toEqual([".github/actions/a/action.yml", "packages/p/package.json"]);
   });
 
+  it("can't read a package.json that's valid JSON but not an object, or isn't a file, and says so", () => {
+    for (const text of ["[]", "null", '"text"', "42"]) {
+      expect(inventory(repo({ "package.json": text })), text).toEqual({ "package.json": [expect.stringMatching(UNVERIFIABLE)] });
+    }
+    const root = repo({});
+    mkdirSync(path.join(root, "package.json"));
+    expect(projectFiles(root)).toEqual([expect.objectContaining({ actual: [expect.stringMatching(UNVERIFIABLE)], via: { [projectFiles(root)[0]!.actual[0]!]: ["a file PermLang can't read"] } })]);
+  });
+
   it("strips a byte-order mark, as npm and GitHub do", () => {
     const root = repo({
       "package.json": `\uFEFF${JSON.stringify({ name: "x", scripts: { postinstall: "node evil.js" } })}`,
@@ -564,6 +573,32 @@ describe("local Actions and container images", () => {
       "ci.unpinned(./../outside)",
       "ci.unpinned(./checked-out/action)",
     ]);
+  });
+
+  it("records a local path that names a file, or no possible folder, as unpinned instead of crashing", () => {
+    const root = repo({
+      // YAML's "\0" is a NUL character, which no file system allows in a path.
+      ".github/workflows/w.yml": 'on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: ./scripts/deploy.sh\n      - uses: "./a\\0b"\n',
+      "scripts/deploy.sh": "echo deploy\n",
+    });
+    expect(grants(root)).toEqual([
+      "ci.action(./a\u0000b)",
+      "ci.action(./scripts/deploy.sh)",
+      "ci.trigger(push)",
+      "ci.unpinned(./a\u0000b)",
+      "ci.unpinned(./scripts/deploy.sh)",
+    ]);
+  });
+
+  it("follows `uses: $/path` like a local Action, but records it as unpinned", () => {
+    const root = repo({
+      ".github/workflows/w.yml": "on: push\npermissions: {}\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: $/tools/release\n",
+      "tools/release/action.yml": "runs:\n  using: composite\n  steps:\n    - uses: evil/x@main\n",
+    });
+    expect(inventory(root)).toEqual({
+      ".github/workflows/w.yml": ["ci.action($/tools/release)", "ci.trigger(push)", "ci.unpinned($/tools/release)"],
+      "tools/release/action.yml": ["ci.action(evil/x)", "ci.unpinned(evil/x)"],
+    });
   });
 
   it("records a Docker Action's image, and each job's container and service images, pinned only by digest", () => {

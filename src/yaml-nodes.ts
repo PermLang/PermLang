@@ -9,7 +9,7 @@
 // unrecorded if GitHub ever accepts them. A merged key doesn't replace one written
 // out: both are read, which can only record more.
 
-import { isAlias, isMap, isPair, isScalar, isSeq, LineCounter, parseDocument, Scalar, visit, type Alias, type Document, type Node as YamlNode, type Pair, type YAMLMap } from "yaml";
+import { isAlias, isMap, isPair, isScalar, isSeq, LineCounter, parseDocument, Scalar, visit, type Alias, type Document, type Node as YamlNode, type Pair, type ParsedNode, type YAMLMap } from "yaml";
 import { literalOf } from "./ci-expressions.js";
 
 export interface Position {
@@ -90,12 +90,13 @@ export class YamlFile {
   text(node: YamlNode | null | undefined): string | undefined {
     if (!isScalar(node)) return undefined;
     if (typeof node.value === "string") return literalOf(node.value);
-    return node.value === null || node.value === undefined ? "" : String(node.value);
+    return node.value === null ? "" : String(node.value);
   }
 
-  position(node: YamlNode | Pair | null | undefined): Position {
-    const range = (isPair(node) ? (node.key as YamlNode | null) : node)?.range;
-    const { line, col } = this.lines.linePos(range?.[0] ?? 0);
+  /** Where a parsed node, or a pair's key, starts. Every parsed node has a range. */
+  position(node: YamlNode | Pair): Position {
+    const { range } = (isPair(node) ? node.key : node) as ParsedNode;
+    const { line, col } = this.lines.linePos(range[0]);
     return { line, column: col };
   }
 

@@ -24,15 +24,19 @@ const EVERY_PACKAGE = ["**"];
 export function readManifest(name: string, text: string, sink: Sink): string[] {
   text = text.replace(/^\uFEFF/, "");
   if (name === "package.yaml") return readYamlManifest(text, sink);
-  let pkg: { scripts?: unknown; workspaces?: unknown };
+  let parsed: unknown;
   try {
-    pkg = JSON.parse(text) as typeof pkg;
-    if (typeof pkg !== "object" || pkg === null) throw new Error("not an object");
+    parsed = JSON.parse(text);
   } catch {
     // Also package.json5, unless it's plain JSON: PermLang doesn't parse JSON5.
+    parsed = undefined;
+  }
+  // A package manager reads only an object; anything else is a file PermLang can't vouch for.
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     sink.unverifiable(`a ${name} PermLang can't read`, { line: 1, column: 1 });
     return [];
   }
+  const pkg = parsed as { scripts?: unknown; workspaces?: unknown };
   const scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? (pkg.scripts as Record<string, unknown>) : {};
   const from = Math.max(0, text.indexOf('"scripts"'));
   for (const [script, command] of Object.entries(scripts)) {
@@ -123,7 +127,7 @@ interface Pattern {
 function parsePattern(raw: string, including: boolean): Pattern[] {
   const normalized = path.posix.normalize(raw.replaceAll("\\", "/")).replace(/\/+$/, "");
   // An absolute pattern selects nothing: pnpm matches paths relative to the root.
-  if (normalized.startsWith("/") || normalized === "") return [];
+  if (normalized.startsWith("/")) return [];
   const segments = normalized.split("/");
   let regex = "^";
   let separator = "";
@@ -187,7 +191,7 @@ function folders(dir: string, depth: number, seen = new Set<string>()): string[]
   if (seen.has(real)) return [];
   seen.add(real);
   const out = [dir];
-  for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+  for (const entry of entries) {
     if ((entry.isDirectory() || entry.isSymbolicLink()) && !SKIPPED.has(entry.name)) out.push(...folders(path.join(dir, entry.name), depth - 1, seen));
   }
   return out;

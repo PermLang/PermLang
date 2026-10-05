@@ -205,6 +205,9 @@
     "src/project-files.ts#listFiles": [
       "fs.read"
     ],
+    "src/project-files.ts#localFiles": [
+      "fs.read"
+    ],
     "src/project-files.ts#projectFiles": [
       "fs.read"
     ],

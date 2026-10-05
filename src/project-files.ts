@@ -81,7 +81,7 @@ class Project {
     return [...this.entries.values()]
       .map((e) => e.report())
       .filter((e) => e.actual.length > 0)
-      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+      .sort((a, b) => (a.file < b.file ? -1 : 1)); // each file has one entry
   }
 
   /**
@@ -94,9 +94,9 @@ class Project {
     const dir = path.resolve(this.root, local.ref.replace(/^\$\//, "").replaceAll("\\", "/"));
     const relative = path.relative(this.root, dir);
     const inside = relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
-    const actions = inside ? listFiles(dir, false, ACTION) : [];
+    const actions = inside ? localFiles(dir, ACTION) : [];
     for (const file of actions) this.yaml(file, "action");
-    if (actions.length === 0 && !(inside && listFiles(dir, false, DOCKERFILE).length > 0)) {
+    if (actions.length === 0 && !(inside && localFiles(dir, DOCKERFILE).length > 0)) {
       from.add(`ci.unpinned(${local.ref})`, `uses: ${local.ref}, which isn't in the repository`, local.at);
     }
   }
@@ -198,6 +198,18 @@ function listFiles(dir: string, recursive: boolean, match: RegExp, seen = new Se
     else if (recursive && (entry.isDirectory() || entry.isSymbolicLink())) out.push(...listFiles(file, true, match, seen));
   }
   return out.sort();
+}
+
+/**
+ * A local Action's files. The path comes from the workflow, so it can be one no folder
+ * can have (a NUL character, say): then it has none, and the reference is unpinned.
+ */
+function localFiles(dir: string, match: RegExp): string[] {
+  try {
+    return listFiles(dir, false, match);
+  } catch {
+    return [];
+  }
 }
 
 function isFileOrBroken(file: string): boolean {
