@@ -15,6 +15,7 @@ import { projectFiles } from "./project-files.js";
 import { findTools, handlerReach } from "./tools.js";
 import { flowDiagnostics, type FlowRule } from "./flows.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
+import { unseenFrom } from "./unseen.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
 import {
   createUnit,
@@ -31,8 +32,12 @@ import {
 
 export type Severity = "error" | "warning";
 
-/** Spec diagnostics: SPEC001 invalid spec, SPEC002 implementation not found, SPEC003 reaches beyond the spec, SPEC004 unused permission. */
-export type SpecCode = "SPEC001" | "SPEC002" | "SPEC003" | "SPEC004";
+/**
+ * Spec diagnostics: SPEC001 invalid spec, SPEC002 implementation not found (or the name matches
+ * more than one function), SPEC003 reaches beyond the spec, SPEC004 unused permission, SPEC005
+ * the implementation reaches code PermLang can't see, so it can't be checked.
+ */
+export type SpecCode = "SPEC001" | "SPEC002" | "SPEC003" | "SPEC004" | "SPEC005";
 
 export interface Diagnostic {
   severity: Severity;
@@ -105,9 +110,20 @@ export interface Report {
   /** Imported modules whose types can't be found, so nothing called from them is checked. */
   unresolved: string[];
   /** Every function analyzed, including those that reach nothing (which `functions` leaves out). */
-  units: { file: string; name: string; line: number }[];
+  units: {
+    file: string;
+    name: string;
+    line: number;
+    /** The name with what it's declared in: `Reports.build` for a function in `namespace Reports`. */
+    qualified: string;
+  }[];
   /** Functions registered as tools an AI model can call. */
   tools: ToolReport[];
+  /**
+   * Why some of what a unit runs can't be seen: imports whose types can't be found, names with no
+   * declaration. Worked out on demand (it needs TypeScript's full diagnostics), for `permlang spec`.
+   */
+  unseen?: (unit: { file: string; name: string; line: number }) => string[];
 }
 
 /**
@@ -317,8 +333,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     unsafe,
     unmapped,
     unresolved: unresolved.map((u) => u.specifier).sort(),
-    units: [...units.values()].map((u) => ({ file: u.file, name: u.name, line: u.line })),
+    units: [...units.values()].map((u) => ({ file: u.file, name: u.name, line: u.line, qualified: qualifiedName(u, units) })),
     tools,
+  };
+  report.unseen = (target) => {
+    const unit = [...units.values()].find((u) => u.file === target.file && u.name === target.name && u.line === target.line);
+    return unit ? unseenFrom(unit, edgesFrom, (node) => units.get(node)) : [];
   };
   if (options.lock) {
     const root = path.dirname(options.lock.file);
@@ -342,6 +362,18 @@ export function isRiskyForTools(capability: string): boolean {
   if (["net", "fs.read", "db.read", "env"].includes(capability)) return true;
   // Everything else is risky except reads: exec, writes, unverifiable code, and app-level actions.
   return !["net", "fs.read", "db.read", "env"].includes(capability.split("(")[0]!);
+}
+
+/** A unit's name with the namespaces and functions it's declared in, outermost first: `Reports.build`. */
+function qualifiedName(unit: Unit, units: ReadonlyMap<Node, Unit>): string {
+  const outer: string[] = [];
+  for (const a of unit.node.getAncestors()) {
+    // A method's name already has its class.
+    if (Node.isClassDeclaration(a) || Node.isClassExpression(a)) continue;
+    if (Node.isModuleDeclaration(a) && !Node.isStringLiteral(a.getNameNode())) outer.unshift(a.getName());
+    else if (!Node.isSourceFile(a) && units.has(a)) outer.unshift(units.get(a)!.name);
+  }
+  return [...outer, unit.name].join(".");
 }
 
 // --- diagnostics -------------------------------------------------------------

@@ -187,6 +187,17 @@ describe("permlang spec", () => {
     expect(out).toMatch(/svc\/ping\.perm:\d+ error SPEC003/);
   });
 
+  it("fails one whose implementation reaches code it can't see, and says how to fix it", () => {
+    write("svc/ping.ts", `import { send } from "untyped-pinger";\nexport function ping() {\n  send("https://api.example.com/");\n}\n`);
+    write("svc/ping.perm", spec("net(api.example.com)"));
+    const { code, out } = permlang("spec", "svc");
+    expect(code).toBe(1);
+    expect(out).toContain("perms     unchecked: reaches code whose types can't be found");
+    expect(out).toContain(
+      "error SPEC005: perm ping: ping reaches code PermLang can't see, so its permissions can't be checked: it calls into untyped-pinger, whose types can't be found.\n    -> install the missing types",
+    );
+  });
+
   it("reports a spec with no implementation, and one that can't be parsed", () => {
     write("svc/ping.perm", spec("net(api.example.com)", ""));
     write("svc/bad.perm", "perm broken(\n");

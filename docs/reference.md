@@ -191,7 +191,7 @@ Other gaps, not yet in fixtures:
 | `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
 | `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
-| `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
+| `SPEC001`–`SPEC005` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
 
 At sketch strictness, the rules about `@perm` annotations (`PERM001` to `PERM004`) are
 warnings. What you ask for explicitly still fails: `PERM005` (the lock file),
@@ -596,7 +596,9 @@ perm process_refund(order: Order, reason: Text) -> RefundResult
 ```
 
 `permlang spec src` checks each spec's `perms:` against what the implementation
-actually reaches. Rules and examples are parsed and reported as not yet verified.
+actually reaches. It fails when the implementation reaches code it can't see (an
+import whose types can't be found), and when the `implements:` name matches more
+than one function. Rules and examples are parsed and reported as not yet verified.
 See [docs/spec-format.md](spec-format.md).
 
 ## Real-world trial
