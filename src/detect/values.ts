@@ -11,6 +11,7 @@ import { Node, SyntaxKind, type Identifier, type SourceFile } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import { declarationCapabilities } from "./functions.js";
 import { resolveAlias, type CapabilityUse } from "./shared.js";
+import { descendantsOfKind } from "../walk.js";
 
 export interface ValueUse {
   node: Node;
@@ -19,7 +20,7 @@ export interface ValueUse {
 
 export function valueUses(sourceFile: SourceFile, adapters: AdapterIndex): ValueUse[] {
   const out: ValueUse[] = [];
-  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+  for (const id of descendantsOfKind(sourceFile, SyntaxKind.Identifier)) {
     const site = referenceExpression(id);
     if (!site || isExempt(site)) continue;
     if (site.getType().getCallSignatures().length === 0) continue;

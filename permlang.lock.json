@@ -82,6 +82,18 @@
       "fs.write",
       "fs.write(.github/workflows/permlang.yml)"
     ],
+    "src/load.ts#add": [
+      "fs.read"
+    ],
+    "src/load.ts#blanking": [
+      "fs.read"
+    ],
+    "src/load.ts#projectOfFiles": [
+      "fs.read"
+    ],
+    "src/load.ts#projectOfTsConfig": [
+      "fs.read"
+    ],
     "src/main.ts#analyze": [
       "fs.read",
       "fs.read(permlang.config.json)",

@@ -7,6 +7,7 @@
 import { Node, SyntaxKind, type SourceFile } from "ts-morph";
 import type { Capability } from "../capability.js";
 import { literalString, type CapabilityUse } from "./shared.js";
+import { forEachDescendant } from "../walk.js";
 
 export interface EnvUse {
   node: Node;
@@ -15,7 +16,7 @@ export interface EnvUse {
 
 export function envUses(sourceFile: SourceFile): EnvUse[] {
   const out: EnvUse[] = [];
-  sourceFile.forEachDescendant((n) => {
+  forEachDescendant(sourceFile, (n) => {
     if (!Node.isIdentifier(n) && !Node.isPropertyAccessExpression(n) && !Node.isElementAccessExpression(n)) return;
     if (isNameNode(n) || !isProcessEnv(n) || n.getFirstAncestor((a) => Node.isTypeNode(a))) return;
     const found = classify(n);

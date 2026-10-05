@@ -7,6 +7,7 @@
 import { Node, type CallExpression, type NewExpression, type SourceFile } from "ts-morph";
 import { packageOf } from "./adapters.js";
 import { literalString, resolvedDeclaration } from "./detect/shared.js";
+import { forEachDescendant } from "./walk.js";
 
 export interface ToolRegistration {
   /** The tool's name as the model sees it, or `*` for a handler that serves every tool. */
@@ -38,7 +39,7 @@ const HANDLER_KEYS = new Set(["execute", "run", "func", "handler", "invoke", "ca
 
 export function findTools(sourceFile: SourceFile): ToolRegistration[] {
   const out: ToolRegistration[] = [];
-  sourceFile.forEachDescendant((node) => {
+  forEachDescendant(sourceFile, (node) => {
     if (!Node.isCallExpression(node) && !Node.isNewExpression(node)) return;
     const declaration = resolvedDeclaration(node);
     if (!declaration) return;

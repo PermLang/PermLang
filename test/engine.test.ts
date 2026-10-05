@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import fc from "fast-check";
 import { afterAll, describe, expect, it } from "vitest";
 import { Project, ts } from "ts-morph";
-import { checkProject, checkTsConfig, type Report } from "../src/check.js";
+import { checkFiles, checkProject, checkTsConfig, type Report } from "../src/check.js";
 import { pathTo, propagate, type Edge } from "../src/graph.js";
 import type { Unit } from "../src/units.js";
 import { lineAndColumn } from "../src/walk.js";
@@ -157,5 +157,41 @@ describe("positions", () => {
     const report = checkTsConfig(tsconfig);
     expect(performance.now() - started).toBeLessThan(30_000);
     expect(report.diagnostics.map((d) => `${d.line} ${d.code} ${d.function}`)).toEqual(["10002 PERM003 t"]);
+  });
+});
+
+describe("very deeply nested code", () => {
+  it("is analyzed when it's valid, such as a 10,000-term concatenation", () => {
+    const deep = `export function t(x: string) { return fetch("https://deep.example/") + x${' + "a"'.repeat(10_000)}; }\n`;
+    const report = checkTsConfig(project({ "src/deep.ts": deep }));
+    expect(errors(report, "deep.ts")).toEqual(["1 PERM003 net(deep.example)"]);
+  });
+
+  it("is reported as unverifiable when it can't be analyzed, and the other files still are", () => {
+    const report = checkTsConfig(project({
+      "src/nested.ts": `export const v = ${"(".repeat(5_000)}1${")".repeat(5_000)};\n`,
+      // It imports the file that can't be parsed, and gets an empty module.
+      "src/ok.ts": 'import * as nested from "./nested.js";\nexport function t() { return fetch("https://ok.example/"); }\nexport { nested };\n',
+    }));
+    expect(errors(report, "nested.ts")).toEqual(["1 PERM004 unverifiable"]);
+    expect(report.diagnostics.find((d) => d.file.endsWith("nested.ts"))?.message).toMatch(/couldn't be analyzed \(its code is nested too deeply\)/);
+    // Importing it runs what it stands for.
+    expect(errors(report, "ok.ts")).toEqual(["1 PERM004 unverifiable", "2 PERM003 net(ok.example)"]);
+    expect(report.diagnostics.find((d) => d.file.endsWith("nested.ts"))?.fix).toMatch(/^simplify the file/);
+  });
+
+  it("is reported the same way through checkFiles, with paths or patterns", () => {
+    const tsconfig = project({
+      "src/nested.ts": `export const v = ${"[".repeat(5_000)}1${"]".repeat(5_000)};\n`,
+      "src/other.ts": 'export function t() { return fetch("https://other.example/"); }\n',
+    });
+    const src = path.join(path.dirname(tsconfig), "src").replaceAll("\\", "/");
+    const report = checkFiles([`${src}/nested.ts`, `${src}/o*.ts`]);
+    expect(errors(report, "nested.ts")).toEqual(["1 PERM004 unverifiable"]);
+    expect(errors(report, "other.ts")).toEqual(["1 PERM003 net(other.example)"]);
+  });
+
+  it("doesn't hide other problems loading a project", () => {
+    expect(() => checkTsConfig(path.join(path.dirname(project({})), "missing", "tsconfig.json"))).toThrow();
   });
 });
