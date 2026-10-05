@@ -23,10 +23,20 @@ export async function forms(override: { text: string }, options: { sql: string }
   // mysql2 pastes a value's toSqlString() into the SQL.
   await myp.query("SELECT * FROM leads WHERE id = ?", [{ toSqlString: () => "(SELECT max(id) FROM secrets)" }]); // expect: error PERM001 db.read expect: error PERM001 db.write
   my.query("SELECT * FROM leads WHERE id = ?", [mysql.raw("(SELECT max(id) FROM secrets)")]); // expect: error PERM001 db.read expect: error PERM001 db.write
+  // ...also in a named placeholder, a bulk insert's rows, or an options object's values.
+  await myp.query("SELECT * FROM leads WHERE id = :id", { id: mysql.raw("1") }); // expect: error PERM001 db.read expect: error PERM001 db.write
+  await myp.query("INSERT INTO leads (a, b) VALUES ?", [[[1, mysql.raw("(SELECT 1 FROM secrets)")]]]); // expect: error PERM001 db.read expect: error PERM001 db.write
+  const values = [mysql.raw("(SELECT 1 FROM secrets)")];
+  await myp.query({ sql: "SELECT * FROM leads WHERE id = ?", values }); // expect: error PERM001 db.read expect: error PERM001 db.write
   // An array made to look like a template's strings runs as a query.
   const strings = Object.assign(["DELETE FROM users"], { raw: ["DELETE FROM users"] });
   await sql(strings as any); // expect: error PERM001 db.read expect: error PERM001 db.write
+  await sql(strings as unknown); // expect: error PERM001 db.read expect: error PERM001 db.write
   await nsql(strings as unknown as TemplateStringsArray); // expect: error PERM001 db.read expect: error PERM001 db.write
   const hidden = (): object => strings;
   await nsql(hidden() as never); // expect: error PERM001 db.read expect: error PERM001 db.write
+  // Text that isn't a constant: a parameter named in shorthand.
+  await ((text: string) => pool.query({ text }))("SELECT 1"); // expect: error PERM001 db.read expect: error PERM001 db.write
+  // A query method passed along runs whatever SQL it's given.
+  [strings].forEach(pool.query); // expect: error PERM001 db.read expect: error PERM001 db.write
 }

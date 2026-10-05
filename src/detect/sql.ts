@@ -7,7 +7,7 @@
 // so the literal parts still name the tables. A template string passed to query()
 // is concatenation, which is how SQL injection happens: it is unknown.
 
-import { Node, type Type } from "ts-morph";
+import { Node, type PropertyAssignment, type ShorthandPropertyAssignment, type Type } from "ts-morph";
 import { packageName, packageOf } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { sqlTables } from "./sql-tables.js";
@@ -77,8 +77,9 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
     return fromSql(templateText(call.getTemplate()));
   }
   // A call signature: postgres.js's `sql(value)` helper, or a tag called as a function.
+  // Passed along as a value (to a repository, say), it is checked where it's called.
   if (Node.isCallSignatureDeclaration(declaration) || Node.isFunctionTypeNode(declaration)) {
-    return TAG_PACKAGES.has(name) && call ? directCall(declaration, argumentsOf(call)[0], TEXT_CALL_PACKAGES.has(name)) : [];
+    return call ? directCall(declaration, argumentsOf(call)[0], TEXT_CALL_PACKAGES.has(name)) : [];
   }
   // A constructor, or a function from the package, touches no table unless listed below.
   const method = memberName(declaration);
@@ -89,11 +90,10 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   if (TEXT_METHODS[name]!.includes(method) && (!textContainer || containerName(declaration) === textContainer)) {
     // Used as a value (no call), the SQL is unknown.
     if (!call) return unknown;
-    const [text, ...rest] = argumentsOf(call);
+    const args = argumentsOf(call);
     // mysql2 pastes a value's toSqlString() into the SQL as it is: mysql.raw(...) does this.
-    const values = [text && configValues(text), ...rest].filter((v): v is Node => v !== undefined);
-    if (name === "mysql2" && values.some(carriesSql)) return unknown;
-    return fromSql(queryText(text));
+    if (name === "mysql2" && args.some((a) => carriesSql(a.getType(), a))) return unknown;
+    return fromSql(queryText(args[0]));
   }
   if (SAFE_METHODS[name]?.includes(method) || (textContainer && containerName(declaration) !== textContainer && TEXT_METHODS[name]!.includes(method))) {
     return [];
@@ -109,12 +109,12 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
  * postgres.js's `sql("name")`, build values.
  */
 function directCall(signature: Node & { getParameters(): Node[] }, first: Node | undefined, takesText: boolean): Capability[] {
-  const parameter = signature.getParameters()[0]?.getType();
-  if (takesText && parameter?.isString()) return fromSql(queryText(first));
-  if (parameter?.getSymbol()?.getName() === "TemplateStringsArray") return unknown;
-  const type = first && unwrapExpression(first).getType();
-  const written = first?.getType();
-  return [type, written].some((t) => t && (t.isAny() || t.isUnknown() || t.getProperty("raw") !== undefined)) ? unknown : [];
+  if (!first) return [];
+  const parameter = signature.getParameters()[0]!.getType();
+  if (takesText && parameter.isString()) return fromSql(queryText(first));
+  if (parameter.getSymbol()?.getName() === "TemplateStringsArray") return unknown;
+  const types = [first.getType(), unwrapExpression(first).getType()];
+  return types.some((t) => t.isAny() || t.isUnknown() || t.getProperty("raw") !== undefined) ? unknown : [];
 }
 
 function fromSql(sql: string | undefined): Capability[] {
@@ -139,52 +139,44 @@ function queryText(arg: Node | undefined): string | undefined {
   if (direct !== undefined) return direct;
   if (!Node.isObjectLiteralExpression(inner)) return undefined;
   const props = inner.getProperties();
-  if (!props.every((p) => (Node.isPropertyAssignment(p) && !Node.isComputedPropertyName(p.getNameNode())) || Node.isShorthandPropertyAssignment(p))) {
-    return undefined;
-  }
-  const sql = props.filter((p) => ["text", "sql"].includes(keyOf(p)));
-  if (sql.length !== 1) return undefined;
-  const value = Node.isPropertyAssignment(sql[0]!) ? sql[0].getInitializer() : (sql[0] as Node & { getNameNode(): Node }).getNameNode();
-  return literalString(value);
+  const written = props.filter(
+    (p): p is PropertyAssignment | ShorthandPropertyAssignment => (Node.isPropertyAssignment(p) && !Node.isComputedPropertyName(p.getNameNode())) || Node.isShorthandPropertyAssignment(p),
+  );
+  if (written.length !== props.length) return undefined;
+  const sql = written.filter((p) => ["text", "sql"].includes(keyOf(p)));
+  return sql.length === 1 ? propertyText(sql[0]!) : undefined;
 }
 
 /** A property's name, without quotes. */
-function keyOf(prop: Node): string {
-  const name = (prop as Node & { getNameNode(): Node }).getNameNode();
+function keyOf(prop: PropertyAssignment | ShorthandPropertyAssignment): string {
+  const name = prop.getNameNode();
   return Node.isStringLiteral(name) ? name.getLiteralValue() : name.getText();
 }
 
-/** The `values` of a mysql2 `{ sql, values }` options object, or nothing to check. */
-function configValues(arg: Node): Node | undefined {
-  const inner = unwrapExpression(arg);
-  if (!Node.isObjectLiteralExpression(inner)) return undefined;
-  const values = inner.getProperty("values");
-  return values && Node.isPropertyAssignment(values) ? values.getInitializer() : undefined;
+/** The text a property holds: `{ text: "..." }`, or `{ text }` naming a constant. */
+function propertyText(prop: PropertyAssignment | ShorthandPropertyAssignment): string | undefined {
+  if (Node.isPropertyAssignment(prop)) return literalString(prop.getInitializer());
+  const declaration = prop.getValueSymbol()?.getValueDeclaration();
+  return declaration && Node.isVariableDeclaration(declaration) ? literalString(declaration.getNameNode()) : undefined;
 }
 
-/** Whether a mysql2 value, or one inside it, has a `toSqlString` method. */
-function carriesSql(value: Node): boolean {
-  const inner = unwrapExpression(value);
-  if (Node.isArrayLiteralExpression(inner)) return inner.getElements().some(carriesSql);
-  if (Node.isObjectLiteralExpression(inner)) {
-    // The value itself, if it defines toSqlString, or a named placeholder's value: { id: ... }.
-    return inner.getProperties().some((p) => {
-      if (Node.isSpreadAssignment(p)) return hasToSqlString(p.getExpression().getType());
-      if (keyOf(p) === "toSqlString") return true;
-      if (Node.isPropertyAssignment(p)) return carriesSql(p.getInitializer()!);
-      return Node.isShorthandPropertyAssignment(p) && hasToSqlString(p.getNameNode().getType());
-    });
-  }
-  return hasToSqlString(inner.getType());
-}
-
-function hasToSqlString(type: Type, depth = 0): boolean {
-  if (depth > 3) return false;
+/**
+ * Whether a mysql2 argument holds a value with a `toSqlString` method: itself, an
+ * element of its arrays (bulk inserts nest them), a named placeholder's value, or
+ * the `values` of a `{ sql, values }` options object. Read from the type, so a
+ * value held in a variable counts too.
+ */
+function carriesSql(type: Type, at: Node, seen = new Set<object>()): boolean {
+  if (seen.has(type.compilerType)) return false;
+  seen.add(type.compilerType);
   if (type.getProperty("toSqlString")) return true;
-  if (type.isUnion()) return type.getUnionTypes().some((t) => hasToSqlString(t, depth + 1));
-  if (type.isArray()) return hasToSqlString(type.getArrayElementTypeOrThrow(), depth + 1);
-  if (type.isTuple()) return type.getTupleElements().some((t) => hasToSqlString(t, depth + 1));
-  return false;
+  const parts =
+    type.isUnion() ? type.getUnionTypes()
+    : type.isArray() ? [type.getArrayElementTypeOrThrow()]
+    : type.isTuple() ? type.getTupleElements()
+    : type.isObject() && type.getCallSignatures().length === 0 ? type.getProperties().map((p) => p.getTypeAtLocation(at))
+    : [];
+  return parts.some((t) => carriesSql(t, at, seen));
 }
 
 /**

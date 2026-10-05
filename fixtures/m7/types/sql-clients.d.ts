@@ -78,8 +78,9 @@ declare module "postgres" {
     cursor(rows?: number): AsyncIterable<unknown[]>;
   }
   interface Sql {
-    (strings: TemplateStringsArray, ...values: unknown[]): PendingQuery;
+    // Like postgres.js 3.4, the helper overload comes first.
     (name: string): Helper;
+    (strings: TemplateStringsArray, ...values: unknown[]): PendingQuery;
     unsafe(query: string): Promise<unknown[]>;
     file(path: string): Promise<unknown[]>;
     end(): Promise<void>;

@@ -19,10 +19,24 @@ export async function modifiers() {
 }
 
 // Plain values, written-out config objects, and postgres.js helpers outside a query.
-/** @perm db.read(leads) */
+/** @perm db.read(leads), db.write(leads) */
 export async function plain(id: number) {
-  await myp.query("SELECT * FROM leads WHERE id = ?", [id]);
+  await myp.query("SELECT * FROM leads WHERE id = ?", [id, new Date()]);
+  await myp.query("SELECT * FROM leads WHERE id = :id OR owner = :owner", { id, owner: id });
+  await myp.query("INSERT INTO leads (a, b) VALUES ?", [[[1, 2], [3, 4]]]);
   await myp.query({ sql: "SELECT * FROM leads WHERE id = ?", values: [id] });
-  await pool.query({ text: "SELECT * FROM leads WHERE id = $1", values: [id] });
+  await myp.query({ "sql": "SELECT * FROM leads" });
+  const text = "SELECT * FROM leads WHERE id = $1";
+  await pool.query({ text, values: [id] });
+  sql();
   return sql("leads");
 }
+
+// The client passed along is checked where it's called.
+class Repo {
+  constructor(private readonly db: typeof sql) {}
+  /** @perm db.read(leads) */
+  all() { return this.db`SELECT * FROM leads`; }
+}
+/** @perm db.read(leads) */
+export function repo() { return new Repo(sql).all(); }
