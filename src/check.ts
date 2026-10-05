@@ -226,6 +226,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   const isOwnDeclarationFile = ownDeclarationFiles(sourceFiles);
   const declaredUnit = (node: Node): Unit | undefined => {
     if (Node.isSourceFile(node) || !node.getSourceFile().isDeclarationFile() || !isOwnDeclarationFile(node.getSourceFile())) return undefined;
+    if (unitNodeForDeclaration(node) !== node) return undefined; // not a value the project declares (an ambient package, a type)
     if (!declared.has(node)) declared.set(node, createDeclaredUnit(node));
     return declared.get(node);
   };

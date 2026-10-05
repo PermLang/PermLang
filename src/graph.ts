@@ -13,7 +13,7 @@
 //     or a const holding one): the callee can call any of them, like a function passed to it;
 //   - a decorator, which runs where the class is defined (a member's is charged to the member).
 
-import { Node, SyntaxKind, type Identifier, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, ts, VariableDeclarationKind, type ClassDeclaration, type ClassExpression, type Identifier, type SourceFile, type Type } from "ts-morph";
 import type { AdapterIndex } from "./adapters.js";
 import { UNVERIFIABLE, formatCapability, type Capability } from "./capability.js";
 import { classifyComputedCall, computedCallee } from "./detect/computed.js";
@@ -88,52 +88,91 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     for (const member of members) add(call, member, call, callText(call));
   }
 
-  // Property reads that run getters without an `a.b`: `const { g } = b`, `b["g"]`.
-  const addMembers = (from: Node, type: Type, names: (name: string) => boolean, text: string) => {
+  // Property reads that run getters without an `a.b`: `const { g } = b`, `({ g } = b)`, `b["g"]`, `{ ...b }`.
+  const addMembers = (from: Node, type: Type, names: (name: string) => boolean, text: string, gettersOnly = false) => {
     for (const property of type.getProperties()) {
       if (!names(property.getName())) continue;
       for (const d of property.getDeclarations()) {
-        add(from, unitNodeForDeclaration(d), from, text);
-        for (const impl of ctx.hierarchy.implementations(d)) add(from, impl, from, text);
+        for (const target of [unitNodeForDeclaration(d), ...ctx.hierarchy.implementations(d)]) {
+          if (!gettersOnly || (target && Node.isGetAccessorDeclaration(target))) add(from, target, from, text);
+        }
       }
     }
   };
-  for (const element of sourceFile.getDescendantsOfKind(SyntaxKind.BindingElement)) {
+  const named = (name: string | undefined) => (n: string) => name === undefined || n === name;
+  for (const element of descendantsOfKind(sourceFile, SyntaxKind.BindingElement)) {
     const pattern = element.getParent();
     if (!Node.isObjectBindingPattern(pattern)) continue;
-    // `...rest` copies every property, running every getter.
-    const name = element.getDotDotDotToken() ? undefined : (element.getPropertyNameNode()?.getText() ?? element.getName());
-    addMembers(element, pattern.getType(), (n) => name === undefined || n === name, element.getText());
+    // `...rest` copies every property, running every getter; so may a computed key.
+    const name = element.getDotDotDotToken() ? undefined : propertyKey(element.getPropertyNameNode() ?? element.getNameNode());
+    addMembers(element, pattern.getType(), named(name), element.getText());
   }
-  for (const access of sourceFile.getDescendantsOfKind(SyntaxKind.ElementAccessExpression)) {
+  for (const access of descendantsOfKind(sourceFile, SyntaxKind.ElementAccessExpression)) {
     const key = literalString(access.getArgumentExpression());
     if (key !== undefined) addMembers(access, access.getExpression().getType(), (n) => n === key, access.getText());
   }
+  // Copying an object runs its getters: `{ ...b }`.
+  for (const spread of descendantsOfKind(sourceFile, SyntaxKind.SpreadAssignment)) {
+    if (isAssignmentTarget(spread.getParentOrThrow())) continue;
+    addMembers(spread, spread.getExpression().getType(), named(undefined), spread.getText(), true);
+  }
 
   // Methods the language calls implicitly.
-  for (const node of sourceFile.getDescendantsOfKind(SyntaxKind.AwaitExpression)) {
+  const iterator = (n: string) => n.startsWith("__@iterator") || n.startsWith("__@asyncIterator");
+  for (const node of descendantsOfKind(sourceFile, SyntaxKind.AwaitExpression)) {
     addMembers(node, node.getExpression().getType(), (n) => n === "then", node.getText().slice(0, 60));
   }
   const toPrimitive = (n: string) => n === "toString" || n === "valueOf" || n.startsWith("__@toPrimitive");
-  for (const template of sourceFile.getDescendantsOfKind(SyntaxKind.TemplateExpression)) {
+  for (const template of descendantsOfKind(sourceFile, SyntaxKind.TemplateExpression)) {
     for (const span of template.getTemplateSpans()) addMembers(span, span.getExpression().getType(), toPrimitive, template.getText().slice(0, 60));
   }
-  for (const binary of sourceFile.getDescendantsOfKind(SyntaxKind.BinaryExpression)) {
-    if (binary.getOperatorToken().getKind() !== SyntaxKind.PlusToken) continue;
-    const [left, right] = [binary.getLeft(), binary.getRight()];
-    const text = binary.getText().slice(0, 60);
-    if (isStringType(left.getType())) addMembers(binary, right.getType(), toPrimitive, text);
-    if (isStringType(right.getType())) addMembers(binary, left.getType(), toPrimitive, text);
+  // Arithmetic, comparisons, `+`, and `==` convert objects to primitives: `o * 2`, `"x" + o`, `s += o`.
+  const convert = (node: Node, operand: Node) => {
+    const type = operand.getType();
+    // (A primitive's methods are all in the standard library: skip looking them up.)
+    if ((type.getFlags() & PRIMITIVE) === 0) addMembers(node, type, toPrimitive, node.getText().slice(0, 60));
+  };
+  for (const binary of descendantsOfKind(sourceFile, SyntaxKind.BinaryExpression)) {
+    const operator = binary.getOperatorToken().getKind();
+    if (CONVERTING.has(operator)) for (const operand of [binary.getLeft(), binary.getRight()]) convert(binary, operand);
+    // `x instanceof K` runs K's static [Symbol.hasInstance].
+    if (operator === SyntaxKind.InstanceOfKeyword) {
+      addMembers(binary, binary.getRight().getType(), (n) => n.startsWith("__@hasInstance"), binary.getText().slice(0, 60));
+    }
+    // `({ g } = b)` reads b.g, like `const { g } = b`; `[x] = b` iterates b.
+    const target = binary.getLeft();
+    if (operator === SyntaxKind.EqualsToken && Node.isObjectLiteralExpression(target)) {
+      for (const p of target.getProperties()) {
+        const name = Node.isSpreadAssignment(p) ? undefined : propertyKey(p.getNameNode());
+        addMembers(p, binary.getRight().getType(), named(name), p.getText());
+      }
+    }
+    if (operator === SyntaxKind.EqualsToken && Node.isArrayLiteralExpression(target)) {
+      addMembers(binary, binary.getRight().getType(), iterator, binary.getText().slice(0, 60));
+    }
   }
-  const iterator = (n: string) => n.startsWith("__@iterator") || n.startsWith("__@asyncIterator");
-  for (const loop of sourceFile.getDescendantsOfKind(SyntaxKind.ForOfStatement)) {
+  for (const unary of [...descendantsOfKind(sourceFile, SyntaxKind.PrefixUnaryExpression), ...descendantsOfKind(sourceFile, SyntaxKind.PostfixUnaryExpression)]) {
+    if (unary.getOperatorToken() !== SyntaxKind.ExclamationToken) convert(unary, unary.getOperand());
+  }
+  for (const loop of descendantsOfKind(sourceFile, SyntaxKind.ForOfStatement)) {
     addMembers(loop, loop.getExpression().getType(), iterator, `for (... of ${loop.getExpression().getText()})`);
   }
-  for (const spread of sourceFile.getDescendantsOfKind(SyntaxKind.SpreadElement)) {
+  for (const spread of descendantsOfKind(sourceFile, SyntaxKind.SpreadElement)) {
     addMembers(spread, spread.getExpression().getType(), iterator, spread.getText());
   }
-  for (const pattern of sourceFile.getDescendantsOfKind(SyntaxKind.ArrayBindingPattern)) {
+  for (const pattern of descendantsOfKind(sourceFile, SyntaxKind.ArrayBindingPattern)) {
     addMembers(pattern, pattern.getType(), iterator, pattern.getText());
+  }
+  for (const yieldStar of descendantsOfKind(sourceFile, SyntaxKind.YieldExpression)) {
+    const delegated = yieldStar.getExpression();
+    if (yieldStar.getAsteriskToken() && delegated) addMembers(yieldStar, delegated.getType(), iterator, yieldStar.getText().slice(0, 60));
+  }
+  // `using r = ...` runs r[Symbol.dispose]() when the block ends; `await using`, [Symbol.asyncDispose]().
+  for (const list of descendantsOfKind(sourceFile, SyntaxKind.VariableDeclarationList)) {
+    const kind = list.getDeclarationKind();
+    if (kind !== VariableDeclarationKind.Using && kind !== VariableDeclarationKind.AwaitUsing) continue;
+    const disposes = (n: string) => n.startsWith("__@dispose") || (kind === VariableDeclarationKind.AwaitUsing && n.startsWith("__@asyncDispose"));
+    for (const declaration of list.getDeclarations()) addMembers(declaration, declaration.getType(), disposes, declaration.getText().slice(0, 60));
   }
 
   // Calls: the resolved declaration, dispatch to implementations, computed members.
@@ -158,9 +197,13 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     // super(...) runs the base constructor, explicit or implicit (an implicit one resolves to no declaration).
     if (Node.isCallExpression(call) && call.getExpression().getKind() === SyntaxKind.SuperKeyword) {
       const cls = call.getFirstAncestor((a) => Node.isClassDeclaration(a) || Node.isClassExpression(a));
-      const base = cls && (Node.isClassDeclaration(cls) || Node.isClassExpression(cls)) ? cls.getBaseClass() : undefined;
-      if (base) add(call, constructorUnitNode(base), call, text);
+      for (const base of cls && (Node.isClassDeclaration(cls) || Node.isClassExpression(cls)) ? baseClasses(cls) : []) {
+        add(call, constructorUnitNode(base), call, text);
+      }
     }
+    // `new K()` where K holds a class built by an expression (`const K = make()`, a mixin):
+    // its type names the class, even with no declaration to resolve to.
+    if (Node.isNewExpression(call)) for (const cls of constructedClasses(call.getExpression())) add(call, constructorUnitNode(cls), call, text);
 
     const declaration = resolvedDeclaration(call);
     if (declaration) {
@@ -180,15 +223,15 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     }
   });
 
-  // An implicit constructor runs the base class's constructor.
-  for (const cls of [...sourceFile.getDescendantsOfKind(SyntaxKind.ClassDeclaration), ...sourceFile.getDescendantsOfKind(SyntaxKind.ClassExpression)]) {
-    const base = cls.getBaseClass();
-    if (!base || constructorUnitNode(cls) !== cls) continue;
+  // An implicit constructor runs the base class's constructor (`extends Base`, or a mixin's class).
+  for (const cls of [...descendantsOfKind(sourceFile, SyntaxKind.ClassDeclaration), ...descendantsOfKind(sourceFile, SyntaxKind.ClassExpression)]) {
+    if (constructorUnitNode(cls) !== cls) continue;
     const from = ctx.unitOf(cls);
-    const to = ctx.unitOf(constructorUnitNode(base));
-    if (!from || !to) continue;
     const { line, column } = sourceFile.getLineAndColumnAtPos(cls.getStart());
-    edges.push({ from, to, call: `extends ${base.getName() ?? "base class"}`, line, column });
+    for (const base of baseClasses(cls)) {
+      const to = ctx.unitOf(constructorUnitNode(base));
+      if (from && to) edges.push({ from, to, call: `extends ${cls.getExtends()!.getExpression().getText().replace(/\s+/g, " ").slice(0, 60)}`, line, column });
+    }
   }
 
   // Imports and re-exports run the target module's top level, and so does `import x = require("y")`.
@@ -200,6 +243,19 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     if (!decl.isTypeOnly() && Node.isExternalModuleReference(decl.getModuleReference())) addFromModule(decl.getExternalModuleReferenceSourceFile(), decl);
   }
   return edges;
+}
+
+/** The classes a value of this expression's type constructs: a class, or the classes a mixin combines. */
+function constructedClasses(expression: Node): (ClassDeclaration | ClassExpression)[] {
+  const type = expression.getType();
+  const parts = type.isIntersection() ? type.getIntersectionTypes() : type.isUnion() ? type.getUnionTypes() : [type];
+  return parts.flatMap((t) => (t.getSymbol()?.getDeclarations() ?? []).filter((d) => Node.isClassDeclaration(d) || Node.isClassExpression(d)));
+}
+
+/** The classes a class extends: `extends Base`, or what `extends Mixin(Base)` returns. */
+function baseClasses(cls: ClassDeclaration | ClassExpression): (ClassDeclaration | ClassExpression)[] {
+  const heritage = cls.getExtends()?.getExpression();
+  return heritage ? constructedClasses(heritage) : [];
 }
 
 /** The symbol an identifier refers to as a value, or undefined if it isn't a value reference. */
@@ -327,6 +383,31 @@ export function holderOf(reach: Reach, unit: Unit, key: string): Unit {
   return holder;
 }
 
-function isStringType(type: Type): boolean {
-  return type.isString() || type.isStringLiteral() || type.isTemplateLiteral();
+const PRIMITIVE = ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.BooleanLike |
+  ts.TypeFlags.EnumLike | ts.TypeFlags.ESSymbolLike | ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void;
+
+// Operators that convert their operands to primitives (`===`, `&&`, `??` and the like don't).
+const CONVERTING = new Set([
+  SyntaxKind.PlusToken, SyntaxKind.MinusToken, SyntaxKind.AsteriskToken, SyntaxKind.SlashToken, SyntaxKind.PercentToken,
+  SyntaxKind.AsteriskAsteriskToken, SyntaxKind.LessThanToken, SyntaxKind.GreaterThanToken, SyntaxKind.LessThanEqualsToken,
+  SyntaxKind.GreaterThanEqualsToken, SyntaxKind.EqualsEqualsToken, SyntaxKind.ExclamationEqualsToken, SyntaxKind.AmpersandToken,
+  SyntaxKind.BarToken, SyntaxKind.CaretToken, SyntaxKind.LessThanLessThanToken, SyntaxKind.GreaterThanGreaterThanToken,
+  SyntaxKind.GreaterThanGreaterThanGreaterThanToken, SyntaxKind.PlusEqualsToken, SyntaxKind.MinusEqualsToken,
+  SyntaxKind.AsteriskEqualsToken, SyntaxKind.SlashEqualsToken, SyntaxKind.PercentEqualsToken, SyntaxKind.AsteriskAsteriskEqualsToken,
+  SyntaxKind.AmpersandEqualsToken, SyntaxKind.BarEqualsToken, SyntaxKind.CaretEqualsToken, SyntaxKind.LessThanLessThanEqualsToken,
+  SyntaxKind.GreaterThanGreaterThanEqualsToken, SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+]);
+
+/** The property a destructuring key names: `data`, `"data"`, `[KEY]` with a literal KEY; undefined when it can't be known. */
+function propertyKey(name: Node): string | undefined {
+  if (Node.isIdentifier(name) || Node.isPrivateIdentifier(name)) return name.getText();
+  if (Node.isStringLiteral(name) || Node.isNumericLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralText();
+  if (Node.isComputedPropertyName(name)) return literalString(name.getExpression());
+  return undefined;
+}
+
+/** The left side of `=`: `({ a } = b)` destructures rather than builds an object. */
+function isAssignmentTarget(node: Node): boolean {
+  const parent = node.getParent();
+  return parent !== undefined && Node.isBinaryExpression(parent) && parent.getLeft() === node && parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken;
 }

@@ -131,7 +131,23 @@ const caught: Record<string, string> = {
   en35_class_decorator: "import { execSync } from \"node:child_process\";\nfunction logged(c: unknown, _ctx: ClassDecoratorContext) { execSync(\"ls\"); }\n@logged class C {}\nexport { C };",
   en36_member_decorator: "import { execSync } from \"node:child_process\";\nfunction traced(m: unknown, _ctx: ClassMethodDecoratorContext) { execSync(\"ls\"); }\nexport class C { @traced m() {} }",
   en37_decorator_member_access: "import { execSync } from \"node:child_process\";\nconst reg = { track(c: unknown, _x: ClassDecoratorContext) { execSync(\"ls\"); } };\n@reg.track class C {}\nexport { C };",
-  en21_generic_alias:"type Repo<T> = { load(id: string): Promise<T> };\nclass Leads implements Repo<string> { async load(id: string) { return (await fetch(\"https://leads.example/\" + id)).text(); } }\nexport function t(r: Repo<string>, id: string) { return r.load(id); }",
+  // Engine review (0.4): methods the language calls implicitly, and classes built by expressions.
+  en38_object_spread_getter: "const o38 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { return { ...o38 }; }",
+  en39_quoted_destructure_getter: "const o39 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const { \"data\": d } = o39; return d; }",
+  en40_destructuring_assignment_getter: "const o40 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { let d: unknown; ({ data: d } = o40); return d; }",
+  en41_valueof_multiply: "const o41 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\n// @ts-expect-error: arithmetic on an object runs its valueOf()\nexport function t() { return o41 * 2; }",
+  en42_valueof_unary_plus: "const o42 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\nexport function t() { return +o42; }",
+  en43_valueof_compare: "const o43 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\nexport function t() { return o43 < 3; }",
+  en44_valueof_compound: "const o44 = { toString() { void fetch(\"https://evil.example/x\"); return \"\"; } };\nexport function t() { let s = \"\"; s += o44; return s; }",
+  en45_yield_star: "class Feed45 { *[Symbol.iterator]() { yield fetch(\"https://evil.example/x\"); } }\nexport function* t() { yield* new Feed45(); }",
+  en46_using_dispose: "class Res46 { [Symbol.dispose]() { void fetch(\"https://evil.example/x\"); } }\nexport function t() { using r = new Res46(); return r; }",
+  en47_await_using: "class Res47 { async [Symbol.asyncDispose]() { void fetch(\"https://evil.example/x\"); } }\nexport async function t() { await using r = new Res47(); return r; }",
+  en48_instanceof: "class K48 { static [Symbol.hasInstance](x: unknown) { void fetch(\"https://evil.example/x\"); return x !== null; } }\nexport function t(x: unknown) { return x instanceof K48; }",
+  en49_class_expression_returned: "import { execSync } from \"node:child_process\";\nfunction make() { return class { x = execSync(\"ls\"); }; }\nexport function t() { const K = make(); return new K(); }",
+  en50_inline_class_expression: "import { execSync } from \"node:child_process\";\nexport function t() { return new (class { x = execSync(\"ls\"); })(); }",
+  en51_mixin: "import { execSync } from \"node:child_process\";\ntype Ctor = new (...a: any[]) => object;\nfunction Loud<T extends Ctor>(Base: T) { return class extends Base { constructor(...a: any[]) { super(...a); execSync(\"ls\"); } }; }\nclass Plain {}\nexport class Mixed extends Loud(Plain) {}",
+  en52_mixin_field: "import { execSync } from \"node:child_process\";\ntype Ctor = new (...a: any[]) => object;\nfunction Loud<T extends Ctor>(Base: T) { return class extends Base { x = execSync(\"ls\"); }; }\nclass Plain {}\nexport function t() { return new (Loud(Plain))(); }",
+  en21_generic_alias: "type Repo<T> = { load(id: string): Promise<T> };\nclass Leads implements Repo<string> { async load(id: string) { return (await fetch(\"https://leads.example/\" + id)).text(); } }\nexport function t(r: Repo<string>, id: string) { return r.load(id); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -166,6 +182,9 @@ const silent: Record<string, string> = {
   en_fp08_local_object: "/** @perm env(MODE) */\nexport function t() { const local = { run: () => fetch(\"https://x.example/\") }; void local; return process.env.MODE; }",
   en_fp09_data_object_passed: "declare function report(o: object): void;\n/** @perm env(MODE) */\nexport function t() { report({ level: \"info\", mode: process.env.MODE }); }",
   en_fp10_harmless_decorator: "function sealed(c: unknown, _ctx: ClassDecoratorContext) { Object.seal(c); }\n@sealed class C {}\nexport { C };",
+  // Copying an object runs its getters, not its methods; arithmetic on numbers and dates runs no project code.
+  en_fp11_spread_methods: "const o = { a: 1, run() { return fetch(\"https://x.example/\"); } };\nexport function t() { return { ...o }; }",
+  en_fp12_arithmetic: "export function t(a: number, b: Date, c: Date) { return a * 2 + +(b < c) - (b.valueOf() % 7); }",
   en_fp06_missing_members: "interface Uplink { transmit(u: string): void; hangUp(): void }\nconst partial = { transmit(u: string) { void fetch(u); } };\nexport function t(l: Uplink, u: string) { l.transmit(u); return partial; }",
 };
 

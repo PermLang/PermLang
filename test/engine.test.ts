@@ -77,3 +77,17 @@ describe("suggested fixes", () => {
     expect(fix("PERM004", "unverifiable")).toBe("rewrite it so what it calls is known statically, or move it into a function marked @perm-unsafe with a reason.");
   });
 });
+
+describe("classes built by expressions", () => {
+  it("are linked to `new` through their type, and named after where they're built", () => {
+    const report = checkTsConfig(project({
+      "src/app.ts": [
+        'import { execSync } from "node:child_process";',
+        'function make() { return class { x = execSync("ls"); }; }',
+        "export function t() { const K = make(); return new K(); }",
+        'export const Named = class { y = execSync("pwd"); };',
+      ].join("\n"),
+    }));
+    expect(report.functions.map((f) => f.name).sort()).toEqual(["Named.constructor", "make.<class>.constructor", "t"]);
+  });
+});

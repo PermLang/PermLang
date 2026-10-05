@@ -439,8 +439,18 @@ export function exportedDeclarations(sourceFile: SourceFile): Set<Node> {
   return out;
 }
 
-/** A class's name, or for `const C = class {...}`, the variable's. */
+/**
+ * A class's name; for `const C = class {...}` (or a property holding one), the holder's; for
+ * `export default class {}`, "default"; for one built by an expression, `make.<class>` after the
+ * function it's in.
+ */
 function className(cls: ClassDeclaration | ClassExpression): string {
+  const name = cls.getName();
+  if (name) return name;
   const holder = cls.getParent();
-  return cls.getName() ?? (holder && Node.isVariableDeclaration(holder) ? holder.getName() : "default");
+  if (holder && (Node.isVariableDeclaration(holder) || Node.isPropertyAssignment(holder) || Node.isPropertyDeclaration(holder))) return holder.getName();
+  if (Node.isClassDeclaration(cls) || (holder && Node.isExportAssignment(holder))) return "default";
+  // Built by an expression (returned from a function, a mixin, `new (class {...})()`): named by where.
+  const around = enclosingUnitNode(cls);
+  return Node.isSourceFile(around) ? "<class>" : `${unitName(around)}.<class>`;
 }
