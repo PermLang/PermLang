@@ -120,8 +120,9 @@ function relationalKey(call: CallLike | undefined): string | undefined {
  * read too, at any depth. Options that aren't written out (a variable, a spread)
  * could load any relation, so they read an unknown table.
  */
-function relationReads(config: Node | undefined): Capability[] {
+function relationReads(config: Node | undefined, depth = 0): Capability[] {
   if (!config) return [];
+  if (depth > 64) return [{ name: "db.read", dynamic: true }];
   const object = unwrapExpression(config);
   if (!Node.isObjectLiteralExpression(object)) return [{ name: "db.read", dynamic: true }];
   if (object.getProperties().some((p) => Node.isSpreadAssignment(p))) return [{ name: "db.read", dynamic: true }];
@@ -132,17 +133,29 @@ function relationReads(config: Node | undefined): Capability[] {
   if (!value || !Node.isObjectLiteralExpression(value)) return [{ name: "db.read", dynamic: true }];
   const out: Capability[] = [];
   for (const p of value.getProperties()) {
-    if (!Node.isPropertyAssignment(p) && !Node.isShorthandPropertyAssignment(p)) {
+    const key = relationKey(p);
+    if (key === undefined) {
       out.push({ name: "db.read", dynamic: true });
       continue;
     }
-    out.push({ name: "db.read", arg: p.getName() });
+    out.push({ name: "db.read", arg: key });
     const nested = Node.isPropertyAssignment(p) ? p.getInitializer() : undefined;
     const nestedValue = nested && unwrapExpression(nested);
-    if (nestedValue && Node.isObjectLiteralExpression(nestedValue)) out.push(...relationReads(nestedValue));
+    if (nestedValue && Node.isObjectLiteralExpression(nestedValue)) out.push(...relationReads(nestedValue, depth + 1));
     else if (nestedValue && !(Node.isTrueLiteral(nestedValue) || Node.isFalseLiteral(nestedValue))) out.push({ name: "db.read", dynamic: true });
   }
   return out;
+}
+
+/** A `with` key as written: `posts`, `"posts"`, or `["posts"]`; undefined when computed. */
+function relationKey(p: Node): string | undefined {
+  if (Node.isShorthandPropertyAssignment(p)) return p.getName();
+  if (!Node.isPropertyAssignment(p)) return undefined;
+  const name = p.getNameNode();
+  if (Node.isIdentifier(name)) return name.getText();
+  if (Node.isStringLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralValue();
+  if (Node.isComputedPropertyName(name)) return literalString(unwrapExpression(name.getExpression()));
+  return undefined;
 }
 
 // --- sql fragments ----------------------------------------------------------------

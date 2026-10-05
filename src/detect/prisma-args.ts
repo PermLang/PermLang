@@ -66,8 +66,11 @@ export function relationAccess(name: string, args: Node | undefined, model: Mode
   return walk.found;
 }
 
+const MAX_DEPTH = 64;
+
 class Walk {
   readonly found: Capability[] = [];
+  private depth = 0;
 
   constructor(private readonly at: Node) {}
 
@@ -199,6 +202,9 @@ class Walk {
       if (!isPlainValue(value) && mayNameRelation(value.getType(), relationsOf(model, this.at), this.at)) this.unknown(mode);
       return;
     }
+    // Arguments nested deeper than any real query are unknown, which keeps the walk off the stack's limit.
+    if (this.depth >= MAX_DEPTH) return this.unknown(mode);
+    this.depth++;
     for (const prop of value.getProperties()) {
       const key = propertyKey(prop);
       const initializer = Node.isPropertyAssignment(prop) ? prop.getInitializer() : Node.isShorthandPropertyAssignment(prop) ? prop.getNameNode() : undefined;
@@ -211,6 +217,7 @@ class Walk {
         this.unknown(mode); // a computed key, a getter, a method
       }
     }
+    this.depth--;
   }
 
   /** Each element of an array literal, or the node itself. */

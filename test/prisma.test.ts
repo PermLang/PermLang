@@ -210,6 +210,7 @@ const ext = prisma.$extends({});
 /** @perm env(NONE) */ export function fluent() { return prisma.user.findUnique({ where: { id: 1 } }).leads(); }
 /** @perm env(NONE) */ export function extended() { return ext.user.findMany({ include: { leads: true } }); }
 /** @perm env(NONE) */ export function extendedFluent() { return ext.lead.findUnique({ where: { id: 1 } }).owner().apiKeys(); }
+/** @perm env(NONE) */ export function deep() { return prisma.lead.findMany(${"{ include: { owner: { include: { leads: ".repeat(20)}true${" } } } }".repeat(20)}); }
 `,
   // prisma-client-js with a custom output folder, which copies the runtime next to it.
   "src/custom-client.ts": `
@@ -335,6 +336,8 @@ describe("related tables", () => {
     ["fluent", ["db.read(lead)", "db.read(user)"]],
     ["extended", ["db.read(lead)", "db.read(user)"]],
     ["extendedFluent", ["db.read(apiKey)", "db.read(lead)", "db.read(user)"]],
+    // Deeper than any real query: the walk stops, and what's below could be anything.
+    ["deep", ["db.read", "db.read(lead)", "db.read(user)"]],
   ];
   it.each(cases)("%s", (name, expected) => {
     expect(actual("src/default-client.ts", name)).toEqual(expected);
