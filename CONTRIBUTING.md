@@ -23,6 +23,7 @@ You need Node 20 or later.
 git clone https://github.com/PermLang/PermLang && cd PermLang
 npm install
 npm test                                          # all tests
+npm run test:coverage                             # ...and what they cover
 npm run typecheck                                 # TypeScript, strict
 npm run permlang -- check src                     # PermLang checks its own code
 ```

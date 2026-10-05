@@ -15,7 +15,7 @@ supported.
 ## Reporting a vulnerability
 
 **Please don't open a public issue.** Report it privately instead:
-go to the [Security tab](https://github.com/PermLang/permlang/security), choose
+go to the [Security tab](https://github.com/PermLang/PermLang/security), choose
 **Report a vulnerability**, and describe what you found.
 
 The most useful report includes a small code sample, the command you ran, what
