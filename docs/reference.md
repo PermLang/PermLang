@@ -7,7 +7,12 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 ## What it checks
 
 - **Annotations.** `@perm` tags in JSDoc on functions, methods, constructors,
-  accessors, and function-valued `const`s and properties.
+  accessors, function-valued `const`s and properties (in classes and in object
+  literals), `export default` functions, and a class with no constructor (the tag
+  covers its implicit one: field initializers and the base constructor). An
+  overloaded function's tag can sit on any signature. A `@perm` or `@perm-unsafe`
+  anywhere else (an interface member, a variable that isn't a function, a class
+  with a constructor, a statement) applies to nothing, and is an error (PERM002).
 - **Direct calls.** The global `fetch` and Node's `fs` / `fs/promises`
   (including `node:` imports, renamed imports, and `fs.promises.*`).
 - **Propagation.** A function's actual permissions include everything its
@@ -31,10 +36,15 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
    */
   ```
 
+  The one-line form works too: `/** @module @perm net(api.stripe.com) */`.
+
 - **Missing annotations.** At the default strictness, an exported function
-  with no `@perm` is an error (PERM003) for each capability it reaches. Private
-  helpers need no annotation; their callers must cover what they use. See
-  [Strictness levels](#strictness-levels).
+  or entry point with no `@perm` is an error (PERM003) for each capability it
+  reaches. Private helpers need no annotation; their callers must cover what they
+  use. See [exported functions and entry points](#exported-functions-and-entry-points)
+  and [Strictness levels](#strictness-levels). Each suggested fix names a place
+  the annotation attaches to: a `/** @module @perm ... */` comment for a file's
+  top-level code, the class for an implicit constructor.
 - **All v0.1 capabilities.**
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
@@ -82,19 +92,26 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `paths.forEach(unlinkSync)`, `send.call(...)` (a `const` alias is fine,
     because calls through it resolve to the original);
   - calls through an interface or base class, which reach every first-party
-    implementation, including object literals written against the type;
-  - `super()`, implicit constructors, and instance field initializers;
+    implementation (see [how calls are followed](#how-calls-are-followed));
+  - `super()`, implicit constructors, instance field initializers, classes built
+    by expressions, and mixins;
   - `{ helper }` shorthand, getters, and literal computed keys (`api["ping"]()`);
   - computed keys over a known object (`handlers[kind]()`), which reach every
     member the key allows;
-  - importing a module, which runs its top-level code (static and literal
-    `import()`).
+  - methods the language calls without a visible call (`await`, `for...of`,
+    spreading, destructuring, arithmetic and comparisons, `using`, `instanceof`);
+  - importing a module, which runs its top-level code (`import`, `export ... from`,
+    `import x = require()`, `require()`, and `import()`, including one whose
+    specifier is a `const`, an `as const` property, or an enum member).
 - **Unverifiable code (PERM004).** Code whose effects can't be determined is
   an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
-  `require()`, `import(variable)`, `vm`, `new Worker`, and computed calls on
-  sensitive objects (`fs[method]()`, `globalThis[name]()`) or behind an index
-  signature (`table[name]()`). The only way to accept it is `@perm-unsafe`,
-  which also stops it from failing the function's callers.
+  `vm`, `new Worker`, computed calls on sensitive objects (`fs[method]()`,
+  `globalThis[name]()`) or behind an index signature (`table[name]()`), loading
+  a module whose result can't be checked (see [loading modules](#loading-modules)),
+  calls into the project's own JavaScript through a hand-written `.d.ts`, and a
+  file PermLang couldn't analyze (code nested thousands of levels deep, say). The
+  only way to accept it is `@perm-unsafe`, which also stops it from failing the
+  function's callers.
 - **Project configuration (PERM005).** GitHub workflows, Actions, and
   `package.json` scripts are recorded in the lock like code: token permissions,
   secrets, Actions and whether they're pinned, install hooks. See
@@ -109,6 +126,85 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **Strictness levels, a lock file, a permission diff for pull requests, a
   GitHub Action with line annotations and code scanning, and SARIF output.** See
   below.
+
+### How calls are followed
+
+A function reaches everything the functions it can run reach. PermLang links
+them by what the code says, not by names:
+
+- **Calls and references.** A call links to the declaration it resolves to. So
+  does passing a function on (`urls.map(handler)`, `setTimeout(handler)`): the
+  receiver can call it.
+- **Interfaces and base classes.** A call or read through an interface, a type
+  alias, or a base class (`s.send(u)`, `urls.map(s.send)`, `s.send.call(...)`,
+  `this.url` for a getter) reaches every first-party implementation: classes
+  that extend or implement the type, object literals written against it, and,
+  for an interface or object type, any class or object literal in the project
+  that could be used as one, since TypeScript doesn't require `implements`. A
+  generic type is compared by the members it requires. Members declared as
+  function-typed properties (`send: (u: string) => void`) count like methods.
+- **Objects of functions handed to a call.** A function that passes an object
+  holding functions (`app.use({ run(q) {...} })`, or a `const` holding one,
+  nested in arrays and objects too) reaches those functions. Handed out by a
+  file's top-level code, they're entry points instead (see below).
+- **Implicit calls.** `await x` runs `then`; `for...of`, spreading an array,
+  array destructuring and `yield*` run the iterator; template literals,
+  arithmetic, comparisons, `==`, compound assignment, and unary `+` `-` `~`
+  `++` `--` on an object run `valueOf` / `toString` / `[Symbol.toPrimitive]`;
+  destructuring (including quoted, numeric, and computed keys, and
+  `({ a } = b)`) and `{ ...b }` run getters; `using` and `await using` run
+  `[Symbol.dispose]` / `[Symbol.asyncDispose]`; `instanceof` runs the class's
+  static `[Symbol.hasInstance]`.
+- **Classes.** `new` runs the constructor, or the implicit one (field
+  initializers and the base constructor). A class built by an expression
+  (returned from a function, a mixin, `new (class {...})()`) is found through
+  the type of what's constructed, and named after where it's built
+  (`make.<class>.constructor`).
+- **Decorators.** A class decorator (`@logged` or `@logged()`) runs with the
+  code that defines the class. A member's decorator is charged to the member.
+- **Recursion.** Functions that call each other reach what any of them does.
+
+Paths in messages keep their first 20 steps and their last 3.
+
+### Exported functions and entry points
+
+At the default strictness, these must declare what they reach:
+
+- exported functions, classes and their members, and members of exported
+  namespaces (`namespace A.B` too);
+- functions in an exported object or array, at any depth
+  (`export const api = { v1: { run() {} } }`, `export const routes = [{ handler }]`,
+  a static field of an exported class), and `export default {...}` /
+  `export = {...}` / `export = run`;
+- members of an object a function returns or hands out, if that function is
+  exported;
+- functions that top-level code hands to a call inside an object: route tables
+  (`app.route({ handler(q) {...} })`), plugin hooks
+  (`defineConfig({ plugins: [{ buildStart() {...} }] })`), AI tool definitions,
+  `Proxy` handlers;
+- the file's top-level code, which runs on import. It also reaches any function
+  it passes on: `export default withAuth(handler)` or
+  `export default { fetch: handler }` reaches `handler`.
+
+### Loading modules
+
+`import`, `export ... from`, `import x = require()`, and `import()` with a literal
+specifier are typed by TypeScript, so calls on what they load are checked like
+any others. `require()` in TypeScript, and `import()` with a specifier that isn't
+written as a literal, give `any`. PermLang traces the specifier (a literal, a
+`const`, an `as const` property, an enum member) and goes by what it names:
+
+| Loaded | Result |
+| --- | --- |
+| a file in the project | its top-level code runs, and any of its exports can be called: the caller reaches all of them |
+| a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
+| a package with no adapter | listed and warned about (PERM006), like an import of it |
+| a package declared pure, JSON, or another asset | nothing |
+| a specifier that can't be traced, or a file outside the project | unverifiable |
+
+`data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
+every form of import: the code isn't a file in the project. A query or fragment
+doesn't make a script an asset (`./evil.js?x=.css` is still `./evil.js`).
 
 ### Known limits
 
@@ -138,7 +234,9 @@ so the list can't go stale.
   whose types can't be found, including packages shimmed with
   `declare module "x";`, are reported (PERM007), whether reached by `import`,
   `import x = require()`, or a literal `import()`.
-- `Proxy` traps, which can return a capability function for any property.
+- `Proxy` traps, which can return a capability function for any property. A
+  handler's traps are entry points (or charged to the function creating the
+  `Proxy`), but a call through the `Proxy` isn't linked to them.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that
   assigns them is still reported.
@@ -151,8 +249,27 @@ Other gaps, not yet in fixtures:
 - Third-party packages without an adapter: what they touch is trusted. They are
   listed in every report and warned about (PERM006; see below).
 - A `ProcessEnv` received as a parameter typed as a plain object.
-- A decorator's arguments run when the class is defined, but are charged to the
-  decorated member.
+- A member's decorator, and a decorator's arguments, run when the class is
+  defined, but are charged to the decorated member. So at the default
+  strictness, a member decorator on a class that isn't exported isn't checked.
+- JavaScript behind the project's own hand-written `.d.ts` isn't analyzed: calls
+  into it are unverifiable, but importing it (which runs its top-level code) isn't
+  reported, and neither is reading a property it declares. To have it checked,
+  convert it to TypeScript; PermLang doesn't analyze the `.js` even with
+  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe the
+  runtime (`declare global`, a `.d.ts` with no imports or exports) or a package
+  (`declare module "x"`, a folder with its own `package.json`, such as a
+  generated Prisma client) are trusted like a package with no adapter.
+- `require()` of a package an adapter maps is unverifiable, rather than reaching
+  the capabilities the adapter lists; use `import` to have its calls checked.
+- A file loaded with `require()` or a traced `import()` reaches every export of
+  that file, used or not.
+- Interfaces are matched structurally, so a class or object literal that merely
+  fits an interface counts as an implementation of it, even if it's never used
+  as one.
+- A file that TypeScript itself can't parse (code nested thousands of levels
+  deep) is unverifiable when the project's file list includes it. One reached
+  only through imports from outside that list still stops the check.
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
   order, so adding one can renumber the others and show spurious lock changes.
 
@@ -183,7 +300,7 @@ Other gaps, not yet in fixtures:
 | Code | Severity | Meaning |
 | --- | --- | --- |
 | `PERM001` | error | A function reaches a capability its `@perm` doesn't declare. |
-| `PERM002` | error | An `@perm` annotation is invalid. |
+| `PERM002` | error | An `@perm` annotation is invalid, or attaches to nothing. |
 | `PERM003` | error | A function that must declare its permissions has no `@perm`: exported functions at development, every function at production. See [strictness levels](#strictness-levels). |
 | `PERM004` | error | Code whose effects can't be determined statically, such as `eval` or a capability hidden behind `any`. |
 | `PERM005` | error, or warning when access was removed | The code reaches something `permlang.lock.json` doesn't record, or no longer reaches something it does. |
@@ -559,10 +676,12 @@ other. Every fixture file must be a module (have an import or export).
 src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
-src/detect/         direct uses: fetch, fs, env, Prisma, Drizzle, SQL, adapter-mapped calls, values, unverifiable code
-src/dispatch.ts     implementations reachable through interfaces and base classes
+src/detect/         direct uses: fetch, fs, env, Prisma, Drizzle, SQL, adapter-mapped calls, values, module loads, unverifiable code
+src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
+src/walk.ts         walking syntax trees without recursion, and finding positions in them
+src/load.ts         building the ts-morph project, setting aside files that can't be parsed
 src/unmapped.ts     packages with no adapter, and imports with no types
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
 src/tools.ts        tool registrations for AI models, and their handlers
