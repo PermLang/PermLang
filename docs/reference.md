@@ -190,7 +190,7 @@ Other gaps, not yet in fixtures:
 | `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
 | `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
-| `PERM009` | error | A function reads data a flow rule protects and can send it somewhere the rule doesn't allow. See [data-flow rules](#data-flow-rules). |
+| `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
 
 Sketch strictness reports everything but fails only on `PERM005`.
@@ -225,25 +225,57 @@ may *go*: "the Stripe key may only be sent to Stripe".
 }
 ```
 
-A function that reads the `from` capability directly, and can send to a host
-`to` doesn't list, is a `PERM009` error. That covers sending itself or through
-anything it calls, and a host that can't be determined (`fetch(url)`). The
-error points at the call that leads there:
+`from` is data a function reads: `env`, `fs.read`, `db.read`, or `net` (what a
+host sends back), with or without a scope. `to` lists the network hosts it may
+go to. Anything else, such as `"to": ["fs.write(./public)"]` or `"from": "exec"`,
+is a configuration error, and so is a misspelled setting in a rule: none of them
+could ever match.
+
+A function that gets hold of the `from` data, and can send it somewhere `to`
+doesn't allow, is a `PERM009` error. "Somewhere" is:
+
+- a host `to` doesn't list, or a host that can't be determined (`fetch(url)`);
+- a command (`exec`), or code that can't be verified (`eval`, say): either one
+  could send it anywhere, so no rule can allow it.
+
+That covers sending it itself or through anything it calls. The error points at
+the call that leads there:
 
 ```
-src/billing.ts:7:9 error PERM009: charge reads env(STRIPE_KEY) and can send to net(analytics.example),
-  through track → fetch("https://analytics.example/event", ...), which the flow rule for env(STRIPE_KEY) doesn't allow.
+src/billing.ts:9:9 error PERM009: charge reads env(STRIPE_KEY) and can send to net(analytics.example), through track → fetch("https://analytics.example/event", ...), which the flow rule for env(STRIPE_KEY) doesn't allow.
+  -> keep env(STRIPE_KEY) away from that call, or add net(analytics.example) to the rule's "to" in permlang.config.json.
 ```
+
+A function gets hold of the data when it reads it, or when it calls a function
+that has it and can hand it back:
+
+- by returning a value: a getter such as `stripeKey()`, or a function whose result
+  could carry the key, even one that returns only what Stripe sent back;
+- by calling a callback the caller passed in (`withKey((key) => ...)`);
+- as the object a constructor builds (`new StripeClient()`), or what a module
+  exports.
+
+A function that calls one that returns nothing (`void`, or `Promise<void>`) and
+takes no callback isn't flagged for what it sends elsewhere: the data can't come
+back to it. So `checkout()` calling `chargeCustomer(): Promise<void>` and then an
+analytics service passes.
 
 A `from` without a scope covers a whole category: `"env"` protects every
 environment variable. Reading the whole environment (`JSON.stringify(process.env)`)
 counts as reading every variable.
 
-**This first version works per function.** It doesn't follow the value itself:
-a key read into a module-level constant and used by another function isn't
-caught, and neither is one passed to a callee as an argument. Callers of a
-function that reads the key aren't flagged, since the key stays inside it. Only
-network hosts are checked as destinations.
+**This doesn't follow the value itself.** It works from which functions can get
+hold of the data and what they can reach, so:
+
+- data stored somewhere and read by other code isn't followed: a key read into a
+  module-level constant, or into an object's field by one method and sent by
+  another;
+- a function that returns a value is assumed to hand the data back even when its
+  result can't contain it, so a caller that also sends elsewhere is flagged;
+- data that leaves through a thrown error isn't followed;
+- a command inherits the whole environment, so one run by a function that never
+  touches the key can still read it. Only commands run by functions that get
+  hold of the data are flagged.
 
 ## Tools given to AI models
 
