@@ -20,6 +20,8 @@ export async function flags() {
 /** @perm fs.read(./data) */
 export function streams(fd: number) {
   new fs.Utf8Stream({ dest: "./logs/app.log" }); // expect: error PERM001 fs.write(./logs/app.log)
+  new (fs.WriteStream as any)("./out.txt"); // expect: error PERM001 fs.write
+  Reflect.construct(fs.WriteStream, ["./out.txt"]); // expect: error PERM001 fs.write
   fs.fchmodSync(fd, 0o777); // expect: error PERM001 fs.write
 }
 

