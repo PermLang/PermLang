@@ -156,6 +156,7 @@ Other gaps, not yet in fixtures:
 | `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
 | `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
+| `PERM009` | error | A function reads data a flow rule protects and can send it somewhere the rule doesn't allow. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
 
 Sketch strictness reports everything but fails only on `PERM005`.
@@ -175,6 +176,40 @@ Wildcards (`*`) are not allowed. A capability without an argument (`net`,
 determined statically, for example `fetch(url)` or a template path like
 `` `./data/${name}` ``. *(Provisional: this answers open question 1 in the design
 doc and may change after review.)*
+
+## Data-flow rules
+
+`@perm` says what a function may touch. A flow rule says where protected data
+may *go*: "the Stripe key may only be sent to Stripe".
+
+```json
+{
+  "flows": [
+    { "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] },
+    { "from": "db.read(customers)", "to": ["net(api.hubspot.com)"] }
+  ]
+}
+```
+
+A function that reads the `from` capability directly, and can send to a host
+`to` doesn't list, is a `PERM009` error. That covers sending itself or through
+anything it calls, and a host that can't be determined (`fetch(url)`). The
+error points at the call that leads there:
+
+```
+src/billing.ts:7:9 error PERM009: charge reads env(STRIPE_KEY) and can send to net(analytics.example),
+  through track → fetch("https://analytics.example/event", ...), which the flow rule for env(STRIPE_KEY) doesn't allow.
+```
+
+A `from` without a scope covers a whole category: `"env"` protects every
+environment variable. Reading the whole environment (`JSON.stringify(process.env)`)
+counts as reading every variable.
+
+**This first version works per function.** It doesn't follow the value itself:
+a key read into a module-level constant and used by another function isn't
+caught, and neither is one passed to a callee as an argument. Callers of a
+function that reads the key aren't flagged, since the key stays inside it. Only
+network hosts are checked as destinations.
 
 ## Tools given to AI models
 

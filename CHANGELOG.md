@@ -25,6 +25,11 @@ what a workflow or script grants. Upgrading itself doesn't: see below.
   like `payments.refund` gets a `PERM008` warning, since whoever controls the
   model's input can trigger it. `"tools": "error"` fails the build instead. The
   pull-request comment marks new access a model can trigger.
+- **Data-flow rules.** `"flows"` in `permlang.config.json` says where protected
+  data may go, such as `{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] }`.
+  A function that reads the source and can send to any other host, itself or
+  through what it calls, is a `PERM009` error. This first version works per
+  function and doesn't follow the value itself; see the reference.
 
 ### Fixed
 

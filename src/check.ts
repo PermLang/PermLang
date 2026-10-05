@@ -13,6 +13,7 @@ import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
 import { projectFiles } from "./project-files.js";
 import { findTools, type ToolRegistration } from "./tools.js";
+import { flowDiagnostics, type FlowRule } from "./flows.js";
 import { resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
 import { collectEdges, pathTo, propagate, type Edge, type Reach } from "./graph.js";
@@ -44,9 +45,10 @@ export interface Diagnostic {
    * PERM005 permissions that differ from permlang.lock.json, PERM006 calls into a
    * package with no adapter (what it touches isn't checked), PERM007 an import
    * whose types can't be found (nothing called from it is checked), PERM008 a tool an AI
-   * model can call reaches something dangerous.
+   * model can call reaches something dangerous, PERM009 a function reads something a
+   * flow rule protects and can send it somewhere the rule doesn't allow.
    */
-  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006" | "PERM007" | "PERM008" | SpecCode;
+  code: "PERM001" | "PERM002" | "PERM003" | "PERM004" | "PERM005" | "PERM006" | "PERM007" | "PERM008" | "PERM009" | SpecCode;
   file: string;
   line: number;
   column: number;
@@ -132,6 +134,8 @@ export interface CheckOptions {
   unmapped?: UnmappedPolicy;
   /** How to report AI tools that reach something dangerous: warn (default), error, or trust (report only). */
   tools?: UnmappedPolicy;
+  /** Where protected data may go: `{ from: env(STRIPE_KEY), to: [net(api.stripe.com)] }`. See flows.ts. */
+  flows?: readonly FlowRule[];
   /**
    * The repository root whose configuration is also recorded: its GitHub workflows and
    * Actions, and package.json scripts (see project-files.ts). The CLI passes the lock's folder.
@@ -292,6 +296,9 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
       });
     }
   }
+
+  // Data-flow rules: a function that reads protected data and can send it elsewhere.
+  if (options.flows && options.flows.length > 0) diagnostics.push(...flowDiagnostics(units.values(), reach, options.flows));
 
   // Sketch reports everything but fails nothing.
   const checked = strictness === "sketch" ? diagnostics.map((d) => ({ ...d, severity: "warning" as const })) : diagnostics;

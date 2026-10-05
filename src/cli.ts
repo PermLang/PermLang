@@ -23,6 +23,7 @@ import {
 } from "./check.js";
 import { addedDependencies, type DependencyChange, type PackageJson } from "./deps.js";
 import { formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
+import { parseFlows, type FlowRule } from "./flows.js";
 import { LockError, buildLock, diffLocks, keyed, parseLock, serializeLock, type LockDiff, type LockFile } from "./lock.js";
 import { formatAnnotations, formatText, toJson, toSarif } from "./report.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
@@ -57,6 +58,7 @@ Options:
 
 permlang.config.json:
   { "strictness": "sketch", "unmapped": "warn", "adapters": ["./permlang/adapters/acme-sms.json"] }
+  Also "tools": "warn" | "error" | "trust", and "flows": [{ "from": "env(KEY)", "to": ["net(host)"] }].
 
 Exit codes: 0 no errors, 1 permission errors, 2 usage or configuration error.`;
 
@@ -347,6 +349,14 @@ function diff(args: Args): number {
 
 // --- helpers -----------------------------------------------------------------
 
+function flowsOrUsageError(raw: unknown, file: string): FlowRule[] {
+  try {
+    return parseFlows(raw, file);
+  } catch (e) {
+    throw new UsageError((e as Error).message);
+  }
+}
+
 function analyze(args: Args, lock: CheckOptions["lock"]): Report {
   const config = readConfig(args.config);
   const strictness = args.strictness ?? config.strictness;
@@ -365,6 +375,7 @@ function analyze(args: Args, lock: CheckOptions["lock"]): Report {
     ...(strictness ? { strictness: strictness as Strictness } : {}),
     ...(unmapped ? { unmapped: unmapped as UnmappedPolicy } : {}),
     ...(config.tools ? { tools: config.tools as UnmappedPolicy } : {}),
+    ...(config.flows ? { flows: config.flows } : {}),
     ...(lock ? { lock } : {}),
     // Workflows, Actions, and package.json scripts, from the folder the lock lives in.
     projectRoot: path.dirname(path.resolve(args.lock ?? DEFAULT_LOCK)),
@@ -434,6 +445,7 @@ interface Config {
   strictness?: string;
   unmapped?: string;
   tools?: string;
+  flows?: FlowRule[];
   adapters: string[];
 }
 
@@ -448,7 +460,7 @@ function readConfig(explicit: string | undefined): Config {
     throw new UsageError(`Can't read ${file}: ${(e as Error).message}`);
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new UsageError(`${file}: must be a JSON object.`);
-  const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown; tools?: unknown };
+  const config = raw as { adapters?: unknown; strictness?: unknown; unmapped?: unknown; tools?: unknown; flows?: unknown };
   const list = config.adapters ?? [];
   if (!Array.isArray(list) || !list.every((a) => typeof a === "string")) {
     throw new UsageError(`${file}: "adapters" must be a list of manifest paths.`);
@@ -461,6 +473,7 @@ function readConfig(explicit: string | undefined): Config {
     ...(config.strictness ? { strictness: config.strictness } : {}),
     ...(typeof config.unmapped === "string" ? { unmapped: config.unmapped } : {}),
     ...(typeof config.tools === "string" ? { tools: config.tools } : {}),
+    ...(config.flows !== undefined ? { flows: flowsOrUsageError(config.flows, file) } : {}),
   };
 }
 

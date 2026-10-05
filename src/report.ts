@@ -13,6 +13,7 @@ const RULES: Record<Diagnostic["code"], string> = {
   PERM006: "A call into a package with no adapter: what it touches isn't checked.",
   PERM007: "An import whose types can't be found: nothing called from it is checked.",
   PERM008: "A tool an AI model can call reaches something dangerous, such as running commands or writing data.",
+  PERM009: "A function reads data a flow rule protects and can send it somewhere the rule doesn't allow.",
   SPEC001: "A .perm spec file is invalid.",
   SPEC002: "A .perm spec's implementation can't be found.",
   SPEC003: "A spec's implementation reaches something its perms don't allow.",
