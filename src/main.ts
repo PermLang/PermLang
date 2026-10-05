@@ -134,16 +134,20 @@ export function main(argv: string[]): number {
 function expectedError(e: unknown): string | undefined {
   if (e instanceof UsageError || e instanceof AdapterError || e instanceof LockError || e instanceof SettingsError) return e.message;
   // A system error (ENOENT, EACCES, ...) reading or writing a file.
-  const code = (e as { code?: unknown } | null)?.code;
-  if (e instanceof Error && typeof code === "string" && /^E[A-Z]+$/.test(code)) return printable(e.message);
-  return undefined;
+  const error = Object(e) as NodeJS.ErrnoException;
+  return /^E[A-Z]+$/.test(String(error.code)) ? printable(error.message) : undefined;
+}
+
+/** What was thrown, on one line. */
+function errorMessage(e: unknown): string {
+  return printable(e instanceof Error ? e.message : String(e));
 }
 
 /** A bug: the error and where it happened, to report. */
 function internalError(e: unknown): string {
   const error = e instanceof Error ? e : new Error(String(e));
-  const stack = error.stack ?? "";
-  const frames = stack.includes("\n    at ") ? stack.slice(stack.indexOf("\n    at ")) : "";
+  // Where it happened: the stack's frames. The message before them goes on one line, like any text from outside.
+  const frames = /\n {4}at [\s\S]*$/.exec(String(error.stack))?.[0] ?? "";
   return `PermLang hit an internal error. Please report it at ${ISSUES}, with this:\n${printable(`${error.name}: ${error.message}`)}${frames}`;
 }
 
@@ -359,9 +363,9 @@ function lock(args: Args): number {
     try {
       previous = parseLock(readText(lockName), lockName);
     } catch (e) {
-      // Every lock error says to run `permlang lock`, so it must be able to start over.
-      if (!(e instanceof LockError || e instanceof UsageError)) throw e;
-      notes.push(`Couldn't read the old ${path.basename(lockFile)} (${e.message}), so this writes a new one: review all of it.`);
+      // Every lock error says to run `permlang lock`, so it must be able to start over. (Reading
+      // and parsing throw only UsageError and LockError.)
+      notes.push(`Couldn't read the old ${path.basename(lockFile)} (${(e as Error).message}), so this writes a new one: review all of it.`);
     }
   }
   const report = analyze(args);
@@ -371,8 +375,8 @@ function lock(args: Args): number {
   const changes = formatDiffText(diffLocks(previous, next), viaPaths(report, path.dirname(lockFile)));
   const keys = Object.keys(next.functions);
   const functions = keys.filter((k) => !isConfigKey(k)).length;
-  const counts = `${functions} function${functions === 1 ? "" : "s"}, ${keys.length - functions} configuration entr${keys.length - functions === 1 ? "y" : "ies"}`;
-  console.log([`Wrote ${path.relative(process.cwd(), lockFile) || lockFile} (${counts}).`, ...notes, changes].join("\n\n"));
+  const counts = `${plural(functions, "function")}, ${plural(keys.length - functions, "configuration entry", "configuration entries")}`;
+  console.log([`Wrote ${path.relative(process.cwd(), lockFile)} (${counts}).`, ...notes, changes].join("\n\n"));
   return 0;
 }
 
@@ -384,7 +388,7 @@ function diff(args: Args): number {
     return diffAt(args, marker);
   } catch (e) {
     // Still a comment, which the Action posts over the previous one rather than leave that looking current.
-    if (args.format === "markdown") console.log(formatDiffFailure(expectedError(e) ?? `internal error: ${printable(e instanceof Error ? e.message : String(e))}`, marker));
+    if (args.format === "markdown") console.log(formatDiffFailure(expectedError(e) ?? `internal error: ${errorMessage(e)}`, marker));
     throw e;
   }
 }
@@ -431,7 +435,7 @@ function diffAt(args: Args, marker: string): number {
     } catch (e) {
       const expected = expectedError(e);
       if (expected === undefined) console.error(internalError(e));
-      notes.analysisError = expected ?? `internal error: ${printable(e instanceof Error ? e.message : String(e))}`;
+      notes.analysisError = expected ?? `internal error: ${errorMessage(e)}`;
     }
   }
 
@@ -533,7 +537,8 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
     // First, that the commit is here: for a full hash it doesn't have, `git show` only says the file isn't in it.
     git("rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`);
   } catch (e) {
-    throw new UsageError(`Can't read ${file} at ${printable(ref)}: it isn't a commit in this repository (${printable(failed(e))}). Fetch it first.`);
+    const why = (e as NodeJS.ErrnoException).code === "ENOENT" ? "git can't be run" : "it isn't a commit in this repository; fetch it first";
+    throw new UsageError(`Can't read ${file} at ${printable(ref)}: ${why} (${printable(failed(e))}).`);
   }
   try {
     return { text: git("show", "--end-of-options", spec), spec };
@@ -544,42 +549,44 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
 }
 
 /**
- * Packages the change adds to ./package.json, or installs from another source, for review.
- * Best effort: a missing or unreadable package.json means no dependency section, never a
- * failed diff, and adapters that can't be loaded leave only the built-in ones.
+ * Packages the change adds to ./package.json, or installs from another source, for review. A
+ * package.json that's missing or isn't a JSON object means no dependency section, and adapters
+ * that can't be loaded (which fails the analysis, and the comment says so) are left out. The
+ * commits were read already, so a failure to read them here is an error.
  */
 function dependencyChanges(base: string, args: Args): DependencyChange[] {
-  const parse = (text: string | undefined): PackageJson | undefined => {
-    if (text === undefined) return undefined;
-    try {
-      const pkg: unknown = JSON.parse(text);
-      return typeof pkg === "object" && pkg !== null && !Array.isArray(pkg) ? (pkg as PackageJson) : undefined;
-    } catch {
-      return undefined;
-    }
+  const head = parsePackage(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
+  if (!head) return [];
+  const installed = (name: string) => {
+    const file = path.join("node_modules", name, "package.json");
+    return existsSync(file) ? parsePackage(readFileSync(file, "utf8")) : undefined;
   };
+  return addedDependencies(parsePackage(fileAt(base, "package.json")?.text), head, dependencyAdapters(args), installed);
+}
+
+function parsePackage(text: string | undefined): PackageJson | undefined {
+  if (text === undefined) return undefined;
   try {
-    const head = parse(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
-    if (!head) return [];
-    const installed = (name: string) => {
-      const file = path.join("node_modules", name, "package.json");
-      return existsSync(file) ? parse(readFileSync(file, "utf8")) : undefined;
-    };
-    return addedDependencies(parse(fileAt(base, "package.json")?.text), head, dependencyAdapters(args), installed);
-  } catch (e) {
-    if (expectedError(e) !== undefined) return [];
-    throw e;
+    const pkg: unknown = JSON.parse(text);
+    return typeof pkg === "object" && pkg !== null ? (pkg as PackageJson) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
 function dependencyAdapters(args: Args): AdapterIndex {
+  let files: string[] = [];
   try {
-    const loaded = loadAdapters([...args.adapters, ...readConfig(args.config).adapters]);
-    if (loaded.errors.length === 0) return new AdapterIndex(loaded.adapters);
-  } catch (e) {
-    if (expectedError(e) === undefined) throw e;
+    files = [...args.adapters, ...readConfig(args.config).adapters];
+  } catch {
+    // A config file that can't be read: the analysis reports it.
   }
-  return new AdapterIndex(loadAdapters([]).adapters);
+  // The manifests that load, with the built-in ones: one that doesn't fails the analysis, which the diff says.
+  return new AdapterIndex(loadAdapters(files).adapters);
+}
+
+function plural(n: number, word: string, many = `${word}s`): string {
+  return `${n} ${n === 1 ? word : many}`;
 }
 
 function viaPaths(report: Report, root: string): ViaPaths {

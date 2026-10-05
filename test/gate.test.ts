@@ -332,3 +332,142 @@ describe("dependencies in the comment (G8, O2)", () => {
     expect(permlang("diff", "HEAD", "src").out).toContain("~ lodash ^4.17.21 -> npm:evil-lodash@1.0.0: now installed from another source");
   });
 });
+
+describe("more of what the lock and the diff record", () => {
+  it("fails when an override is removed, at the lock's line for it", () => {
+    write("src/u.ts", '/** @perm-unsafe reason:"reviewed" */\nexport function helper() { return 1; }\n');
+    expect(permlang("init", "src").code).toBe(0);
+    write("src/u.ts", "export function helper() { return 1; }\n");
+    const check = permlang("check", "src");
+    expect(check.code).toBe(1);
+    const line = read("permlang.lock.json").split("\n").findIndex((l) => l.includes('"reviewed"')) + 1;
+    expect(check.out).toContain(`permlang.lock.json:${line}:1 error PERM005: permlang.lock.json records a @perm-unsafe override on helper ("reviewed"), which the code no longer has.`);
+  });
+
+  it("names a tsconfig.json option the lock doesn't record, and lists a change of checked files in the comment", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    write("tsconfig.json", JSON.stringify({ include: ["src"], compilerOptions: { baseUrl: "." } }));
+    expect(permlang("lock").code).toBe(0);
+    expect(permlang("check").code).toBe(0);
+    const md = permlang("diff", "HEAD", "--format", "markdown").out;
+    expect(md).toContain("- checked files: <code>+ --project tsconfig.json</code>");
+    expect(md).toContain("- checked files: <code>- src</code>");
+    write("tsconfig.json", JSON.stringify({ include: ["src"], compilerOptions: { baseUrl: "src" } }));
+    expect(permlang("check").out).toContain("tsconfig.json now has baseUrl src, but permlang.lock.json records baseUrl .");
+    write("tsconfig.json", JSON.stringify({ include: ["src"], compilerOptions: { baseUrl: ".", noLib: true } }));
+    expect(permlang("check").out).toContain("tsconfig.json now has noLib true, which permlang.lock.json doesn't record.");
+  });
+
+  it("says in the comment which command-line option a setting came from", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    expect(permlang("lock", "src", "--unmapped", "trust").code).toBe(0);
+    const md = permlang("diff", "HEAD", "src", "--unmapped", "trust", "--format", "markdown").out;
+    expect(md).toContain("- unmapped: now <code>trust</code>, was <code>warn</code> <sub>(from <code>--unmapped</code>)</sub>");
+    expect(permlang("diff", "HEAD", "src", "--unmapped", "trust").out).toContain("Check settings changed:\n  + permlang.config.json: permlang.unmapped(trust)\n  - permlang.config.json: permlang.unmapped(warn)");
+  });
+
+  it("shows the upgrade from an older lock as settings now recorded", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    writeLock({ permlang: 1, functions: { "src/app.ts#ping": ["net(api.example.com)"] }, unsafe: {} });
+    commit("an older PermLang's lock");
+    const outdated = permlang("diff", "HEAD", "src", "--format", "markdown").out;
+    expect(outdated).toContain("**<code>permlang.lock.json</code> was written by an older PermLang.**");
+    expect(permlang("diff", "HEAD", "src").out).toContain("permlang.lock.json was written by an older PermLang: the check fails until `permlang lock` updates it.");
+    expect(permlang("lock", "src").code).toBe(0);
+    const md = permlang("diff", "HEAD", "src", "--format", "markdown").out;
+    expect(md).toContain("written by an older PermLang, which didn't record check settings, so they're listed as new");
+    expect(md).toContain("- strictness: <code>+ sketch</code>");
+  });
+
+  it("says when the base commit has no lock", () => {
+    commit("before PermLang");
+    expect(permlang("init", "src").code).toBe(0);
+    const md = permlang("diff", "HEAD", "src", "--format", "markdown").out;
+    expect(md).toContain("There's no <code>permlang.lock.json</code> at the base commit, so everything is listed as new.");
+    expect(md).toContain("<code>+ net(api.example.com)</code>");
+  });
+
+  it("prints a comment that says so when the diff can't be computed, and exits 2", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    const { code, stdout, stderr } = runCliStreams(["diff", "f".repeat(40), "src", "--format", "markdown"], { cwd: dir, env: { GITHUB_WORKSPACE: dir } });
+    expect(code).toBe(2);
+    expect(stdout).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n\n> \[!CAUTION\]\n> \*\*PermLang couldn't compute the permission diff\*\*/);
+    expect(stderr).toMatch(/^Can't read permlang\.lock\.json at f{40}: it isn't a commit in this repository/);
+  });
+
+  it("can't read a lock file outside the repository at a commit, and says why", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    const { code, out } = permlang("diff", "HEAD", "src", "--lock", "../outside.json");
+    expect(code).toBe(2);
+    expect(out).toMatch(/^Can't read \.\.\/outside\.json at HEAD: fatal: /);
+  });
+
+  it("marks the comment for the repository root outside GitHub Actions", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    const { out } = runCli(["diff", "HEAD", "src", "--format", "markdown"], { cwd: dir, env: { GITHUB_WORKSPACE: undefined } });
+    expect(out.split("\n")[0]).toBe("<!-- permlang-diff -->");
+  });
+
+  it("survives a package.json that isn't an object, at the base or in the change", () => {
+    write("package.json", "null\n");
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    write("package.json", JSON.stringify({ dependencies: { zod: "^3.0.0" } }));
+    expect(permlang("diff", "HEAD", "src", "--format", "markdown").out).not.toContain("new dependenc");
+    commit("an object");
+    write("package.json", "7\n");
+    const { code, out } = permlang("diff", "HEAD", "src", "--format", "markdown");
+    expect(code).toBe(0);
+    expect(out).not.toContain("new dependenc");
+  });
+
+  it("still lists new dependencies, with the built-in adapters, when the settings can't be read", () => {
+    write("package.json", JSON.stringify({ dependencies: {} }));
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    write("package.json", JSON.stringify({ dependencies: { stripe: "^22.0.0" } }));
+    for (const config of [{ strictness: "sketch", adapters: ["./broken.json"] }, { strictness: "sketch", unmaped: "trust" }]) {
+      write("broken.json", "{ not json");
+      write("permlang.config.json", JSON.stringify(config));
+      const md = permlang("diff", "HEAD", "src", "--format", "markdown").out;
+      expect(md).toContain("PermLang couldn't analyze the code");
+      expect(md).toMatch(/<code>\+ stripe<\/code> \^22\.0\.0 \| Checked by an adapter/);
+    }
+  });
+});
+
+describe("reading what isn't there", () => {
+  it("leaves out dependencies when the change's package.json isn't JSON", () => {
+    write("package.json", JSON.stringify({ dependencies: {} }));
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    write("package.json", '{ "dependencies": { "zod": ');
+    const { code, out } = permlang("diff", "HEAD", "src", "--format", "markdown");
+    expect(code).toBe(0);
+    expect(out).not.toContain("new dependenc");
+  });
+
+  it("says why it can't read a commit when git can't run", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    const { code, out } = runCli(["diff", "HEAD", "src"], { cwd: dir, env: { GITHUB_WORKSPACE: dir, PATH: "" } });
+    expect(code).toBe(2);
+    expect(out).toMatch(/^Can't read permlang\.lock\.json at HEAD: git can't be run \(.*ENOENT.*\)\./);
+  });
+});
+
+describe("adapters in the dependency list", () => {
+  it("describes a new package with the team's adapters, from the config file", () => {
+    write("package.json", JSON.stringify({ dependencies: {} }));
+    write("acme-sms.json", JSON.stringify({ permlang: 1, package: "acme-sms", default: [] }));
+    write("permlang.config.json", JSON.stringify({ strictness: "sketch", adapters: ["./acme-sms.json"] }));
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    write("package.json", JSON.stringify({ dependencies: { "acme-sms": "1.0.0" } }));
+    expect(permlang("diff", "HEAD", "src", "--format", "markdown").out).toContain("| <code>+ acme-sms</code> 1.0.0 | Declared pure |");
+  });
+});

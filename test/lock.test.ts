@@ -229,3 +229,110 @@ describe("permlang diff", () => {
     expect(formatDiffText(diffLocks(head, head), {})).toBe("No permission changes.");
   });
 });
+
+describe("reading and comparing locks", () => {
+  const report = (r: Partial<Report>): Report => ({ files: 1, functions: [], units: [], diagnostics: [], unsafe: [], unmapped: [], unresolved: [], tools: [], ...r });
+
+  it("reads a lock with no functions or overrides", () => {
+    expect(parseLock('{"permlang":2}', "permlang.lock.json")).toEqual({ permlang: 2, functions: {}, unsafe: {} });
+    expect(() => parseLock('{"functions":{}}', "permlang.lock.json")).toThrow(/version missing isn't one this PermLang reads/);
+    expect(() => parseLock('{"permlang":2,"unsafe":{"a.ts#f":1}}', "permlang.lock.json")).toThrow('unsafe entry "a.ts#f" must be a reason string');
+  });
+
+  it("keys an override by its file and name when no function matches it", () => {
+    const lock = buildLock(report({ unsafe: [{ file: path.join(root, "x.ts"), line: 3, function: "f", reason: "r" }] }), root);
+    expect(lock.unsafe).toEqual({ "x.ts#f": "r" });
+  });
+
+  it("points at an override only the lock has, and at its key when the lock isn't laid out as PermLang writes it", () => {
+    const committed: LockFile = { permlang: 2, functions: { "app.ts#gone": ["exec"] }, unsafe: { "app.ts#gone": "reviewed" } };
+    const file = path.join(root, "permlang.lock.json");
+    const text = serializeLock(committed);
+    const drift = lockDrift(committed, buildLock(report({}), root), report({}), file, text);
+    expect(drift.map((d) => `${d.line} ${d.message}`)).toEqual([
+      `${text.split("\n").findIndex((l) => l.includes('"exec"')) + 1} gone no longer exists or reaches exec, but permlang.lock.json still records it.`,
+      `${text.split("\n").findIndex((l) => l.includes('"reviewed"')) + 1} permlang.lock.json records a @perm-unsafe override on gone ("reviewed"), which the code no longer has.`,
+    ]);
+    // On one line, as a person might write it: the key's line.
+    expect(lockDrift(committed, buildLock(report({}), root), report({}), file, JSON.stringify(committed)).map((d) => d.line)).toEqual([1, 1]);
+  });
+});
+
+describe("the permission diff's notes", () => {
+  const lock = (functions: Record<string, string[]>, unsafe: Record<string, string> = {}): LockFile => ({ permlang: 2, functions, unsafe });
+  const base = lock({ "src/a.ts#f": ["net"], "src/b.ts#g": ["exec"] }, { "src/a.ts#f": "reviewed" });
+  const head = lock({ "src/a.ts#f": ["net", "env(KEY)"] });
+  const pending = diffLocks(lock({ "src/a.ts#f": ["net"] }), head);
+
+  it("says when the base has no lock, or an old one", () => {
+    const md = formatDiffMarkdown(diffLocks(undefined, head), {}, { baseMissing: true, baseOutdated: true });
+    expect(md).toContain("<sub>There's no <code>permlang.lock.json</code> at the base commit, so everything is listed as new.</sub>");
+    expect(md).toContain("written by an older PermLang, which didn't record check settings");
+    expect(formatDiffText(diffLocks(undefined, head), {}, { baseMissing: true })).toContain("There's no permlang.lock.json at the base commit");
+  });
+
+  it("says when the working tree's lock is an old one, instead of what doesn't match", () => {
+    const md = formatDiffMarkdown(diffLocks(base, head), {}, { lockOutdated: true, pending });
+    expect(md).toContain("**<code>permlang.lock.json</code> was written by an older PermLang.**");
+    expect(md).not.toContain("Not approved yet");
+    expect(formatDiffText(diffLocks(base, base), {}, { lockOutdated: true })).toBe(
+      "permlang.lock.json was written by an older PermLang: the check fails until `permlang lock` updates it.\n\nThe base and the code reach the same access.",
+    );
+  });
+
+  it("doesn't say the check fails when it doesn't compare with the lock (--no-lock)", () => {
+    expect(formatDiffMarkdown(diffLocks(base, head), {}, { pending, enforced: false })).toContain("The code and <code>permlang.lock.json</code> don't match. To approve");
+    expect(formatDiffText(diffLocks(base, head), {}, { pending, enforced: false })).toContain("don't match. To approve");
+    expect(formatDiffText(diffLocks(base, head), {}, { pending })).toContain("don't match, so the check fails.");
+  });
+
+  it("lists removed access and overrides, and shows how access is reached in text", () => {
+    const diff = diffLocks(base, head);
+    const md = formatDiffMarkdown(diff, {});
+    expect(md).toContain("1 removed <code>@perm-unsafe</code> override");
+    expect(md).toContain("- <code>src/a.ts#f</code>: <code>@perm-unsafe</code> removed");
+    const text = formatDiffText(diff, { "src/a.ts#f": { "env(KEY)": ["f", "process.env.KEY"] } }, { aiTools: { "env(KEY)": ["lookup", "lookup"] } });
+    expect(text).toContain("src/a.ts f\n  + env(KEY)  via f → process.env.KEY  (an AI model can trigger this: lookup)");
+    expect(text).toContain("src/b.ts g (removed)\n  - exec");
+    expect(text).toContain("src/a.ts#f\n  - @perm-unsafe");
+  });
+
+  it("shortens long text from the code", () => {
+    const md = formatDiffMarkdown(diffLocks(undefined, lock({}, { "src/a.ts#f": "x".repeat(600) })), {});
+    expect(md).toContain(`${"x".repeat(499)}…`);
+    expect(md).not.toContain("x".repeat(500));
+  });
+
+  it("describes dependencies installed without scripts, and switched to another source", () => {
+    const deps = [
+      { name: "left-pad", version: "1.0.0", section: "dependencies" as const, dev: false, change: "added" as const, known: "unknown" as const, installed: true, installScripts: [] },
+      { name: "lodash", version: "github:evil/lodash", previous: "^4.0.0", section: "dependencies" as const, dev: false, change: "source" as const, known: "pure" as const, installed: false },
+    ];
+    const md = formatDiffMarkdown(diffLocks(head, head), {}, { dependencies: deps });
+    expect(md).toContain("**1 new dependency, 1 dependency from another source**");
+    expect(md).toContain("| <code>+ left-pad</code> 1.0.0 | **Not checked**: no adapter | none |");
+    expect(formatDiffMarkdown(diffLocks(head, head), {}, { dependencies: [deps[1]!] })).toContain("**1 dependency from another source**");
+  });
+
+  it("leaves out whole sections after a cut, and says how many lines", () => {
+    const many = lock(Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`src/f${i}.ts#f`, [`net(host${i}.example)`]])));
+    const dependencies = [{ name: "late", version: "1.0.0", section: "dependencies" as const, dev: false, change: "added" as const, known: "unknown" as const, installed: false }];
+    const md = formatDiffMarkdown(diffLocks(base, many), {}, { dependencies }, 8_000);
+    expect(Buffer.byteLength(md, "utf8")).toBeLessThanOrEqual(8_000);
+    expect(md).not.toContain("late");
+    expect(md).not.toContain("Removed access");
+    const shown = md.split("\n").filter((l) => l.startsWith("| <code>+ net(")).length;
+    // The rest of the table, the dependency table's 4 lines and row, and the removed-access block's 2 lines and 3 rows.
+    expect(md).toContain(`${400 - shown + 5 + 5} more lines aren't shown`);
+  });
+});
+
+describe("the scope the lock was written for", () => {
+  it("fails, at the lock, when a check without settings compares with a lock that has them", () => {
+    const committed: LockFile = { permlang: 2, functions: { "permlang.config.json#<permlang.config.json>": ["permlang.files(src)"] }, unsafe: {} };
+    const report = checkFiles([app], { strictness: "sketch", lock: { file: path.join(root, "permlang.lock.json"), contents: committed } });
+    expect(report.diagnostics.filter((d) => d.code === "PERM005")).toEqual([
+      expect.objectContaining({ file: path.join(root, "permlang.lock.json"), line: 1, message: "This check ran on files it doesn't record, but permlang.lock.json was written for src." }),
+    ]);
+  });
+});

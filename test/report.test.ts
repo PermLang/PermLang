@@ -74,3 +74,17 @@ describe("the text report", () => {
     ]);
   });
 });
+
+describe("the rest of the text report", () => {
+  it("says when a tool reaches nothing tracked, and prints a diagnostic without a fix", () => {
+    const out = formatText(
+      report({
+        tools: [{ name: "lookup", framework: "ai", file: path.join(root, "src", "a.ts"), line: 1, function: "f", reaches: [] }],
+        diagnostics: [{ severity: "error", code: "PERM002", file: path.join(root, "src", "a.ts"), line: 1, column: 1, function: "f", capability: "nett", call: "", message: 'invalid @perm entry "nett" on f: unknown capability.' }],
+      }),
+      root,
+    );
+    expect(out).toContain("  src/a.ts:1 lookup (ai): nothing tracked");
+    expect(out).toContain('src/a.ts:1:1 error PERM002: invalid @perm entry "nett" on f: unknown capability.\n\n');
+  });
+});

@@ -86,3 +86,12 @@ describe("dependencies in every section, and from other sources", () => {
     expect(addedDependencies({ dependencies: { zod: "^3.0.0" } }, odd, adapters, read).map((d) => `${d.name} ${d.version}`)).toEqual(["nested {\"a\":1}", "weird 1"]);
   });
 });
+
+describe("a package in more than one section", () => {
+  it("counts a package the base lists twice once, and lists a new one the change lists twice once", () => {
+    const base: PackageJson = { devDependencies: { react: "^19.0.0" }, peerDependencies: { react: "^19.0.0" } };
+    const head: PackageJson = { ...base, dependencies: { zod: "^3.0.0" }, devDependencies: { react: "^19.0.0", zod: "^3.0.0" } };
+    expect(addedDependencies(base, head, adapters, read).map((d) => `${d.name} ${d.section}`)).toEqual(["zod dependencies"]);
+    expect(addedDependencies(base, base, adapters, read)).toEqual([]);
+  });
+});

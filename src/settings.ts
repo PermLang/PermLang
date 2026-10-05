@@ -137,14 +137,15 @@ export function settingsEntries(settings: Settings, root: string): FunctionRepor
 export function readTsConfig(file: string): ts.ParsedCommandLine {
   if (!existsSync(file)) throw new SettingsError(`${file} doesn't exist.`);
   if (!statSync(file).isFile()) throw new SettingsError(`${file} isn't a file.`);
-  let fatal: ts.Diagnostic | undefined;
-  const host: ts.ParseConfigFileHost = { ...ts.sys, onUnRecoverableConfigFileDiagnostic: (d) => void (fatal = d) };
   // Absolute, with `/`: ts.sys keeps the working directory it first saw, and TypeScript
   // compares paths in its own form.
-  const parsed = ts.getParsedCommandLineOfConfigFile(path.resolve(file).replaceAll("\\", "/"), undefined, host);
-  const problems = parsed ? ts.getConfigFileParsingDiagnostics(parsed).filter((d) => d.code < 2000 || d.code === 5083) : [];
-  const problem = fatal ?? problems[0];
-  if (!parsed || problem) throw new SettingsError(`${file}: ${printable(problem ? ts.flattenDiagnosticMessageText(problem.messageText, " ") : "can't be read")}`);
+  const absolute = path.resolve(file).replaceAll("\\", "/");
+  const json = ts.parseJsonText(absolute, readFileSync(file, "utf8"));
+  const parsed = ts.parseJsonSourceFileConfigFileContent(json, ts.sys, path.posix.dirname(absolute), undefined, absolute);
+  // Syntax errors, and an "extends" that can't be read (code 5083); others, such as an
+  // unknown compiler option, don't change which files are read.
+  const problem = ts.getConfigFileParsingDiagnostics(parsed).find((d) => d.code < 2000 || d.code === 5083);
+  if (problem) throw new SettingsError(`${file}: ${printable(ts.flattenDiagnosticMessageText(problem.messageText, " "))}`);
   return parsed;
 }
 
@@ -166,7 +167,7 @@ function tsconfigEntry(file: string, root: string): FunctionReport {
     const value = raw[key];
     if (!Array.isArray(value)) return false;
     if (value.length === 0) entry.add(`tsconfig.${key}(none)`, name, lineOfKey(text, key));
-    for (const p of value) if (typeof p === "string") entry.add(`tsconfig.${key}(${pattern(p)})`, name, lineOfKey(text, key));
+    for (const p of value) entry.add(`tsconfig.${key}(${pattern(String(p))})`, name, lineOfKey(text, key));
     return true;
   };
   const include = list("include");
@@ -180,7 +181,8 @@ function tsconfigEntry(file: string, root: string): FunctionReport {
   const o = parsed.options;
   const option = (key: string, value: string) => entry.add(`tsconfig.${key}(${value})`, name, lineOfKey(text, key));
   if (o.baseUrl) option("baseUrl", relative(dir, o.baseUrl));
-  const pathsBase = o.baseUrl ?? (o as { pathsBasePath?: string }).pathsBasePath ?? dir;
+  // `paths` are relative to baseUrl, or else to the config that sets them (TypeScript records which).
+  const pathsBase = o.baseUrl ?? (o as { pathsBasePath: string }).pathsBasePath;
   for (const [from, to] of Object.entries(o.paths ?? {})) option("paths", `${from} -> ${to.map((t) => relative(dir, path.resolve(pathsBase, t))).join(", ")}`);
   for (const d of o.rootDirs ?? []) option("rootDirs", relative(dir, d));
   for (const d of o.typeRoots ?? []) option("typeRoots", relative(dir, d));
@@ -188,7 +190,7 @@ function tsconfigEntry(file: string, root: string): FunctionReport {
   for (const l of o.lib ?? []) option("lib", l.replace(/^lib\./, "").replace(/\.d\.ts$/, ""));
   if (o.noLib) option("noLib", "true");
   if (o.allowJs) option("allowJs", "true");
-  if (o.moduleResolution !== undefined) option("moduleResolution", ts.ModuleResolutionKind[o.moduleResolution] ?? String(o.moduleResolution));
+  if (o.moduleResolution !== undefined) option("moduleResolution", ts.ModuleResolutionKind[o.moduleResolution]);
   for (const c of o.customConditions ?? []) option("customConditions", c);
   for (const s of o.moduleSuffixes ?? []) option("moduleSuffixes", s === "" ? "none" : s);
   return entry.report();

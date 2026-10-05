@@ -94,10 +94,10 @@ export function isOtherSource(version: string): boolean {
 function dependencies(pkg: PackageJson, section: DependencySection): [string, string][] {
   const deps = pkg[section];
   if (typeof deps !== "object" || deps === null || Array.isArray(deps)) return [];
-  return Object.entries(deps as Record<string, unknown>).map(([name, v]) => [name, typeof v === "string" ? v : (JSON.stringify(v) ?? String(v))]);
+  return Object.entries(deps as Record<string, unknown>).map(([name, v]) => [name, typeof v === "string" ? v : JSON.stringify(v)]);
 }
 
 function installScripts(pkg: PackageJson): string[] {
-  const scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? (pkg.scripts as Record<string, unknown>) : {};
+  const scripts = Object(pkg.scripts) as Record<string, unknown>;
   return INSTALL_SCRIPTS.filter((s) => Object.hasOwn(scripts, s) && scripts[s]).map((s) => `${s}: ${String(scripts[s])}`);
 }

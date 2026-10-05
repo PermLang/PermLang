@@ -113,6 +113,7 @@ export function parseLock(text: string, source: string): LockFile {
  * code doesn't reach would approve it in advance, for a later change to use unseen. The same goes
  * for @perm-unsafe overrides and their reasons, and for the settings the check runs with.
  *
+ * @param current buildLock(report): what the code reaches now.
  * @param lockText the lock file's text, to point at the line of an entry only the lock has.
  */
 export function lockDrift(committed: LockFile, current: LockFile, report: Report, lockFile: string, lockText = ""): Diagnostic[] {
@@ -121,7 +122,7 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
   const fix = "run `permlang lock` and commit the change so reviewers see it.";
   const settingsFix =
     "to make these the settings, run `permlang lock` with the same options and commit the change so reviewers see it. To try other settings without the lock, add --no-lock.";
-  const inLock = (key: string, capability?: string) => ({ file: lockFile, line: lineInLock(lockText, key, capability) ?? 1, column: 1 });
+  const inLock = (key: string, capability?: string, from = 0) => ({ file: lockFile, line: lineInLock(lockText, key, capability, from) ?? 1, column: 1 });
   const drift = (d: Omit<Diagnostic, "severity" | "code" | "call">): Diagnostic => ({ severity: "error", code: "PERM005", call: "", ...d });
 
   // A lock from before settings were recorded can't be compared: one error says what to do.
@@ -168,18 +169,19 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
       const old = oldSettings.find((o) => settingKind(o) === settingKind(c));
       if (old) paired.set(c, old);
     }
-    // At the line that reaches it, so the error (and its pull-request annotation) lands on the change.
-    const at = (capability: string) => {
-      const site = fn?.sites[capability];
-      return site ? { file: fn!.file, line: site.line, column: site.column } : fn ? { file: fn.file, line: fn.line, column: 1 } : inLock(change.key, capability);
-    };
     for (const capability of change.added) {
+      // Added access is in `current`, so the report has it, and where it's reached: the error (and
+      // its pull-request annotation) lands on the change.
+      const { file, sites, via } = fn!;
+      const site = sites[capability]!;
       const setting = settings.includes(capability);
       const old = paired.get(capability);
-      const subject = `${settingSubject(change.file, capability)} ${settingPhrase(capability)}${setting ? origin(fn?.via[capability]?.[0]) : ""}`;
+      const subject = `${settingSubject(change.file, capability)} ${settingPhrase(capability)}${setting ? origin(via[capability]![0]) : ""}`;
       out.push(
         drift({
-          ...at(capability),
+          file,
+          line: site.line,
+          column: site.column,
           function: change.name,
           capability,
           message: old
@@ -199,8 +201,8 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
       const gone = change.status === "removed" ? "no longer exists or" : "no longer";
       out.push(
         drift({
-          // On the lock's own line when it can be found: a pull request that adds it there shows it there.
-          ...(lineInLock(lockText, change.key, capability) !== undefined || !fn ? inLock(change.key, capability) : { file: fn.file, line: fn.line, column: 1 }),
+          // On the lock's own line: a pull request that adds it there shows it there.
+          ...inLock(change.key, capability),
           function: change.name,
           capability,
           message: setting
@@ -219,7 +221,7 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
   // At the tag in the code, or for one only the lock has, at its line in the lock.
   const atOverride = (key: string) => {
     const u = overrides.get(key);
-    return u ? { file: u.file, line: u.line, column: 1 } : inLock(key);
+    return u ? { file: u.file, line: u.line, column: 1 } : inLock(key, undefined, lockText.indexOf('"unsafe":'));
   };
   const override = (key: string, message: string) => drift({ ...atOverride(key), function: splitKey(key)[1], capability: "@perm-unsafe", message, fix });
   for (const { key, reason } of changes.unsafeAdded) {
@@ -246,13 +248,15 @@ function origin(from: string | undefined): string {
   return "";
 }
 
-/** The line of an entry in the lock file's text (of the capability within it, when given), if it's there. */
-function lineInLock(text: string, key: string, capability?: string): number | undefined {
-  const at = key === "" ? -1 : text.indexOf(`${JSON.stringify(key)}:`);
+/**
+ * The line of an entry in the lock file's text, if it's there: of the capability, when it's in the
+ * entry's list (which serializeLock ends on a line of its own), else of the key.
+ */
+function lineInLock(text: string, key: string, capability: string | undefined, from: number): number | undefined {
+  const at = text.indexOf(`${JSON.stringify(key)}:`, from);
   if (at === -1) return undefined;
-  const end = text.indexOf("]", at);
   const within = capability === undefined ? -1 : text.indexOf(JSON.stringify(capability), at);
-  const pos = within !== -1 && (end === -1 || within < end) ? within : at;
+  const pos = within !== -1 && within < text.indexOf("\n    ]", at) ? within : at;
   return text.slice(0, pos).split("\n").length;
 }
 

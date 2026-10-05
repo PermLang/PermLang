@@ -101,8 +101,9 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
       settings.length > 0 ? "**Check settings changed**" : "",
       diff.unsafeAdded.length > 0 ? `**${plural(diff.unsafeAdded.length, "new <code>@perm-unsafe</code> override")}**` : "",
       diff.unsafeChanged.length > 0 ? `**${plural(diff.unsafeChanged.length, "changed <code>@perm-unsafe</code> reason")}**` : "",
+      diff.unsafeRemoved.length > 0 ? plural(diff.unsafeRemoved.length, "removed <code>@perm-unsafe</code> override") : "",
     ].filter(Boolean);
-    if (counts.length > 0) top.push(counts.join(" · "), "");
+    top.push(counts.join(" · "), "");
   }
   const blocks: Block[] = [{ head: top }];
 
@@ -198,15 +199,7 @@ function alerts(notes: DiffNotes, lock: string): string[] {
   return out;
 }
 
-const SETTING_LABEL: Record<string, string> = {
-  project: "checked files",
-  files: "checked files",
-  strictness: "strictness",
-  unmapped: "unmapped",
-  tools: "tools",
-  flow: "flow rule",
-  adapter: "adapter",
-};
+const SETTING_LABEL: Record<string, string> = { project: "checked files", files: "checked files", flow: "flow rule" };
 
 /** Settings changes, one row per value; a setting with one value that changed reads "now X, was Y". */
 function settingRows(changes: readonly FunctionChange[], via: ViaPaths): string[] {
@@ -238,7 +231,7 @@ function dependencyRow(d: DependencyChange): string {
   const scripts = d.installScripts === undefined ? "<sub>not installed here</sub>" : d.installScripts.length === 0 ? "none" : d.installScripts.map((x) => code(x)).join("<br>");
   const section = SECTION[d.section] ? ` <sub>(${SECTION[d.section]})</sub>` : "";
   if (d.change === "source") {
-    return `| ${code(`~ ${d.name}`)} ${plain(d.previous ?? "")} → ${plain(d.version)}${section} | **Now installed from another source**: an adapter for ${code(d.name)} may not describe this code | ${scripts} |`;
+    return `| ${code(`~ ${d.name}`)} ${plain(d.previous!)} → ${plain(d.version)}${section} | **Now installed from another source**: an adapter for ${code(d.name)} may not describe this code | ${scripts} |`;
   }
   return `| ${code(`+ ${d.name}`)} ${plain(d.version)}${section} | ${KNOWN[d.known]} | ${scripts} |`;
 }
@@ -338,7 +331,7 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
     const rows = deps.map((d) => {
       const section = SECTION[d.section] ? ` (${SECTION[d.section]})` : "";
       const scripts = d.installScripts && d.installScripts.length > 0 ? `; install scripts: ${d.installScripts.map(printable).join(", ")}` : "";
-      if (d.change === "source") return `  ~ ${printable(d.name)} ${printable(d.previous ?? "")} -> ${printable(d.version)}${section}: now installed from another source${scripts}`;
+      if (d.change === "source") return `  ~ ${printable(d.name)} ${printable(d.previous!)} -> ${printable(d.version)}${section}: now installed from another source${scripts}`;
       const known = { adapter: "checked by an adapter", pure: "declared pure", detected: "detected directly", unknown: "not checked: no adapter" }[d.known];
       return `  + ${printable(d.name)} ${printable(d.version)}${section}: ${known}${scripts}`;
     });

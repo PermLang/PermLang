@@ -131,3 +131,62 @@ describe("reading settings back", () => {
     expect(describeScope([])).toBe("files it doesn't record");
   });
 });
+
+describe("more settings", () => {
+  const project = (s: Partial<Settings> = {}) => entry(settings({ scope: { project: "tsconfig.json", found: false }, ...s }), "<tsconfig.json>");
+
+  it("records where the default paths and an --adapter came from", () => {
+    write("adapters/b.json", "not json\r\nat all\r\n");
+    const e = entry(settings({ scope: { paths: [path.join(dir, "src"), path.join(dir, "src", "")], given: false }, adapters: [{ file: path.join(dir, "adapters", "b.json"), from: "option" }] }));
+    expect(e.via["permlang.files(src)"]).toEqual(["default"]);
+    const adapter = e.actual.find((c) => c.startsWith("permlang.adapter"))!;
+    expect(e.via[adapter]).toEqual(["--adapter"]);
+    // A file that isn't JSON is hashed as text, with line endings evened out.
+    write("adapters/b.json", "not json\nat all\n");
+    expect(entry(settings({ adapters: [{ file: path.join(dir, "adapters", "b.json"), from: "option" }] })).actual).toContain(adapter);
+  });
+
+  it("records an empty list, each entry once, and entries that aren't strings as written", () => {
+    write("tsconfig.json", JSON.stringify({ include: [], files: ["a.ts", "./a.ts", 5] }));
+    expect(project().actual).toEqual(["tsconfig.files(5)", "tsconfig.files(a.ts)", "tsconfig.include(none)"]);
+  });
+
+  it("records the other options that decide what resolves", () => {
+    write(
+      "tsconfig.json",
+      JSON.stringify({
+        include: ["src"],
+        compilerOptions: {
+          paths: { "@app/*": ["./src/*", "./lib/*"] },
+          rootDirs: ["src", "generated"],
+          typeRoots: ["./types"],
+          types: ["node"],
+          noLib: true,
+          moduleResolution: "bundler",
+          customConditions: ["worker"],
+          moduleSuffixes: [".ios", ""],
+        },
+      }),
+    );
+    expect(project().actual).toEqual([
+      "tsconfig.customConditions(worker)",
+      "tsconfig.include(src)",
+      "tsconfig.moduleResolution(Bundler)",
+      "tsconfig.moduleSuffixes(.ios)",
+      "tsconfig.moduleSuffixes(none)",
+      "tsconfig.noLib(true)",
+      "tsconfig.paths(@app/* -> src/*, lib/*)",
+      "tsconfig.rootDirs(generated)",
+      "tsconfig.rootDirs(src)",
+      "tsconfig.typeRoots(types)",
+      "tsconfig.types(node)",
+    ]);
+  });
+
+  it("describes flow rules and checked files", () => {
+    expect(settingPhrase("permlang.flow(env(K) -> net(x.example))")).toBe("the flow rule env(K) -> net(x.example)");
+    expect(settingPhrase("permlang.project(tsconfig.json)")).toBe("the files of tsconfig.json");
+    expect(settingPhrase("permlang.files(src)")).toBe("the files under src");
+    expect(settingPhrase("tsconfig.include(src)")).toBe("include src");
+  });
+});
