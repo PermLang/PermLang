@@ -120,24 +120,27 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
   // Methods the language calls implicitly.
   const iterator = (n: string) => n.startsWith("__@iterator") || n.startsWith("__@asyncIterator");
   for (const node of descendantsOfKind(sourceFile, SyntaxKind.AwaitExpression)) {
-    addMembers(node, node.getExpression().getType(), (n) => n === "then", node.getText().slice(0, 60));
+    addMembers(node, node.getExpression().getType(), (n) => n === "then", shortText(node));
   }
   const toPrimitive = (n: string) => n === "toString" || n === "valueOf" || n.startsWith("__@toPrimitive");
   for (const template of descendantsOfKind(sourceFile, SyntaxKind.TemplateExpression)) {
-    for (const span of template.getTemplateSpans()) addMembers(span, span.getExpression().getType(), toPrimitive, template.getText().slice(0, 60));
+    for (const span of template.getTemplateSpans()) addMembers(span, span.getExpression().getType(), toPrimitive, shortText(template));
   }
   // Arithmetic, comparisons, `+`, and `==` convert objects to primitives: `o * 2`, `"x" + o`, `s += o`.
   const convert = (node: Node, operand: Node) => {
+    // An operator's result is already a primitive. (Asking TypeScript for its type would
+    // check the whole expression again: in `a + b + c + ...`, once per term.)
+    if (isOperatorResult(operand)) return;
     const type = operand.getType();
     // (A primitive's methods are all in the standard library: skip looking them up.)
-    if ((type.getFlags() & PRIMITIVE) === 0) addMembers(node, type, toPrimitive, node.getText().slice(0, 60));
+    if ((type.getFlags() & PRIMITIVE) === 0) addMembers(node, type, toPrimitive, shortText(node));
   };
   for (const binary of descendantsOfKind(sourceFile, SyntaxKind.BinaryExpression)) {
     const operator = binary.getOperatorToken().getKind();
     if (CONVERTING.has(operator)) for (const operand of [binary.getLeft(), binary.getRight()]) convert(binary, operand);
     // `x instanceof K` runs K's static [Symbol.hasInstance].
     if (operator === SyntaxKind.InstanceOfKeyword) {
-      addMembers(binary, binary.getRight().getType(), (n) => n.startsWith("__@hasInstance"), binary.getText().slice(0, 60));
+      addMembers(binary, binary.getRight().getType(), (n) => n.startsWith("__@hasInstance"), shortText(binary));
     }
     // `({ g } = b)` reads b.g, like `const { g } = b`; `[x] = b` iterates b.
     const target = binary.getLeft();
@@ -148,7 +151,7 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
       }
     }
     if (operator === SyntaxKind.EqualsToken && Node.isArrayLiteralExpression(target)) {
-      addMembers(binary, binary.getRight().getType(), iterator, binary.getText().slice(0, 60));
+      addMembers(binary, binary.getRight().getType(), iterator, shortText(binary));
     }
   }
   for (const unary of [...descendantsOfKind(sourceFile, SyntaxKind.PrefixUnaryExpression), ...descendantsOfKind(sourceFile, SyntaxKind.PostfixUnaryExpression)]) {
@@ -165,14 +168,14 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
   }
   for (const yieldStar of descendantsOfKind(sourceFile, SyntaxKind.YieldExpression)) {
     const delegated = yieldStar.getExpression();
-    if (yieldStar.getAsteriskToken() && delegated) addMembers(yieldStar, delegated.getType(), iterator, yieldStar.getText().slice(0, 60));
+    if (yieldStar.getAsteriskToken() && delegated) addMembers(yieldStar, delegated.getType(), iterator, shortText(yieldStar));
   }
   // `using r = ...` runs r[Symbol.dispose]() when the block ends; `await using`, [Symbol.asyncDispose]().
   for (const list of descendantsOfKind(sourceFile, SyntaxKind.VariableDeclarationList)) {
     const kind = list.getDeclarationKind();
     if (kind !== VariableDeclarationKind.Using && kind !== VariableDeclarationKind.AwaitUsing) continue;
     const disposes = (n: string) => n.startsWith("__@dispose") || (kind === VariableDeclarationKind.AwaitUsing && n.startsWith("__@asyncDispose"));
-    for (const declaration of list.getDeclarations()) addMembers(declaration, declaration.getType(), disposes, declaration.getText().slice(0, 60));
+    for (const declaration of list.getDeclarations()) addMembers(declaration, declaration.getType(), disposes, shortText(declaration));
   }
 
   // Calls: the resolved declaration, dispatch to implementations, computed members.
@@ -226,11 +229,12 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
   // An implicit constructor runs the base class's constructor (`extends Base`, or a mixin's class).
   for (const cls of [...descendantsOfKind(sourceFile, SyntaxKind.ClassDeclaration), ...descendantsOfKind(sourceFile, SyntaxKind.ClassExpression)]) {
     if (constructorUnitNode(cls) !== cls) continue;
-    const from = ctx.unitOf(cls);
+    const from = ctx.unitOf(cls)!;
     const { line, column } = lineAndColumn(sourceFile, cls.getStart());
     for (const base of baseClasses(cls)) {
+      // A library's class (`extends EventEmitter`) has no unit.
       const to = ctx.unitOf(constructorUnitNode(base));
-      if (from && to) edges.push({ from, to, call: `extends ${cls.getExtends()!.getExpression().getText().replace(/\s+/g, " ").slice(0, 60)}`, line, column });
+      if (to) edges.push({ from, to, call: `extends ${shortText(cls.getExtends()!.getExpression())}`, line, column });
     }
   }
 
@@ -378,7 +382,8 @@ export function propagate(units: Iterable<Unit>, edges: readonly Edge[]): Reach 
     // provenance points one step closer to the use, and paths can't loop.
     const callers = new Map<Unit, Edge[]>();
     for (const unit of component) {
-      for (const edge of outgoing.get(unit) ?? []) {
+      // (In a cycle, every unit calls another, and is called by one.)
+      for (const edge of outgoing.get(unit)!) {
         if (!inside.has(edge.to)) continue;
         const list = callers.get(edge.to);
         if (list) list.push(edge);
@@ -390,7 +395,7 @@ export function propagate(units: Iterable<Unit>, edges: readonly Edge[]): Reach 
       const queue = component.filter((u) => reach.get(u)!.has(key));
       for (let i = 0; i < queue.length; i++) {
         const p = reach.get(queue[i]!)!.get(key)!;
-        for (const edge of callers.get(queue[i]!) ?? []) {
+        for (const edge of callers.get(queue[i]!)!) {
           const into = reach.get(edge.from)!;
           if (into.has(key) || !carries(edge, key)) continue;
           into.set(key, { capability: p.capability, edge });
@@ -523,16 +528,36 @@ const CONVERTING = new Set([
   SyntaxKind.GreaterThanGreaterThanEqualsToken, SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
 ]);
 
-/** The property a destructuring key names: `data`, `"data"`, `[KEY]` with a literal KEY; undefined when it can't be known. */
+/** The property a destructuring key names: `data`, `"data"`, `0`, `[KEY]` with a literal KEY; undefined when it can't be known. */
 function propertyKey(name: Node): string | undefined {
-  if (Node.isIdentifier(name) || Node.isPrivateIdentifier(name)) return name.getText();
-  if (Node.isStringLiteral(name) || Node.isNumericLiteral(name) || Node.isNoSubstitutionTemplateLiteral(name)) return name.getLiteralText();
   if (Node.isComputedPropertyName(name)) return literalString(name.getExpression());
-  return undefined;
+  return Node.isStringLiteral(name) || Node.isNumericLiteral(name) ? name.getLiteralText() : name.getText();
 }
+
+/** The first 60 characters of a node's code, without reading all of it. */
+function shortText(node: Node): string {
+  const start = node.getStart();
+  return node.getSourceFile().getFullText().slice(start, Math.min(node.getEnd(), start + 60));
+}
+
+/** `a + b`, `-a`, `typeof a`, a literal: the value is a primitive, whatever the operands were. */
+function isOperatorResult(expression: Node): boolean {
+  const node = unwrapExpression(expression);
+  if (Node.isBinaryExpression(node)) return !OBJECT_PRESERVING.has(node.getOperatorToken().getKind());
+  return (
+    Node.isPrefixUnaryExpression(node) || Node.isPostfixUnaryExpression(node) || Node.isTypeOfExpression(node) ||
+    Node.isVoidExpression(node) || Node.isDeleteExpression(node) || Node.isLiteralExpression(node) || Node.isTemplateExpression(node)
+  );
+}
+
+// Operators whose result can be an operand itself, so an object.
+const OBJECT_PRESERVING = new Set([
+  SyntaxKind.EqualsToken, SyntaxKind.AmpersandAmpersandToken, SyntaxKind.BarBarToken, SyntaxKind.QuestionQuestionToken,
+  SyntaxKind.CommaToken, SyntaxKind.AmpersandAmpersandEqualsToken, SyntaxKind.BarBarEqualsToken, SyntaxKind.QuestionQuestionEqualsToken,
+]);
 
 /** The left side of `=`: `({ a } = b)` destructures rather than builds an object. */
 function isAssignmentTarget(node: Node): boolean {
-  const parent = node.getParent();
-  return parent !== undefined && Node.isBinaryExpression(parent) && parent.getLeft() === node && parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken;
+  const parent = node.getParentOrThrow();
+  return Node.isBinaryExpression(parent) && parent.getLeft() === node && parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken;
 }

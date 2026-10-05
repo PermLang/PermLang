@@ -2,7 +2,7 @@
 // constructors, accessors, function-valued variables and properties, and each
 // file's top-level code. Anonymous callbacks belong to the unit around them.
 
-import { Node, SyntaxKind, ts, type ClassDeclaration, type ClassExpression, type ModuleDeclaration, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
+import { Node, SyntaxKind, ts, type ClassDeclaration, type ClassExpression, type ModuleDeclaration, type ObjectLiteralExpression, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
 import { functionComments, jsDocComments, moduleComments, readPermAnnotation, type Comment, type PermAnnotation } from "./annotations.js";
 import { UNVERIFIABLE, type Capability } from "./capability.js";
 import { resolveAlias, unwrapExpression, type CallLike } from "./detect/shared.js";
@@ -84,7 +84,7 @@ export function isUnitNode(node: Node): boolean {
   return (
     Node.isGetAccessorDeclaration(node) ||
     Node.isSetAccessorDeclaration(node) ||
-    (isFunctionHolder(node) && isFunctionLike(heldValue(node)))
+    isFunctionLike(heldValue(node))
   );
 }
 
@@ -96,9 +96,11 @@ function isFunctionHolder(node: Node) {
   return Node.isVariableDeclaration(node) || Node.isPropertyAssignment(node) || Node.isPropertyDeclaration(node) || Node.isExportAssignment(node);
 }
 
-function heldValue(holder: Node): Node | undefined {
-  if (Node.isExportAssignment(holder)) return holder.getExpression();
-  return Node.isVariableDeclaration(holder) || Node.isPropertyAssignment(holder) || Node.isPropertyDeclaration(holder) ? holder.getInitializer() : undefined;
+/** What a function holder holds; undefined for anything else. */
+function heldValue(node: Node): Node | undefined {
+  if (Node.isExportAssignment(node)) return node.getExpression();
+  if (Node.isVariableDeclaration(node) || Node.isPropertyAssignment(node) || Node.isPropertyDeclaration(node)) return node.getInitializer();
+  return undefined;
 }
 
 function isFunctionLike(node: Node | undefined): boolean {
@@ -303,9 +305,7 @@ function isExported(node: Node, exports: ReadonlySet<Node>): boolean {
   const parent = node.getParent();
   if (!parent || !Node.isObjectLiteralExpression(parent)) return false;
   const holder = literalHolder(parent);
-  if (holder && (Node.isVariableDeclaration(holder) || Node.isExportAssignment(holder) || Node.isPropertyDeclaration(holder))) {
-    return isExported(holder, exports);
-  }
+  if (Node.isVariableDeclaration(holder) || Node.isExportAssignment(holder) || Node.isPropertyDeclaration(holder)) return isExported(holder, exports);
   const creator = enclosingUnitNode(parent);
   return !Node.isSourceFile(creator) && isExported(creator, exports);
 }
@@ -349,29 +349,25 @@ function callReceiving(value: Node): CallLike | undefined {
 }
 
 /** The object literals that make up a value: `{ ... }`, and those nested in its literals and arrays. */
-function objectLiteralsIn(value: Node): Node[] {
+function objectLiteralsIn(value: Node): ObjectLiteralExpression[] {
   const inner = unwrapExpression(value);
   if (Node.isObjectLiteralExpression(inner)) {
-    return [inner, ...inner.getProperties().flatMap((p) => (Node.isPropertyAssignment(p) && p.getInitializer() ? objectLiteralsIn(p.getInitializer()!) : []))];
+    return [inner, ...inner.getProperties().flatMap((p) => (Node.isPropertyAssignment(p) ? objectLiteralsIn(p.getInitializerOrThrow()) : []))];
   }
   if (Node.isArrayLiteralExpression(inner)) return inner.getElements().flatMap(objectLiteralsIn);
   return [];
 }
 
 /** An object literal's members that are functions: methods, accessors, `f: () => ...`. */
-function functionMembers(literal: Node): Node[] {
-  if (!Node.isObjectLiteralExpression(literal)) return [];
+function functionMembers(literal: ObjectLiteralExpression): Node[] {
   return literal.getProperties().flatMap((p) => unitNodeForDeclaration(p) ?? []);
 }
 
 /** What holds an object literal, through the literals and arrays it's nested in: `api` in `const api = { v1: { ... } }`. */
-export function literalHolder(literal: Node): Node | undefined {
+function literalHolder(literal: Node): Node {
   let node = literal;
-  for (let parent = node.getParent(); parent; parent = node.getParent()) {
-    if (!isLiteralContainer(parent)) return parent;
-    node = parent;
-  }
-  return undefined;
+  while (isLiteralContainer(node.getParentOrThrow())) node = node.getParentOrThrow();
+  return node.getParentOrThrow();
 }
 
 /** Syntax an object literal can sit in and still be part of the same value. */
@@ -416,8 +412,7 @@ function jsDocsOf(node: Node): Comment[] {
     return [...overloads.flatMap(jsDocComments), ...docs];
   }
   // A class expression's comment sits on what holds it: `/** @perm net */ export const C = class {...}`.
-  const holder = node.getParent();
-  if (Node.isClassExpression(node) && holder && isFunctionHolder(holder)) return [...docs, ...jsDocsOf(holder)];
+  if (Node.isClassExpression(node) && isFunctionHolder(node.getParentOrThrow())) return [...docs, ...jsDocsOf(node.getParentOrThrow())];
   return docs;
 }
 
@@ -451,9 +446,9 @@ export function exportedDeclarations(sourceFile: SourceFile): Set<Node> {
 function className(cls: ClassDeclaration | ClassExpression): string {
   const name = cls.getName();
   if (name) return name;
-  const holder = cls.getParent();
-  if (holder && (Node.isVariableDeclaration(holder) || Node.isPropertyAssignment(holder) || Node.isPropertyDeclaration(holder))) return holder.getName();
-  if (Node.isClassDeclaration(cls) || (holder && Node.isExportAssignment(holder))) return "default";
+  const holder = cls.getParentOrThrow();
+  if (Node.isVariableDeclaration(holder) || Node.isPropertyAssignment(holder) || Node.isPropertyDeclaration(holder)) return holder.getName();
+  if (Node.isClassDeclaration(cls) || Node.isExportAssignment(holder)) return "default";
   // Built by an expression (returned from a function, a mixin, `new (class {...})()`): named by where.
   const around = enclosingUnitNode(cls);
   return Node.isSourceFile(around) ? "<class>" : `${unitName(around)}.<class>`;

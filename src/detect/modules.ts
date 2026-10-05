@@ -88,12 +88,8 @@ export function loadTarget(load: Load, adapters: AdapterIndex): LoadTarget {
 function resolve(specifier: string, from: SourceFile, mode: "require" | "import"): string | undefined {
   const project = from.getProject();
   const resolutionMode = mode === "require" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext;
-  try {
-    return ts.resolveModuleName(specifier, from.getFilePath(), project.getCompilerOptions(), project.getModuleResolutionHost(), undefined, undefined, resolutionMode)
-      .resolvedModule?.resolvedFileName;
-  } catch {
-    return undefined;
-  }
+  return ts.resolveModuleName(specifier, from.getFilePath(), project.getCompilerOptions(), project.getModuleResolutionHost(), undefined, undefined, resolutionMode)
+    .resolvedModule?.resolvedFileName;
 }
 
 // Non-code imports that bundlers handle; TypeScript doesn't resolve them without declarations.

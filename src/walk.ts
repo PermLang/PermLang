@@ -6,7 +6,7 @@
 // parents first, so wrapping a node never has to wrap its ancestors recursively either.
 // A file's nodes are listed once, and reused by every pass over it.
 
-import { Node, type KindToNodeMappings, type SourceFile, type SyntaxKind, type ts } from "ts-morph";
+import { type KindToNodeMappings, type Node, type SourceFile, type SyntaxKind, type ts } from "ts-morph";
 
 interface Index {
   all: Node[];
@@ -16,23 +16,14 @@ interface Index {
 // Keyed by the compiler's node, which is replaced when the file is edited.
 const indexes = new WeakMap<ts.SourceFile, Index>();
 
-/** Calls `visit` on every node under `root` (not `root` itself), in source order, parents first. */
-export function forEachDescendant(root: Node, visit: (node: Node) => void): void {
-  if (Node.isSourceFile(root)) {
-    for (const node of indexOf(root).all) visit(node);
-    return;
-  }
-  walk(root, visit);
+/** Calls `visit` on every node in a file, in source order, parents first. */
+export function forEachDescendant(sourceFile: SourceFile, visit: (node: Node) => void): void {
+  for (const node of indexOf(sourceFile).all) visit(node);
 }
 
-/** Every node of `kind` under `root`, in source order. */
-export function descendantsOfKind<K extends SyntaxKind>(root: Node, kind: K): KindToNodeMappings[K][] {
-  if (Node.isSourceFile(root)) return (indexOf(root).byKind.get(kind) ?? []) as KindToNodeMappings[K][];
-  const out: KindToNodeMappings[K][] = [];
-  walk(root, (node) => {
-    if (node.getKind() === kind) out.push(node as KindToNodeMappings[K]);
-  });
-  return out;
+/** Every node of `kind` in a file, in source order. */
+export function descendantsOfKind<K extends SyntaxKind>(sourceFile: SourceFile, kind: K): KindToNodeMappings[K][] {
+  return (indexOf(sourceFile).byKind.get(kind) ?? []) as KindToNodeMappings[K][];
 }
 
 function indexOf(sourceFile: SourceFile): Index {

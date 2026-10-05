@@ -147,6 +147,23 @@ const caught: Record<string, string> = {
   en50_inline_class_expression: "import { execSync } from \"node:child_process\";\nexport function t() { return new (class { x = execSync(\"ls\"); })(); }",
   en51_mixin: "import { execSync } from \"node:child_process\";\ntype Ctor = new (...a: any[]) => object;\nfunction Loud<T extends Ctor>(Base: T) { return class extends Base { constructor(...a: any[]) { super(...a); execSync(\"ls\"); } }; }\nclass Plain {}\nexport class Mixed extends Loud(Plain) {}",
   en52_mixin_field: "import { execSync } from \"node:child_process\";\ntype Ctor = new (...a: any[]) => object;\nfunction Loud<T extends Ctor>(Base: T) { return class extends Base { x = execSync(\"ls\"); }; }\nclass Plain {}\nexport function t() { return new (Loud(Plain))(); }",
+  // An object of functions passed as an argument by a function is charged to that function (q isn't exported,
+  // so only the link from q, through t, catches these).
+  en53_arrow_in_object_argument: "declare function lib53(o: { where: () => unknown }): unknown;\nfunction q(u: string) { return lib53({ where: () => fetch(u) }); }\n/** @perm env(MODE) */\nexport function t(u: string) { return q(u); }",
+  en54_arrow_in_nested_argument: "declare function lib54(o: { hooks: { where: () => unknown }[] }): unknown;\nfunction q(u: string) { return lib54({ hooks: [{ where: () => fetch(u) }] }); }\n/** @perm env(MODE) */\nexport function t(u: string) { return q(u); }",
+  en55_valueof_through_and: "const o55 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\n// @ts-expect-error: arithmetic on an object runs its valueOf()\nexport function t(f: boolean) { return (f && o55) * 2; }",
+  en56_destructuring_assignment_rest: "const o56 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { let r: object; ({ ...r } = o56); return r; }",
+  en57_array_destructuring_assignment: "class Feed57 { *[Symbol.iterator]() { yield fetch(\"https://evil.example/x\"); } }\nexport function t() { let a: unknown; [a] = new Feed57(); return a; }",
+  en58_new_through_union: "import { execSync } from \"node:child_process\";\nclass Loud { x = execSync(\"ls\"); }\nclass Quiet {}\nexport function t(c: boolean) { const K = c ? Loud : Quiet; return new K(); }",
+  en59_computed_key_destructure: "const KEY = \"data\";\nconst o59 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const { [KEY]: d } = o59; return d; }",
+  en60_dynamic_key_destructure: "const o60 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t(k: \"data\") { const { [k]: d } = o60; return d; }",
+  en61_numeric_key_destructure: "const o61 = { get 0() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const { 0: d } = o61; return d; }",
+  en62_spread_then_operator: "const o62 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const s = { ...o62 } + \"\"; return s; }",
+  en63_array_of_objects_passed: "import { execSync } from \"node:child_process\";\ndeclare const app63: { use(r: object[]): void };\nfunction register() { const routes = [{ path: \"/\", run(q: string) { execSync(q); } }]; app63.use(routes); }\n/** @perm env(PORT) */\nexport function start() { register(); return process.env.PORT; }",
+  en64_nested_namespace: "import { execSync } from \"node:child_process\";\nexport namespace Outer { export namespace Inner { export function run() { execSync(\"ls\"); } } }",
+  en65_for_loop_function: "export function t() { for (const f = () => fetch(\"https://x.example/\"); ; ) { return f(); } }",
+  en66_export_equals_class: "import { execSync } from \"node:child_process\";\nexport = class { m() { execSync(\"m\"); } };",
+  en67_require_absolute: "export function t() { return require(\"/opt/app/missing.js\"); }",
   en21_generic_alias: "type Repo<T> = { load(id: string): Promise<T> };\nclass Leads implements Repo<string> { async load(id: string) { return (await fetch(\"https://leads.example/\" + id)).text(); } }\nexport function t(r: Repo<string>, id: string) { return r.load(id); }",
 };
 
@@ -185,6 +202,10 @@ const silent: Record<string, string> = {
   // Copying an object runs its getters, not its methods; arithmetic on numbers and dates runs no project code.
   en_fp11_spread_methods: "const o = { a: 1, run() { return fetch(\"https://x.example/\"); } };\nexport function t() { return { ...o }; }",
   en_fp12_arithmetic: "export function t(a: number, b: Date, c: Date) { return a * 2 + +(b < c) - (b.valueOf() % 7); }",
+  // `!` converts to a boolean without calling anything; a namespace that isn't exported is private.
+  en_fp13_logical_not: "const o = { valueOf() { void fetch(\"https://x.example/\"); return 1; } };\nexport function t() { return !o; }",
+  en_fp14_private_namespace: "namespace Hidden { export function run() { return fetch(\"https://x.example/\"); } }\nexport const n = 1;\nvoid Hidden;",
+  en_fp15_extends_library_class: "export class Bus extends EventTarget {}\nexport function t() { return new Bus(); }",
   en_fp06_missing_members: "interface Uplink { transmit(u: string): void; hangUp(): void }\nconst partial = { transmit(u: string) { void fetch(u); } };\nexport function t(l: Uplink, u: string) { l.transmit(u); return partial; }",
 };
 

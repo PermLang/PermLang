@@ -9,7 +9,7 @@ import fc from "fast-check";
 import { afterAll, describe, expect, it } from "vitest";
 import { Project, ts } from "ts-morph";
 import { checkFiles, checkProject, checkTsConfig, type Report } from "../src/check.js";
-import { pathTo, propagate, type Edge } from "../src/graph.js";
+import { holderOf, pathTo, propagate, type Edge } from "../src/graph.js";
 import type { Unit } from "../src/units.js";
 import { lineAndColumn } from "../src/walk.js";
 
@@ -60,7 +60,20 @@ describe("declaration files for the project's own JavaScript", () => {
     expect(errors(report, "app.ts")).toEqual(["6 PERM004 unverifiable"]);
     // The declarations themselves aren't functions PermLang analyzed, so they aren't reported or locked.
     expect(report.functions.map((f) => f.name)).toEqual(["t"]);
-    expect(report.diagnostics.find((d) => d.code === "PERM004")?.message).toMatch(/reaching run → JavaScript declared in legacy\.d\.ts\n/);
+    const d = report.diagnostics.find((x) => x.code === "PERM004");
+    expect(d?.message).toMatch(/reaching run → JavaScript declared in legacy\.d\.ts\n/);
+    // The fix names something that can carry @perm-unsafe, not the declaration.
+    expect(d?.fix).toBe("convert legacy.js to TypeScript so PermLang can check it, or review it and mark t @perm-unsafe with a reason.");
+  });
+
+  it("from top-level code, suggest wrapping the call in a function that can carry @perm-unsafe", () => {
+    const report = checkTsConfig(project({
+      "src/legacy.d.ts": "export declare function run(cmd: string): string;\n",
+      "src/app.ts": 'import { run } from "./legacy.js";\nrun("migrate");\n',
+    }));
+    expect(report.diagnostics.map((d) => d.fix)).toEqual([
+      "convert legacy.js to TypeScript so PermLang can check it, or review it and mark a function that wraps the call @perm-unsafe with a reason.",
+    ]);
   });
 });
 
@@ -81,6 +94,18 @@ describe("suggested fixes", () => {
     expect(fix("PERM003", "net(loader.example)")).toBe("add /** @perm net(loader.example) */ above class Loader.");
     expect(fix("PERM004", "unverifiable")).toBe("rewrite it so what it calls is known statically, or move it into a function marked @perm-unsafe with a reason.");
   });
+
+  it("name a class expression by what holds it, or ask for a constructor when nothing does", () => {
+    const report = checkTsConfig(project({
+      "src/app.ts": [
+        'export const Lazy = class { data = fetch("https://lazy.example/"); };',
+        'export function make() { return class { data = fetch("https://made.example/"); }; }',
+      ].join("\n"),
+    }), { strictness: "production" });
+    const fix = (capability: string) => report.diagnostics.find((d) => d.capability === capability)?.fix;
+    expect(fix("net(lazy.example)")).toBe("add /** @perm net(lazy.example) */ above class Lazy.");
+    expect(fix("net(made.example)")).toBe("add a constructor to the class, with /** @perm net(made.example) */.");
+  });
 });
 
 describe("classes built by expressions", () => {
@@ -91,9 +116,10 @@ describe("classes built by expressions", () => {
         'function make() { return class { x = execSync("ls"); }; }',
         "export function t() { const K = make(); return new K(); }",
         'export const Named = class { y = execSync("pwd"); };',
+        'export const made = new (class { z = execSync("id"); })();',
       ].join("\n"),
     }));
-    expect(report.functions.map((f) => f.name).sort()).toEqual(["Named.constructor", "make.<class>.constructor", "t"]);
+    expect(report.functions.map((f) => f.name).sort()).toEqual(["<class>.constructor", "<module>", "Named.constructor", "make.<class>.constructor", "t"]);
   });
 });
 
@@ -132,6 +158,10 @@ describe("long call chains", () => {
     expect(shown.slice(0, 2)).toEqual(["f1", "f2"]);
     expect(shown.slice(-2)).toEqual(["f19999", 'execSync("ls")']);
     expect(pathTo(reach, chain[19_997]!, "exec")).toEqual(["f19998", "f19999", 'execSync("ls")']);
+    // A capability a function doesn't reach has no path, and nothing holds it but the function.
+    expect(pathTo(reach, chain[0]!, "net")).toEqual([]);
+    expect(holderOf(reach, chain[0]!, "net")).toBe(chain[0]);
+    expect(holderOf(reach, chain[0]!, "exec")).toBe(chain.at(-1));
   });
 });
 

@@ -53,7 +53,8 @@ export function projectOfTsConfig(tsConfigFilePath: string): Project {
   }
   const project = new Project({ tsConfigFilePath, fileSystem, skipAddingFilesFromTsConfig: true, skipFileDependencyResolution: true });
   const parsed = ts.getParsedCommandLineOfConfigFile(tsConfigFilePath, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
-  for (const file of parsed?.fileNames ?? []) add(project, file, blank);
+  // (The tsconfig was read already, so it can be parsed.)
+  for (const file of parsed!.fileNames) add(project, file, blank);
   project.resolveSourceFileDependencies();
   return project;
 }
@@ -70,13 +71,12 @@ function add(project: Project, file: string, blank: Set<string>): void {
 // An empty module, so imports of it still resolve, and still run what it stands for.
 const EMPTY = "export {};\n";
 
-/** The real file system, except that the files in `blank` read as an empty module. */
+/** The real file system, except that the files in `blank` read as an empty module. (ts-morph reads source files synchronously.) */
 function blanking(blank: ReadonlySet<string>): FileSystemHost {
   const real = new Project().getFileSystem();
   return new Proxy(real, {
     get(target, property) {
       if (property === "readFileSync") return (file: string, encoding?: string) => (blank.has(key(file)) ? EMPTY : target.readFileSync(file, encoding));
-      if (property === "readFile") return async (file: string, encoding?: string) => (blank.has(key(file)) ? EMPTY : target.readFile(file, encoding));
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? value.bind(target) : value;
     },

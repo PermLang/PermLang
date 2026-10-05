@@ -224,7 +224,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   };
   const context: GraphContext = {
     unitOf: (node: Node) => units.get(node) ?? declaredUnit(node),
-    exportedUnits: (file) => exported.get(file) ?? [],
+    // Every analyzed file has one: its top-level code.
+    exportedUnits: (file) => exported.get(file)!,
     hierarchy: new Hierarchy(sourceFiles),
     adapters,
   };
