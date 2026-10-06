@@ -389,11 +389,11 @@ so the list can't go stale.
   only when it's written against the collection's function type (see
   [how calls are followed](#how-calls-are-followed)). Not linked: a function put
   in through a parameter of a function type of its own
-  (`function add(job: () => void) { jobs.set("x", job); }`); a collection with no
-  function type (`new Map()` with no type arguments is a `Map<any, any>`, so
-  calls through it can't be resolved at all). The code that makes the function
-  is charged with what it does either way. A call through an entry picked by a computed
-  index (`handlers[i]()` on an array) is unverifiable.
+  (`function add(job: () => void) { jobs.set("x", job); }`), and a collection
+  with no function type (`new Map()` with no type arguments is a
+  `Map<any, any>`, so calls through it can't be resolved at all). The code that
+  makes the function is charged with what it does either way. A call through an
+  array entry picked by a computed index (`handlers[i]()`) is unverifiable.
 - Implicit calls made inside a library function: `Promise.resolve(x)` calling
   `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
@@ -537,8 +537,8 @@ file along with the paths checked, so changing them fails the check until
 | `PERM003` | error | A function that must declare its permissions has no `@perm`: exported functions at development, every function at production. See [strictness levels](#strictness-levels). |
 | `PERM004` | error | Code whose effects can't be determined statically, such as `eval` or a capability hidden behind `any`. |
 | `PERM005` | error | The code and `permlang.lock.json` differ: the code reaches something the lock doesn't record, or the lock records something the code no longer reaches; a `@perm-unsafe` override is new, gone, or has another reason; the check ran on other files or with other settings than the lock records; the lock is missing (with `--require-lock`); or an older PermLang wrote it. See [the lock file](#the-lock-file-and-the-permission-diff). |
-| `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
-| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. Also the global `process` when Node's types are missing (reported as `node:process`). |
+| `PERM006` | warning, by default | A call into a package with no adapter, installed or a folder of the project's with its own `package.json`: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
+| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked, including an import of an asset-looking file where it compiles to `require()` (see [loading modules](#loading-modules)). Also the global `process` when Node's types are missing (reported as `node:process`). |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
 | `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC005` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
