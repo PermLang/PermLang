@@ -14,7 +14,9 @@ stricter about the lock.
 fails with a single error, `permlang.lock.json was written by an older
 PermLang (lock format 1)`. Run `permlang lock` once, with the paths and
 options your check uses, review the changes, and commit them. That includes
-GitHub Action users on `@v0`, who get 0.4.0 automatically. See
+GitHub Action users on `@v0`, who get 0.4.0 automatically. If you also run
+PermLang from npm, update it first (`npm install --save-dev permlang@^0.4.0`):
+`^0.3` never installs 0.4, and 0.3 can't read a 0.4 lock. See
 [upgrading from 0.3](docs/reference.md#upgrading-from-03-or-earlier).
 
 ### What newly fails
