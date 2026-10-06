@@ -433,10 +433,11 @@ Other gaps, not yet in fixtures:
   provides: a global function declared there, and defined by a script the page
   or process loads, isn't checked.
 - A client prisma-client-js generates into a folder of the project's is covered
-  by the Prisma detector, as `@prisma/client` is, and isn't listed. PermLang
-  recognizes it by what Prisma writes there (its `.d.ts` imports Prisma's runtime
-  as `runtime`), and can't tell a real generated client from a forged one: a
-  folder with a `package.json`, a `.d.ts` that imports a `./runtime/` file, and
+  by the Prisma detector, as `@prisma/client` is, and nothing in that folder is
+  listed. PermLang recognizes it by what Prisma writes there (its `index.d.ts`
+  imports Prisma's runtime as `runtime`; Prisma's header isn't enough), and
+  can't tell a real generated client from a forged one: a folder with a
+  `package.json`, a `.d.ts` that imports a `./runtime/` file that way, and
   JavaScript that does anything else passes as one. Review changes to a
   generated client's folder as you would any code.
 - `require()` of a package an adapter maps is unverifiable, rather than reaching

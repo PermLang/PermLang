@@ -10,7 +10,7 @@
 // does. The exception is a client prisma-client-js generated there, which the Prisma
 // detector reads as it reads @prisma/client.
 
-import { Node, SyntaxKind, type NoSubstitutionTemplateLiteral, type SourceFile, type StringLiteral } from "ts-morph";
+import { Node, SyntaxKind, type NoSubstitutionTemplateLiteral, type Project, type SourceFile, type StringLiteral } from "ts-morph";
 import { packageOf, type AdapterIndex } from "./adapters.js";
 import { isUrlSpecifier, loadOf, loadTarget, loadsData, referenceUsesRequire } from "./detect/modules.js";
 import { isPrismaClientJsFile } from "./detect/prisma.js";
@@ -51,10 +51,20 @@ interface Called {
 
 export function unmappedPackages(sourceFiles: readonly SourceFile[], adapters: AdapterIndex, packages: PackageFolders): UnmappedUse[] {
   const found = new Map<string, UnmappedUse & { fileSet: Set<string> }>();
+  const prisma = new Map<string, boolean>();
+  // A folder that holds a client prisma-client-js generated (one of its files imports Prisma's runtime).
+  const isPrismaClient = (folder: string, project: Project) => {
+    let known = prisma.get(folder);
+    if (known === undefined) {
+      known = project.getSourceFiles().some((sf) => sf.isDeclarationFile() && packages.localPackage(sf)?.folder === folder && isPrismaClientJsFile(sf));
+      prisma.set(folder, known);
+    }
+    return known;
+  };
   for (const sourceFile of sourceFiles) {
     forEachDescendant(sourceFile, (node) => {
       if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
-      const pkg = untypedPackageLoad(node, adapters) ?? calledPackage(node, packages);
+      const pkg = untypedPackageLoad(node, adapters) ?? calledPackage(node, packages, isPrismaClient);
       if (pkg === undefined || isCovered(pkg, adapters)) return;
 
       const existing = found.get(pkg.name);
@@ -87,7 +97,7 @@ function isCovered(pkg: Called, adapters: AdapterIndex): boolean {
 }
 
 /** The package a call's declaration belongs to, if it's third-party code. */
-function calledPackage(node: CallLike, packages: PackageFolders): Called | undefined {
+function calledPackage(node: CallLike, packages: PackageFolders, isPrismaClient: (folder: string, project: Project) => boolean): Called | undefined {
   // `new Client()` of a class with no declared constructor resolves to no signature; the class names the package.
   const declaration =
     resolvedDeclaration(node) ??
@@ -97,7 +107,7 @@ function calledPackage(node: CallLike, packages: PackageFolders): Called | undef
   if (installed !== undefined) return { name: installed };
   const local = packages.localPackage(declaration);
   // A client Prisma generated into the project is the Prisma detector's, as @prisma/client is.
-  if (local === undefined || isPrismaClientJsFile(declaration.getSourceFile())) return undefined;
+  if (local === undefined || isPrismaClient(local.folder, declaration.getProject())) return undefined;
   return local;
 }
 

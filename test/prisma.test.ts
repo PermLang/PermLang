@@ -304,6 +304,12 @@ export declare class PrismaClient { constructor(options?: object); $run(command:
 import { PrismaClient } from "./forged/index.js";
 /** @perm env(NONE) */ export function viaForged(command: string) { return new PrismaClient().$run(command); }
 `,
+  // Another file of the generated client's folder, which doesn't import the runtime itself (as TypedSQL's don't).
+  "src/typed-sql.ts": `
+import { PrismaClient } from "./db/client/index.js";
+import { recentLeads } from "./db/client/sql/index.js";
+/** @perm env(NONE) */ export function typed() { return [new PrismaClient(), recentLeads()]; }
+`,
 };
 
 beforeAll(() => {
@@ -327,6 +333,7 @@ beforeAll(() => {
     "src/db/client/package.json": JSON.stringify({ name: "prisma-client-0123abcd", main: "index.js", types: "index.d.ts" }),
     "src/db/client/index.d.ts": jsClient("./runtime/client.js"),
     "src/db/client/runtime/client.d.ts": RUNTIME,
+    "src/db/client/sql/index.d.ts": "export declare function recentLeads(): { sql: string };\n",
     ...modernClient("src/generated/db"),
   };
   for (const [file, text] of Object.entries(files)) {
