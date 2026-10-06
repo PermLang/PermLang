@@ -101,7 +101,9 @@ function defaultBranch(): string {
  */
 export function workflowArgs(args: Args, target: WorkflowTarget): string {
   const file = (p: string) => {
-    const absolute = path.resolve(target.cwd, p);
+    // A Windows-style path (`.\src\`) means the same folder wherever init runs: on Linux a
+    // backslash is part of a name, so it's turned into a slash before the path is resolved.
+    const absolute = path.resolve(target.cwd, p.replaceAll("\\", "/"));
     const fromRoot = path.relative(target.root, absolute);
     if (fromRoot.startsWith("..") || path.isAbsolute(fromRoot)) {
       throw new UsageError(`${printable(p)} is outside the repository, so the GitHub Action's checkout won't have it. Move it into the repository.`);
