@@ -408,7 +408,7 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 | a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
 | a package with no adapter | listed and warned about (PERM006), like an import of it |
 | a package declared pure, or data (see below) | nothing |
-| a specifier that can't be traced, or a file outside the project | unverifiable |
+| a specifier that can't be traced, or a file outside the project (an absolute path, `/opt/x.js` or `C:/x.js` wherever the check runs) | unverifiable |
 
 `data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
 every form of import: the code isn't a file in the project. A query or fragment

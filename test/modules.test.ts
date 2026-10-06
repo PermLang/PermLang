@@ -20,14 +20,17 @@ afterAll(() => {
   for (const dir of dirs) removeTemporary(dir);
 });
 
-/** Checks `files` with these module settings, at production strictness so every function counts. */
+/**
+ * Checks `files` with these module settings, at production strictness so every function counts.
+ * `<dir>` in a file stands for the project's folder.
+ */
 function check(compilerOptions: Record<string, unknown>, files: Record<string, string>): Report {
   const dir = mkdtempSync(path.join(tmpdir(), "permlang-modules-"));
   dirs.push(dir);
   const tsconfig = { compilerOptions: { target: "ES2022", strict: true, types: ["node"], typeRoots, ...compilerOptions }, include: ["src"] };
   for (const [file, text] of Object.entries({ "tsconfig.json": JSON.stringify(tsconfig), ...files })) {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
-    writeFileSync(path.join(dir, file), text);
+    writeFileSync(path.join(dir, file), text.replaceAll("<dir>", dir.replaceAll(path.sep, "/")));
   }
   return checkTsConfig(path.join(dir, "tsconfig.json"), { strictness: "production" });
 }
@@ -65,6 +68,24 @@ describe("require() of a file that looks like an asset", () => {
       "a.ts:4 error PERM004 unverifiable",
       "a.ts:5 error PERM004 unverifiable",
     ]);
+  });
+
+  it("is the same for an absolute path, and for a package's file", () => {
+    const report = check(COMMONJS, {
+      "src/data.json": '{ "a": 1 }',
+      "node_modules/countries/package.json": JSON.stringify({ name: "countries", main: "index.js" }),
+      "node_modules/countries/list.json": "[]",
+      "src/a.ts": [
+        '/** @perm env(NONE) */ export function absolute() { return require("<dir>/src/data.json"); }',
+        '/** @perm env(NONE) */ export function absoluteMissing() { return require("<dir>/src/missing.json"); }',
+        '/** @perm env(NONE) */ export function list() { return require("countries/list.json"); }',
+        // A package's .json that doesn't exist runs the package's missing.json.js: the package's code.
+        '/** @perm env(NONE) */ export function listMissing() { return require("countries/missing.json"); }',
+        // A Windows path is a file outside the project, wherever the check runs.
+        '/** @perm env(NONE) */ export function windows() { return require("C:/tools/setup.js"); }',
+      ].join("\n"),
+    });
+    expect(diagnostics(report)).toEqual(["a.ts:2 error PERM004 unverifiable", "a.ts:4 warning PERM006 countries", "a.ts:5 error PERM004 unverifiable"]);
   });
 
   it("is the same in an ES module, through createRequire", () => {
@@ -109,6 +130,17 @@ describe("importing a file that looks like an asset", () => {
     expect(diagnostics(cts)).toEqual(["a.cts:1 warning PERM007 ./theme.css"]);
     const bundled = check(BUNDLER, { "src/a.cts": 'import "./theme.css";\nexport {};\n' });
     expect(diagnostics(bundled)).toEqual(["a.cts:1 warning PERM007 ./theme.css"]);
+  });
+
+  it("follows TypeScript's defaults: an .mts file is an ES module, and \"module\" follows the target", () => {
+    const asset = 'import "./theme.css";\nexport {};\n';
+    // TypeScript emits an .mts file as an ES module even where "module" is CommonJS.
+    expect(diagnostics(check(COMMONJS, { "src/a.mts": asset }))).toEqual([]);
+    // With no "module", an ES2015 or later target means ES modules, and an older one CommonJS.
+    expect(diagnostics(check({}, { "src/a.ts": asset }))).toEqual([]);
+    expect(diagnostics(check({ target: "ES5" }, { "src/a.ts": asset }))).toEqual(["a.ts:1 warning PERM007 ./theme.css"]);
+    // With neither, the target is ES5 too.
+    expect(diagnostics(check({ target: undefined }, { "src/a.ts": asset }))).toEqual(["a.ts:1 warning PERM007 ./theme.css"]);
   });
 
   it("isn't reported in an ES module, where a bundler (or Node, which won't run it) loads it", () => {
