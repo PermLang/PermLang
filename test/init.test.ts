@@ -2,7 +2,7 @@
 // temporary directory.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -212,6 +212,22 @@ describe("permlang init --workflow", () => {
     const { code, out } = permlang("init", "src", "--config", "${{secrets.X}}.json", "--workflow");
     expect(code).toBe(2);
     expect(out).toMatch(/GitHub reads it as an expression/);
+  });
+
+  // The repository root is found with its links resolved, so a path written another way (through a
+  // link, or a Windows short name such as RUNNER~1, as on GitHub's Windows runners) must be too.
+  it("reads a path given through a link to the folder as inside the repository", () => {
+    git("init", "-q");
+    const link = `${dir}-link`;
+    symlinkSync(dir, link, "junction");
+    try {
+      const { code, out } = permlang("init", path.join(link, "src"), "--lock", path.join(link, "new.lock.json"), "--workflow");
+      expect(out).not.toMatch(/outside the repository/);
+      expect(code).toBe(0);
+      expect(read("permlang.yml").inputs.args).toBe("src --lock new.lock.json");
+    } finally {
+      unlinkSync(link);
+    }
   });
 
   it("quotes names YAML would read as something else", () => {

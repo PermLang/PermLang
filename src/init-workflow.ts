@@ -79,6 +79,20 @@ function gitRoot(): string | undefined {
   }
 }
 
+/**
+ * `file` with links and Windows short names (`RUNNER~1`) resolved, as the root and the working
+ * folder are, so the three compare. As far as it exists: a file init is told about, such as a new
+ * --lock, may not exist yet.
+ */
+function canonical(file: string): string {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    const parent = path.dirname(file);
+    return parent === file ? file : path.join(canonical(parent), path.basename(file));
+  }
+}
+
 /** The repository's default branch, from the remote's HEAD; `main` when that isn't known. */
 function defaultBranch(): string {
   try {
@@ -103,7 +117,7 @@ export function workflowArgs(args: Args, target: WorkflowTarget): string {
   const file = (p: string) => {
     // A Windows-style path (`.\src\`) means the same folder wherever init runs: on Linux a
     // backslash is part of a name, so it's turned into a slash before the path is resolved.
-    const absolute = path.resolve(target.cwd, p.replaceAll("\\", "/"));
+    const absolute = canonical(path.resolve(target.cwd, p.replaceAll("\\", "/")));
     const fromRoot = path.relative(target.root, absolute);
     if (fromRoot.startsWith("..") || path.isAbsolute(fromRoot)) {
       throw new UsageError(`${printable(p)} is outside the repository, so the GitHub Action's checkout won't have it. Move it into the repository.`);
