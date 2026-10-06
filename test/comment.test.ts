@@ -111,7 +111,18 @@ describe("lock files the comment speaks of", () => {
     expect(md).toContain("**This pull request stops checking with <code>permlang.lock.json</code>**");
     expect(md).toContain("reads <code>permlang.lock.v2.json</code> instead");
     const text = formatDiffText(diffLocks(undefined, lock({ "src/a.ts#f": ["exec"] })), {}, { lockFile: "permlang.lock.v2.json", lockMoved: ["permlang.lock.json"] });
-    expect(text).toContain("This change stops checking with permlang.lock.json");
+    expect(text).toContain("This change stops checking with permlang.lock.json, which the base commit's workflow checks with, and reads permlang.lock.v2.json instead.");
+  });
+
+  // `args: src --no-lock`, when the base's lock isn't at the default path: nothing is read instead.
+  it("doesn't name a lock file read instead when the check reads none", () => {
+    const notes = { lockMoved: ["locks/app.json"], enforced: false };
+    const md = formatDiffMarkdown(diffLocks(empty, lock({ "src/a.ts#f": ["exec"] })), {}, notes);
+    expect(md).toContain("**This pull request stops checking with <code>locks/app.json</code>**, which the base commit's workflow checks with. A lock file");
+    expect(md).not.toContain("instead");
+    const text = formatDiffText(diffLocks(empty, lock({ "src/a.ts#f": ["exec"] })), {}, notes);
+    expect(text).toContain("This change stops checking with locks/app.json, which the base commit's workflow checks with. With --base");
+    expect(text).not.toContain("instead");
   });
 
   // An adoption pull request that deleted its own new lock left the earlier comment standing (F).
@@ -120,6 +131,35 @@ describe("lock files the comment speaks of", () => {
     expect(md.split("\n")[0]).toBe("<!-- permlang-diff: packages/api -->");
     expect(md).toContain("There's no <code>permlang.lock.json</code> in this pull request or at its base commit");
     expect(md.split("\n").at(-1)).toBe(NO_LOCK_STATUS);
+  });
+});
+
+describe("what the comment lists besides new access", () => {
+  const unchecked = "permlang.config.json#<unchecked>";
+
+  it("lists code PermLang could check before and can't now, and code it now can, with where when that's known", () => {
+    const base = lock({ [unchecked]: ["unchecked.package(left-pad)"] });
+    const head = lock({ [unchecked]: ["unchecked.import(src/x.cjs)", "unchecked.package(leftpad2)"] });
+    const via = { [unchecked]: { "unchecked.import(src/x.cjs)": ["src/app.ts:3"] } };
+    const md = formatDiffMarkdown(diffLocks(base, head), via);
+    // A zero-width space after the colon keeps GitHub from reading "app.ts:3" as anything else.
+    expect(md).toContain("- <code>+ src/x.cjs</code>: an import with no types, in src/app.ts:\u200b3\n");
+    // With no record of where, the row just ends.
+    expect(md).toContain("- <code>+ leftpad2</code>: a package with no adapter\n");
+    expect(md).toContain("<details><summary>Removed access</summary>\n\n- <code>- left-pad</code>: no longer a package with no adapter");
+    const text = formatDiffText(diffLocks(base, head), { [unchecked]: { "unchecked.package(leftpad2)": ["src/app.ts:7"] } });
+    expect(text).toContain("  + leftpad2: a package with no adapter, called in src/app.ts:7");
+    expect(text).toContain("  + src/x.cjs: an import with no types\n");
+    expect(text).toContain("  - left-pad: no longer a package with no adapter");
+  });
+
+  it("shows an override's old value when it had one", () => {
+    const override = { name: "lodash", version: "4.17.21", section: "overrides" as const, dev: false, change: "override" as const, target: "lodash", known: "adapter" as const, installed: false };
+    const changed = formatDiffMarkdown(diffLocks(empty, empty), {}, { dependencies: [{ ...override, previous: "4.17.20" }] });
+    expect(changed).toContain("| <code>&#126; lodash</code> 4.17.20 → 4.17.21 <sub>(overrides)</sub> | **Overridden**: installed at this version wherever <code>lodash</code> is in the dependency tree |");
+    expect(formatDiffMarkdown(diffLocks(empty, empty), {}, { dependencies: [override] })).toContain("| <code>&#126; lodash</code> → 4.17.21 <sub>(overrides)</sub> |");
+    expect(formatDiffText(diffLocks(empty, empty), {}, { dependencies: [{ ...override, previous: "4.17.20" }] })).toContain("  ~ lodash 4.17.20 -> 4.17.21 (overrides): overridden");
+    expect(formatDiffText(diffLocks(empty, empty), {}, { dependencies: [override] })).toContain("  ~ lodash -> 4.17.21 (overrides): overridden");
   });
 });
 

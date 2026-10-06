@@ -136,6 +136,9 @@
     "src/lock-moves.ts#atBase": [
       "exec"
     ],
+    "src/lock-moves.ts#git": [
+      "exec"
+    ],
     "src/lock-moves.ts#gitText": [
       "exec"
     ],
