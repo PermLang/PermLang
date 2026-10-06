@@ -19,10 +19,10 @@
 // set by a call, such as what createRequire returns) is judged by its type: the
 // functions its call signatures declare.
 
-import { Node, SyntaxKind, type BindingElement, type CallExpression, type Identifier, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
+import { Node, SyntaxKind, type BindingElement, type CallExpression, type Expression, type Identifier, type PropertyAccessExpression, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import { packageOf, type AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
-import { admitsString, callText, containerName, isReflectApply, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
+import { admitsString, callText, containerName, isReflectApply, literalString, resolveAlias, resolvedDeclaration, signatureDeclarations, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 import { capabilitiesOf, constructorCapabilities, type Reach } from "./web.js";
 import { descendantsOfKind } from "../walk.js";
 
@@ -90,10 +90,13 @@ function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, use: Use,
  * declaration of its own: what it is comes from its type's call signatures.
  */
 function signatureCapabilities(symbol: MorphSymbol, type: Type, adapters: AdapterIndex, use: Use): Capability[] {
-  if (resolveAlias(symbol).getDeclarations().length > 0) return [];
-  for (const signature of type.getCallSignatures()) {
-    const declaration = signature.compilerSignature.declaration && signature.getDeclaration();
-    const capabilities = declaration ? capabilitiesOf(declaration, use.args, adapters, use.reach) : [];
+  return resolveAlias(symbol).getDeclarations().length > 0 ? [] : typedCapabilities(type, adapters, use);
+}
+
+/** What the functions a type can be called as touch, reached as `use` says. */
+function typedCapabilities(type: Type, adapters: AdapterIndex, use: Use): Capability[] {
+  for (const declaration of signatureDeclarations(type.getCallSignatures())) {
+    const capabilities = capabilitiesOf(declaration, use.args, adapters, use.reach);
     if (capabilities.length > 0) return capabilities;
   }
   return [];
@@ -117,14 +120,14 @@ function aliasedSymbol(declaration: Node): MorphSymbol | undefined {
 }
 
 /**
- * The member of the destructured value a name is bound to, at any depth: `writeFile` of
+ * The member of the destructured object a name is bound to, at any depth: `writeFile` of
  * `fs.promises` in `const { promises: { writeFile: w } } = fs`, or in a parameter
- * `({ execSync: run }: typeof cp)`. Undefined for a rest element, an array pattern, or a
- * computed key that can't be read.
+ * `({ execSync: run }: typeof cp)`. Undefined for a computed key that can't be read. (A rest
+ * element is an object, not a function; an array's element is judged by its type, in isOpaque.)
  */
 function destructuredProperty(element: BindingElement): MorphSymbol | undefined {
   const pattern = element.getParent();
-  if (element.getDotDotDotToken() || !Node.isObjectBindingPattern(pattern)) return undefined;
+  if (!Node.isObjectBindingPattern(pattern)) return undefined;
   const key = element.getPropertyNameNode() ?? element.getNameNode();
   const name = Node.isComputedPropertyName(key) ? literalString(key.getExpression())
     : Node.isStringLiteral(key) ? key.getLiteralValue()
@@ -135,8 +138,9 @@ function destructuredProperty(element: BindingElement): MorphSymbol | undefined 
 
 /**
  * A declaration whose value comes from code that isn't in sight, so its type is the best
- * account of what it holds: a declared global (`require`), or a variable set by a call
- * (`const load = createRequire(...)`) or later (`let run`, assigned by destructuring).
+ * account of what it holds: a declared global (`require`), a variable set by a call
+ * (`const load = createRequire(...)`) or later (`let run`, assigned by destructuring), or an
+ * element destructured from an array (`const [run] = runners`).
  * Not a function the project writes (`const f = () => ...`), whose body is followed instead,
  * and not a parameter, whose value is checked where it's passed.
  */
@@ -144,6 +148,7 @@ function isOpaque(declaration: Node): boolean {
   if (declaration.getSourceFile().isDeclarationFile()) {
     return Node.isVariableDeclaration(declaration) || Node.isPropertySignature(declaration);
   }
+  if (Node.isBindingElement(declaration)) return Node.isArrayBindingPattern(declaration.getParent());
   if (!Node.isVariableDeclaration(declaration)) return false;
   const initializer = declaration.getInitializer();
   const value = initializer && unwrapExpression(initializer);
@@ -152,16 +157,10 @@ function isOpaque(declaration: Node): boolean {
 
 /** What reaching a declaration touches; for an opaque one, what the functions its type can be called as touch. */
 function declaredCapabilities(declaration: Node, adapters: AdapterIndex, use: Use): Capability[] {
-  const reach = (d: Node) => capabilitiesOf(d, use.args, adapters, use.reach);
-  const capabilities = reach(declaration);
+  const capabilities = capabilitiesOf(declaration, use.args, adapters, use.reach);
   if (capabilities.length > 0 || !isOpaque(declaration)) return capabilities;
   // `require` is declared as a variable of type NodeJS.Require, whose call signature loads modules.
-  for (const signature of declaration.getType().getCallSignatures()) {
-    const declared = signature.compilerSignature.declaration && signature.getDeclaration();
-    const typed = declared ? reach(declared) : [];
-    if (typed.length > 0) return typed;
-  }
-  return [];
+  return typedCapabilities(declaration.getType(), adapters, use);
 }
 
 /** How a function is reached: the arguments it's called with, when they're known. */
@@ -179,7 +178,7 @@ interface Invocation extends Use {
  * it only ever passes it a function first (`[handler].forEach(setTimeout)`, or Node's
  * `promisify(setTimeout)`, which uses its own promise version), with functions.
  */
-function valueReach(site: Node): Reach {
+function valueReach(site: Expression): Reach {
   const parent = site.getParent();
   if (Node.isCallExpression(parent) && parent.getArguments()[0] === site && isNodePromisify(parent)) return "value given functions";
   // `fn.bind(thisArg)` makes a copy with the same signature, so calls through it are checked where
@@ -187,7 +186,7 @@ function valueReach(site: Node): Reach {
   // (`codes.forEach(setTimeout.bind(window))`), the copy is reached as the original would be.
   const bound = boundCopy(site);
   if (bound) return isConstInitializer(bound) ? "value given functions" : valueReach(bound);
-  const contextual = Node.isExpression(site) ? site.getContextualType()?.getNonNullableType() : undefined;
+  const contextual = site.getContextualType()?.getNonNullableType();
   const signatures = contextual?.getCallSignatures() ?? [];
   const givenFunctions = signatures.length > 0 && signatures.every((signature) => {
     const [first] = signature.getParameters();
@@ -246,7 +245,7 @@ function listed(call: CallExpression, list: Node | undefined): Invocation {
 }
 
 /** The expression an identifier is a value reference through (`fetch`, or `axios.get` for its `get`), if any. */
-function referenceExpression(id: Identifier): Node | undefined {
+function referenceExpression(id: Identifier): Identifier | PropertyAccessExpression | undefined {
   const parent = id.getParent();
   if (!parent) return undefined;
   if (Node.isPropertyAccessExpression(parent)) {

@@ -17,7 +17,7 @@ function check(compilerOptions: object, files: Record<string, string>): Report {
   dirs.push(dir);
   writeFileSync(path.join(dir, "tsconfig.json"), JSON.stringify({
     compilerOptions: { target: "ES2022", strict: true, lib: ["ES2022", "DOM"], types: [], ...compilerOptions },
-    include: ["*.ts"],
+    include: ["*.ts", "*.mts"],
   }));
   for (const [name, code] of Object.entries(files)) writeFileSync(path.join(dir, name), code);
   return checkTsConfig(path.join(dir, "tsconfig.json"), { strictness: "development" });
@@ -74,4 +74,15 @@ describe.each([
     expect(errors(report, "sendOther")).toEqual([]);
     expect(errors(report, "read")).toEqual([]);
   });
+});
+
+describe("constants exported from an .mts file in a package that isn't an ES module", () => {
+  // An .mts file is an ES module whatever its package says, so its namespace can't be written.
+  const report = check({ module: "nodenext", moduleResolution: "nodenext" }, {
+    "config.mts": "export const API_URL = \"https://good.example/collect\";",
+    "poison.ts": "import * as config from \"./config.mjs\";\nObject.assign(config, { API_URL: \"https://evil.example/collect\" });\nexport {};",
+    "app.ts": "import \"./poison\";\nimport { API_URL } from \"./config.mjs\";\n/** @perm net(good.example) */\nexport function send() { return fetch(API_URL); }",
+  });
+
+  it("are read as written", () => expect(errors(report, "send")).toEqual([]));
 });

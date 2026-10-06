@@ -95,6 +95,9 @@ describe("covers", () => {
     expect(covers([cap("fs.write", "//server/other/../share")], cap("fs.write", "//server/share/f"))).toBe(false);
     expect(covers([cap("fs.write", "//server/share")], cap("fs.write", "\\\\server\\share\\a\\..\\f"))).toBe(true);
     expect(covers([cap("fs.write", "//server")], cap("fs.write", "\\\\server\\share\\f"))).toBe(true);
+    // The root of every network path, with no server named, holds them all.
+    expect(covers([cap("fs.write", "//")], cap("fs.write", "\\\\server\\share\\..\\f"))).toBe(true);
+    expect(covers([cap("fs.write", "\\\\")], cap("fs.write", "//server/share/f"))).toBe(true);
   });
 
   it("does not let one capability stand in for another", () => {
