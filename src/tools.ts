@@ -12,6 +12,7 @@ import {
   type NewExpression,
   type ObjectLiteralExpression,
   type SourceFile,
+  type Type,
   type VariableDeclaration,
 } from "ts-morph";
 import { packageOf } from "./adapters.js";
@@ -30,8 +31,11 @@ export interface ToolRegistration {
   site: Node;
   /** What runs when the model calls the tool: a function, or an object or class whose methods do. */
   handler: Node | undefined;
-  /** The tool runs at the model provider (a hosted web search, say): no code here runs for it. */
-  hosted?: boolean;
+  /**
+   * The tool runs at the model provider (a hosted web search, say): no code here runs for it,
+   * except callbacks it's given (a hosted MCP server's `onApproval`). These are its arguments.
+   */
+  hosted?: readonly Node[];
 }
 
 /**
@@ -164,7 +168,7 @@ function handlerOf(call: CallExpression | NewExpression): Pick<ToolRegistration,
     const handler = definition && definitionHandler(definition);
     if (handler) return { handler };
   }
-  return { handler: undefined, hosted: runsAtProvider(call) };
+  return runsAtProvider(call) ? { handler: undefined, hosted: args } : { handler: undefined };
 }
 
 function lastFunction(args: readonly Node[]): Node | undefined {
@@ -361,7 +365,10 @@ export interface ReachContext {
  */
 export function handlerReach(tool: ToolRegistration, ctx: ReachContext): Set<string> {
   const out = new Set<string>();
-  if (tool.hosted) return out;
+  if (tool.hosted) {
+    for (const options of tool.hosted) callbackReach(options, ctx, out);
+    return out;
+  }
   if (!tool.handler) return out.add(UNVERIFIABLE);
   valueReach(tool.handler, ctx, out, 0);
   // A built-in tool can be given a factory (`computer: () => new LocalComputer()`, or
@@ -425,6 +432,41 @@ function valueReach(node: Node, ctx: ReachContext, out: Set<string>, depth: numb
   }
   // Anything else (a call's result, a computed value) could be anything.
   out.add(UNVERIFIABLE);
+}
+
+/**
+ * What the callbacks among a hosted tool's options reach (`onApproval`, which runs here when the
+ * provider asks). Options that can't be seen (a spread, a parameter) could hold one, when their
+ * type allows a function.
+ */
+function callbackReach(options: Node, ctx: ReachContext, out: Set<string>): void {
+  const literal = objectLiteralOf(options);
+  if (!literal) {
+    if (hasCallableProperty(options.getType(), options)) out.add(UNVERIFIABLE);
+    return;
+  }
+  for (const p of literal.getProperties()) {
+    if (Node.isSpreadAssignment(p)) callbackReach(p.getExpression(), ctx, out);
+    else if (isCallable(p.getType())) valueReach(p, ctx, out, 0);
+  }
+}
+
+/** An object type with a function-valued property of its own (not a method every array or object has). */
+function hasCallableProperty(type: Type, at: Node): boolean {
+  if (type.isAny() || type.isUnknown()) return true;
+  const parts = type.isUnion() ? type.getUnionTypes() : [type];
+  return parts.some(
+    (t) => (t.isObject() || t.isIntersection()) && t.getProperties().some((p) => isCallable(p.getTypeAtLocation(at)) && !p.getDeclarations().every((d) => isStandardLibrary(d.getSourceFile()))),
+  );
+}
+
+/** TypeScript's own lib files (lib.es5.d.ts, lib.dom.d.ts, ...). */
+function isStandardLibrary(file: SourceFile): boolean {
+  return /[\\/]typescript[\\/]lib[\\/]lib\.[^\\/]*\.d\.ts$/.test(file.getFilePath());
+}
+
+function isCallable(type: Type): boolean {
+  return type.getCallSignatures().length > 0 || type.getUnionTypes().some((t) => t.getCallSignatures().length > 0);
 }
 
 /** Adds what a unit reaches, if `unitNode` is one. */

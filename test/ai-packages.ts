@@ -27,7 +27,7 @@ export type { Shell, ShellAction, ShellResult, Editor } from '@openai/agents-cor
 export { Editor } from './editor';
 export { Computer } from './computer';
 export { Agent } from './agent';
-export { HostedTool, ComputerTool, computerTool, ShellTool, shellTool, ApplyPatchTool, applyPatchTool, FunctionTool, Tool, tool } from './tool';
+export { HostedTool, ComputerTool, computerTool, ShellTool, shellTool, ApplyPatchTool, applyPatchTool, HostedMCPTool, hostedMcpTool, FunctionTool, Tool, tool } from './tool';
 `,
   "@openai/agents-core/dist/shell.d.ts": `export type ShellAction = { commands: string[] };
 export type ShellResult = { output: string[] };
@@ -76,6 +76,12 @@ export declare function shellTool(options: LocalShellToolOptions): LocalShellToo
 export declare function shellTool(options: HostedShellToolOptions): HostedShellTool;
 export declare function applyPatchTool(options: { name?: string; editor: Editor }): ApplyPatchTool;
 export declare function tool(options: ToolOptions): FunctionTool;
+export type HostedMCPApprovalFunction = (context: unknown, data: { toolName: string; arguments: string }) => Promise<{
+    approve: boolean;
+    reason?: string;
+}>;
+export type HostedMCPTool = HostedTool & { name: 'hosted_mcp'; providerData: object };
+export declare function hostedMcpTool(options: { serverLabel: string; serverUrl?: string } & ({ requireApproval?: 'never' } | { requireApproval: 'always'; onApproval?: HostedMCPApprovalFunction })): HostedMCPTool;
 `,
   "@openai/agents-openai/package.json": pkg("@openai/agents-openai", "./dist/index.d.ts"),
   "@openai/agents-openai/dist/index.d.ts": `export { fileSearchTool, webSearchTool } from './tools';

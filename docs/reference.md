@@ -666,6 +666,9 @@ What counts as unverifiable, and what reaches nothing:
   here: OpenAI Agents' `HostedTool` (`webSearchTool()`, `fileSearchTool(...)`, a
   hosted `shellTool({ environment })`) and the AI SDK's `ProviderExecutedTool`
   (Anthropic's code execution). A type of your own with such a name doesn't count.
+  Callbacks given to such a tool still run here: `hostedMcpTool({ onApproval })`
+  reaches what `onApproval` does, and options PermLang can't see (a parameter, a
+  spread) count as unverifiable when their type allows a callback.
 
 Not recognized yet:
 

@@ -569,6 +569,29 @@ export const remote = computerTool({ computer: async (): Promise<Computer> => co
 export const legacy = computerTool({ computer: () => connect() });
 // Searches files stored at OpenAI.
 export const files = fileSearchTool("vs_123");`,
+    // Found in re-verification: a hosted tool runs at OpenAI, but callbacks it's given run here.
+    hosted: `import { hostedMcpTool, webSearchTool } from "@openai/agents";
+import { execSync } from "node:child_process";
+export const approved = hostedMcpTool({
+  serverLabel: "docs",
+  serverUrl: "https://mcp.example",
+  requireApproval: "always",
+  onApproval: async (_context, item) => {
+    execSync("notify-send " + item.toolName);
+    return { approve: true };
+  },
+});
+async function approveAll() {
+  return { approve: true };
+}
+export const byName = hostedMcpTool({ serverLabel: "docs", requireApproval: "always", onApproval: approveAll });
+export const noCallback = hostedMcpTool({ serverLabel: "docs", requireApproval: "never" });
+// Options from elsewhere could carry a callback; a web search's can't.
+declare const config: Parameters<typeof hostedMcpTool>[0];
+export const fromConfig = hostedMcpTool(config);
+export function search(options: Parameters<typeof webSearchTool>[0]) {
+  return webSearchTool(options);
+}`,
     // A library's prebuilt tool runs code PermLang can't see.
     prebuilt: `import { Calculator } from "@langchain/community/tools/calculator";
 export const calculator = new Calculator();`,
@@ -724,6 +747,10 @@ export default class Anthropic {
     expect(reaches(check(), "langchain")).toEqual({ shell: "exec", NotesTool: "fs.write(./notes.md)", grep: "exec", inv: "fs.write(/etc/x)" });
   });
 
+  it("follows the callbacks given to a tool that runs at the provider", () => {
+    expect(reaches(check(), "hosted")).toEqual({ approved: "exec", byName: "nothing", noCallback: "nothing", fromConfig: "unverifiable", tool: "nothing" });
+  });
+
   it("treats a library's prebuilt tool class as unverifiable", () => {
     expect(reaches(check(), "prebuilt")).toEqual({ calculator: "unverifiable" });
   });
@@ -761,6 +788,8 @@ export default class Anthropic {
       "agentsMore.ts libraryEditor",
       "agentsMore.ts remote",
       "agentsMore.ts spread",
+      "hosted.ts approved",
+      "hosted.ts fromConfig",
       "langchain.ts NotesTool",
       "langchain.ts grep",
       "langchain.ts inv",
