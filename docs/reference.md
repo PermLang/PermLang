@@ -89,9 +89,12 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     may be `undefined`), and a first argument to `net.connect` or `tls.connect`
     that isn't a port number or written-out options. A callback where options
     could be (`net.connect(port, host, onConnect)`) isn't options.
-  - `fs.read` / `fs.write`: `readFile` and `createReadStream` with a writing
-    `flag` / `flags` option (`"w"`, `"a+"`, or one that can't be read) write the
-    file, and used as values they could be called with any flags, as `open` can.
+  - `fs.read` / `fs.write`: `readFile` with a writing `flag` option, and
+    `createReadStream` (or `new fs.ReadStream`) with a writing `flags` option
+    (`"w"`, `"a+"`, or one that can't be read), write the file. As Node does,
+    each reads only its own name and ignores the other (`readFile`'s `flags`, a
+    stream's `flag`). Used as values, they could be called with any flags, as
+    `open` can.
     `new fs.Utf8Stream({ dest })`, `ReadStream`, and `WriteStream` open their
     path. `fchmod`, `fchown`, and `futimes` (and a `FileHandle`'s `chmod`,
     `chown`, and `utimes`) change a file however it was opened, so they need
