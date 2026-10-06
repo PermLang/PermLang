@@ -85,6 +85,14 @@ export function anyEscapes(sourceFile: SourceFile, adapters: AdapterIndex): Esca
       // `fs[name]` read with a computed key, rather than called (calls are in computed.ts).
       else if (Node.isElementAccessExpression(node) && isComputedModuleRead(node, carriers)) out.push(hidden(node, "read with a computed key"));
     }
+    // `import cp from "node:child_process"` where the compiler options give the module no default
+    // export (allowSyntheticDefaultImports off, as with module commonjs and no esModuleInterop):
+    // TypeScript types `cp` as `any`, but bundlers and Node's own interop still hand over the
+    // module. A named member is looked up on the module; any other use loses track of it.
+    else if (Node.isIdentifier(node) && carriers.untypedDefault(node)) {
+      const use = untypedDefaultUse(node, carriers.untypedDefault(node)!, adapters);
+      if (use) out.push(use);
+    }
     // A capability module used where its type is lost: `const m: any = cp`, `m = cp` with
     // `let m: any`, `use(cp)` with `function use(m: unknown)`, `run.call(cp)`, or `Object.values(cp)`.
     else if (Node.isIdentifier(node) && isPassedOn(node) && carriers.of(node) === "module") {
@@ -145,6 +153,22 @@ class CarrierCache {
     // Literals, `this`, and the like are never modules; only look at the type of a name or an expression that can hold one.
     const holds = Node.isIdentifier(value) || Node.isPropertyAccessExpression(value) || Node.isAwaitExpression(value) || Node.isCallExpression(value);
     return holds && this.isCapabilityModule(value.getType(), value) ? "module" : undefined;
+  }
+
+  /**
+   * For a reference to a default import of a capability module that TypeScript types as `any`
+   * (the module has no default export under the compiler options), the module's own type.
+   */
+  untypedDefault(id: Identifier): Type | undefined {
+    const parent = id.getParent();
+    // `export { cp }` names the export; the import it hands on is its local target.
+    const symbol = Node.isExportSpecifier(parent) && parent.getNameNode() === id ? parent.getLocalTargetSymbol() : id.getSymbol();
+    const clause = symbol?.getDeclarations().find((d) => Node.isImportClause(d));
+    if (!clause || !Node.isImportClause(clause) || clause.getDefaultImport()?.getType().isAny() !== true) return undefined;
+    const declaration = clause.getParentIfKindOrThrow(SyntaxKind.ImportDeclaration);
+    if (!this.isCapabilityModuleName(declaration.getModuleSpecifierValue())) return undefined;
+    // A module that doesn't resolve at all is an import with no types (PERM007, unmapped.ts).
+    return declaration.getModuleSpecifier().getSymbol()?.getTypeAtLocation(declaration);
   }
 
   /** A namespace or default import of a capability module: `import fs from "node:fs"`, `import cluster from "node:cluster"`. */
@@ -303,9 +327,9 @@ function processInternal(access: PropertyAccessExpression | ElementAccessExpress
  * Returns null for a member that isn't a capability, and undefined when the use isn't a single
  * named member (a module's escape is then reported as hidden).
  */
-function memberUse(cast: Node, value: Node, carrier: Carrier, adapters: AdapterIndex): EscapeUse | null | undefined {
+function memberUse(cast: Node, value: Node, carrier: Carrier, adapters: AdapterIndex, original = value.getType()): EscapeUse | null | undefined {
   let object: Node = outerOf(cast);
-  let type = value.getType();
+  let type = original;
   let name: string | undefined;
   for (let depth = 0; depth < 8; depth++) {
     const access = object.getParent();
@@ -338,6 +362,21 @@ function memberUse(cast: Node, value: Node, carrier: Carrier, adapters: AdapterI
   // could a namespace-like member of a capability module (`(fs as any).promises`).
   if (name !== undefined && GLOBAL_OBJECTS.has(name)) return hidden(value);
   return carrier === "module" && isModuleObject(type, adapters) ? hidden(value) : null;
+}
+
+/**
+ * A use of a default import TypeScript types as `any` (see CarrierCache.untypedDefault), with
+ * `module` its module's type: a named member as the module declares it (`cp.execSync(...)`), or
+ * hidden for any other use (destructured, passed on, exported). The import itself, a type
+ * position, and a cast (checked as one) aren't uses.
+ */
+function untypedDefaultUse(id: Identifier, module: Type, adapters: AdapterIndex): EscapeUse | undefined {
+  const parent = outerOf(id).getParent();
+  if (Node.isImportClause(id.getParent()) || id.getFirstAncestor((a) => Node.isTypeNode(a) || Node.isJSDoc(a))) return undefined;
+  if (Node.isAsExpression(parent) || Node.isTypeAssertion(parent) || Node.isSatisfiesExpression(parent)) return undefined;
+  const member = memberUse(id, id, "module", adapters, module);
+  if (member !== undefined) return member ?? undefined;
+  return hidden(id, "imported as a default export the module doesn't have under these compiler options");
 }
 
 /** What reading, calling, or constructing one member read past a cast, of type `type`, touches, if anything. */

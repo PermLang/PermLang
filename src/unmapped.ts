@@ -10,6 +10,7 @@
 // does. The exception is a client prisma-client-js generated there, which the Prisma
 // detector reads as it reads @prisma/client.
 
+import path from "node:path";
 import { Node, SyntaxKind, type NoSubstitutionTemplateLiteral, type Project, type SourceFile, type StringLiteral } from "ts-morph";
 import { packageOf, type AdapterIndex } from "./adapters.js";
 import { isUrlSpecifier, loadOf, loadTarget, loadsData, referenceUsesRequire } from "./detect/modules.js";
@@ -134,8 +135,9 @@ export interface UnresolvedImport {
 /**
  * Imports whose types can't be found (a missing @types package, say). Nothing
  * called from them can be resolved, so without this their calls would pass
- * silently. First import of each specifier, in file order. Data is left out (an asset
- * a bundler handles, or JSON: see loadsData), and so are URL specifiers, which are
+ * silently. First import of each module, in file order: a relative specifier
+ * (`./x.cjs`) names another file from each folder. Data is left out (an asset a
+ * bundler handles, or JSON: see loadsData), and so are URL specifiers, which are
  * unverifiable (detect/modules.ts).
  */
 export function unresolvedImports(sourceFiles: readonly SourceFile[]): UnresolvedImport[] {
@@ -144,8 +146,9 @@ export function unresolvedImports(sourceFiles: readonly SourceFile[]): Unresolve
     for (const { specifierNode, node } of moduleReferences(sourceFile)) {
       const specifier = specifierNode.getLiteralValue();
       if (isUrlSpecifier(specifier) || loadsData(specifier, sourceFile, referenceUsesRequire(node))) continue;
-      if (HANDLED.has(bareName(specifier)) || found.has(specifier) || resolves(specifierNode, node)) continue;
-      found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: lineAndColumn(sourceFile, node.getStart()).line, node });
+      const key = isRelative(specifier) ? path.posix.join(sourceFile.getDirectoryPath(), specifier) : specifier;
+      if (HANDLED.has(bareName(specifier)) || found.has(key) || resolves(specifierNode, node)) continue;
+      found.set(key, { specifier, file: sourceFile.getFilePath(), line: lineAndColumn(sourceFile, node.getStart()).line, node });
     }
     const process = found.has(NODE_PROCESS) ? undefined : unresolvedProcess(sourceFile);
     if (process) found.set(NODE_PROCESS, { specifier: NODE_PROCESS, file: sourceFile.getFilePath(), line: process.getStartLineNumber(), node: process });
@@ -171,6 +174,11 @@ function unresolvedProcess(sourceFile: SourceFile): Node | undefined {
     if (!Node.isPropertyAccessExpression(parent) || parent.getNameNode() !== id) return id;
   }
   return undefined;
+}
+
+/** `./x`, `../x`: a file, relative to the one that imports it. */
+export function isRelative(specifier: string): boolean {
+  return /^\.\.?(?:\/|$)/.test(specifier);
 }
 
 /**
