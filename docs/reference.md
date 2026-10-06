@@ -225,6 +225,23 @@ them by what the code says, not by names:
   that could be used as one, since TypeScript doesn't require `implements`. A
   generic type is compared by the members it requires. Members declared as
   function-typed properties (`send: (u: string) => void`) count like methods.
+- **Callable types and collections of functions.** A call through a callable
+  interface or type alias (`interface Runner { (cmd: string): void }`,
+  `type Runner = (cmd: string) => void`), or through the function type of a
+  collection's entries (`ops.get(name)!(arg)` on a
+  `Map<string, (arg: string) => void>`, `handlers.forEach((h) => h(x))` on a
+  `Handler[]`, or a `Map` whose type TypeScript inferred from a function in it),
+  reaches every function written against that type: one whose type comes from
+  it (`const shell: Runner = (cmd) => ...`, an entry of the collection,
+  `ops.set("run", (arg) => ...)`), or a named function put where it's expected
+  (`ops.set("run", shell)`, `const runners: Runner[] = [shell]`). An anonymous
+  function reached this way is named by where it is (`<function at ops.ts:4>`);
+  the code around it is charged with what it does, as before. Unlike classes
+  and interfaces, a function that merely fits the type isn't counted: nearly
+  every function fits a call signature. A function type written for a
+  parameter (`function apply(run: (cmd: string) => void)`) isn't followed this
+  way: a callback runs as part of the code that passes it, which already
+  reaches it.
 - **Objects of functions handed to a call.** A function that passes an object
   holding functions (`app.use({ run(q) {...} })`, or a `const` holding one,
   nested in arrays and objects too) reaches those functions. Handed out by a
@@ -364,6 +381,15 @@ so the list can't go stale.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that
   assigns them is still reported.
+- A function kept in a collection is linked to calls through the collection
+  only when it's written against the collection's function type (see
+  [how calls are followed](#how-calls-are-followed)). Not linked: a function put
+  in through a parameter of a function type of its own
+  (`function add(job: () => void) { jobs.set("x", job); }`); a collection with no
+  function type (`new Map()` with no type arguments is a `Map<any, any>`, so
+  calls through it can't be resolved at all). The code that makes the function
+  is charged with what it does either way. A call through an entry picked by a computed
+  index (`handlers[i]()` on an array) is unverifiable.
 - Implicit calls made inside a library function: `Promise.resolve(x)` calling
   `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
@@ -1281,8 +1307,8 @@ src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
 src/detect/         direct uses: fetch, fs, env, browser and Node globals, Prisma, Drizzle, SQL, adapter-mapped calls, values, module loads, unverifiable code
-src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes
-src/units.ts        functions, methods, and files that permissions attach to
+src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes, and functions through callable types and collections
+src/units.ts        functions, methods, and files that permissions attach to, and which folders are packages
 src/graph.ts        the call graph and propagation along it
 src/walk.ts         walking syntax trees without recursion, and finding positions in them
 src/load.ts         building the ts-morph project, setting aside files that can't be parsed

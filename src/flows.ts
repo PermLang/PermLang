@@ -61,11 +61,14 @@ function one(text: string, what: string, source: string): Capability {
 export function flowDiagnostics(units: Iterable<Unit>, edges: readonly Edge[], reach: Reach, rules: readonly FlowRule[]): Diagnostic[] {
   const out: Diagnostic[] = [];
   // Listed once: an iterator (a Map's values, say) would be used up by the first rule.
-  const all = [...units];
+  const all = new Set(units);
   for (const rule of rules) {
     const source = formatCapability(rule.from);
     const allowed = rule.to.length > 0 ? `allows only ${rule.to.map(formatCapability).join(", ")}` : "doesn't let it go anywhere";
-    for (const [unit, via] of holders(all, edges, rule)) {
+    // Any unit can hand the source on, including one that isn't reported (an anonymous
+    // function kept in a Map, say: units.ts); the reported ones are diagnosed.
+    for (const [unit, via] of holders(reach.keys(), edges, rule)) {
+      if (!all.has(unit)) continue;
       const got = via.length === 0 ? `reads ${source}` : `gets ${source} from ${via.join(" → ")}`;
       for (const [key, p] of reach.get(unit)!) {
         const anywhere = key === "exec" || key === UNVERIFIABLE;

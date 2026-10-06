@@ -245,6 +245,9 @@ const caught: Record<string, string> = {
   // or adds `.js` when it doesn't exist (./theme.css.js). Only a .json file that exists is data.
   rve01_require_stylesheet: "export function t() { return require(\"./rve01-theme.css\"); }",
   rve02_require_missing_json: "export function t() { return require(\"./rve02-data.json\"); }",
+  // A call through a callable interface, or a collection of functions, runs what's written against it.
+  rve03_callable_interface: "import { execSync } from \"node:child_process\";\ninterface Runner03 { (cmd: string): void }\nconst shell03: Runner03 = (cmd) => { execSync(cmd); };\nexport function t(run: Runner03, c: string) { return run(c); }",
+  rve04_map_of_functions: "import { execSync } from \"node:child_process\";\nconst ops04 = new Map<string, (arg: string) => unknown>();\nfunction register04() { ops04.set(\"run\", (arg) => execSync(arg)); }\nexport function t(op: string, arg: string) { return ops04.get(op)!(arg); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -319,6 +322,10 @@ const silent: Record<string, string> = {
 
 const knownMisses: Record<string, { why: string; code: string }> = {
   c10_global_alias_any: { why: "a global stored as any, then a capability called through it (left silent: `const w = window as any` is common and harmless)", code: "export async function t(u: string) { const w = window as any; return w.fetch(u); }" },
+  rve05_collection_filled_through_parameter: {
+    why: "a function put in a collection through a parameter (written against the parameter's type, not the collection's) isn't linked to calls through the collection",
+    code: "import { execSync } from \"node:child_process\";\nconst jobs05 = new Map<string, () => void>();\nfunction add05(job: () => void) { jobs05.set(\"x\", job); }\n/** @perm exec */\nexport function init() { add05(() => { execSync(\"ls\"); }); }\nexport function t() { jobs05.get(\"x\")!(); }",
+  },
 };
 
 const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];

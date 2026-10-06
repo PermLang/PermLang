@@ -34,6 +34,12 @@ export interface Unit {
    * analyze, so it's unverifiable. Calls reach it, but it isn't reported or locked itself.
    */
   declarationOnly?: true;
+  /**
+   * For an anonymous function a call can reach through its type (dispatch.ts): the unit
+   * whose code it is. It stands for the part of that unit inside it, and isn't reported
+   * or locked itself.
+   */
+  around?: Unit;
 }
 
 export function isAnnotated(unit: Unit): boolean {
@@ -213,6 +219,40 @@ export function createDeclaredUnit(node: Node): Unit {
     uses: [{ verb: "calls", capability: { name: UNVERIFIABLE }, call, line, column }],
     declarationOnly: true,
   };
+}
+
+// --- anonymous functions reached through their type ---------------------------
+
+/**
+ * A unit for an anonymous function that a call reaches through its type, such as a function
+ * kept in a Map (dispatch.ts). Its code belongs to the unit around it, which is charged with
+ * it as before; this one has that unit's uses inside the function (check.ts adds its calls).
+ * A @perm-unsafe on the unit around it covers it too.
+ */
+export function createAnonymousUnit(fn: Node, around: Unit): Unit {
+  const sourceFile = fn.getSourceFile();
+  const { line } = lineAndColumn(sourceFile, fn.getStart());
+  const inside = isInside(fn);
+  return {
+    node: fn,
+    file: around.file,
+    name: `<function at ${sourceFile.getBaseName()}:${line}>`,
+    line,
+    exported: false,
+    own: around.own,
+    module: around.module,
+    uses: around.uses.filter(inside),
+    around,
+  };
+}
+
+/** Whether a position (a use's, or a call's) is inside `node`. */
+export function isInside(node: Node): (position: { line: number; column: number }) => boolean {
+  const sourceFile = node.getSourceFile();
+  const start = lineAndColumn(sourceFile, node.getStart());
+  const end = lineAndColumn(sourceFile, node.getEnd());
+  const after = (p: { line: number; column: number }, q: { line: number; column: number }) => p.line > q.line || (p.line === q.line && p.column >= q.column);
+  return (p) => after(p, start) && !after(p, end);
 }
 
 /**

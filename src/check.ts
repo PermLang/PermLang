@@ -23,6 +23,7 @@ import { forEachDescendant, lineAndColumn } from "./walk.js";
 import { collectEdges, holderOf, pathTo, propagate, type Edge, type GraphContext, type Reach } from "./graph.js";
 import {
   annotationComments,
+  createAnonymousUnit,
   createDeclaredUnit,
   createUnit,
   declaredCapabilities,
@@ -30,6 +31,7 @@ import {
   exportedDeclarations,
   isAnnotated,
   isInNodeModules,
+  isInside,
   isUnitNode,
   PackageFolders,
   readModuleAnnotation,
@@ -243,8 +245,18 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     if (!declared.has(node)) declared.set(node, createDeclaredUnit(node));
     return declared.get(node);
   };
+  //    An anonymous function that a call reaches through its type (a function kept in a Map,
+  //    say) gets a unit too: the part of the unit around it that's inside it.
+  const anonymous = new Map<Node, Unit>();
+  const anonymousUnit = (node: Node): Unit | undefined => {
+    if (!Node.isArrowFunction(node) && !Node.isFunctionExpression(node)) return undefined;
+    const around = units.get(enclosingUnitNode(node));
+    if (!around) return undefined;
+    if (!anonymous.has(node)) anonymous.set(node, createAnonymousUnit(node, around));
+    return anonymous.get(node);
+  };
   const context: GraphContext = {
-    unitOf: (node: Node) => units.get(node) ?? declaredUnit(node),
+    unitOf: (node: Node) => units.get(node) ?? declaredUnit(node) ?? anonymousUnit(node),
     // Every analyzed file has one: its top-level code.
     exportedUnits: (file) => exported.get(file)!,
     hierarchy: new Hierarchy(sourceFiles),
@@ -256,7 +268,13 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     if (reason !== undefined) unanalyzable(sf, reason);
     return found;
   });
-  const reach = propagate([...units.values(), ...declared.values()], edges);
+  // An anonymous function's calls are those of the unit around it made inside it.
+  const aroundEdges = groupBy(edges, (e) => e.from);
+  for (const unit of anonymous.values()) {
+    const inside = isInside(unit.node);
+    for (const edge of aroundEdges.get(unit.around!) ?? []) if (inside(edge)) edges.push({ ...edge, from: unit });
+  }
+  const reach = propagate([...units.values(), ...declared.values(), ...anonymous.values()], edges);
   const edgesFrom = groupBy(edges, (e) => e.from);
 
   // 3. Compare declared with actual.
@@ -564,9 +582,11 @@ function unverifiable(unit: Unit, site: Use | Edge, verb: string, path: string[]
 
 /**
  * How to resolve unverifiable code, naming something that can carry @perm-unsafe: never a
- * file's top-level code (a @module comment can't), and never a .d.ts declaration.
+ * file's top-level code (a @module comment can't), a .d.ts declaration, or an anonymous function.
  */
-function unverifiableFix(unit: Unit, holder: Unit): string {
+function unverifiableFix(unit: Unit, reached: Unit): string {
+  // An anonymous function's code is the unit around it's, which takes the annotation.
+  const holder = reached.around ?? reached;
   if (unanalyzed.has(holder)) return "simplify the file so PermLang can analyze it (split up its most deeply nested code, if that's the reason).";
   if (holder.declarationOnly) {
     const js = path.basename(holder.file).replace(/.d.([cm]?)ts$/, ".$1js");

@@ -6,6 +6,9 @@
 //   - the declaration a call resolves to, which covers `super()`, literal
 //     computed keys (`api["ping"]()`), and calls through const aliases;
 //   - every implementation a call through an interface or base class may reach;
+//   - every function written against a callable interface or type alias, or a
+//     collection of functions, that a call goes through (`ops.get(name)!()`); an
+//     anonymous one stands for the part of its unit inside it (see check.ts);
 //   - every member a computed key could select (`handlers[kind]()`);
 //   - a class's implicit constructor running its base constructor;
 //   - importing a module, which runs its top-level code;
@@ -212,6 +215,7 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     if (declaration) {
       add(call, unitNodeForDeclaration(declaration), call, text);
       for (const impl of ctx.hierarchy.implementations(declaration)) add(call, impl, call, text);
+      for (const fn of ctx.hierarchy.functionsCalledThrough(declaration)) add(call, fn, call, text);
     }
 
     const computed = computedCallee(call);
