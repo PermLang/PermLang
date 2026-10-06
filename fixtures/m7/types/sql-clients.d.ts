@@ -46,6 +46,28 @@ declare module "better-sqlite3" {
   export default Database;
 }
 
+// sqlite3 5: Database's run/all/get/exec take SQL; its Statement's run/all/get run what
+// prepare() was given.
+declare module "sqlite3" {
+  export class Statement {
+    bind(...params: unknown[]): this;
+    run(...params: unknown[]): this;
+    all(...params: unknown[]): this;
+    get(...params: unknown[]): this;
+    finalize(): Database;
+  }
+  export class Database {
+    constructor(filename: string);
+    run(sql: string, ...params: unknown[]): this;
+    all(sql: string, ...params: unknown[]): this;
+    get(sql: string, ...params: unknown[]): this;
+    exec(sql: string): this;
+    prepare(sql: string, ...params: unknown[]): Statement;
+    loadExtension(filename: string): this;
+    close(): void;
+  }
+}
+
 declare module "mysql2" {
   import type { Pool as PromisePool } from "mysql2/promise";
   export interface Pool {

@@ -66,10 +66,13 @@ const SPECIAL_METHODS: Record<string, Record<string, readonly Capability[]>> = {
   postgres: { file: [{ name: "fs.read", dynamic: true }, { name: "db.read", dynamic: true }, { name: "db.write", dynamic: true }] },
 };
 
-// sqlite3's Statement has run/all/get too, without SQL text; only Database's take SQL.
-const TEXT_CONTAINERS: Record<string, string> = { sqlite3: "Database", "node:sqlite": "DatabaseSync" };
-// Statement handles, whose methods run the SQL they were prepared with.
-const STATEMENT_CONTAINERS: Record<string, readonly string[]> = { mysql2: ["PreparedStatementInfo", "PrepareStatementInfo"], "node:sqlite": ["StatementSync"] };
+// Statement handles, whose methods run the SQL they were prepared with. (sqlite3's Statement
+// has run/all/get too, without SQL text; only its Database's take SQL.)
+const STATEMENT_CONTAINERS: Record<string, readonly string[]> = {
+  mysql2: ["PreparedStatementInfo", "PrepareStatementInfo"],
+  sqlite3: ["Statement"],
+  "node:sqlite": ["StatementSync"],
+};
 // Objects whose methods are tags: node:sqlite's tag store, `store.all` with a template.
 const TAG_CONTAINERS: Record<string, { container: string; tags: readonly string[] }> = {
   "node:sqlite": { container: "SQLTagStore", tags: ["all", "get", "iterate", "run"] },
@@ -113,7 +116,6 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   if (!method) return [];
   const special = SPECIAL_METHODS[name]?.[method];
   if (special) return [...special];
-  const textContainer = TEXT_CONTAINERS[name];
   const container = containerName(declaration) ?? "";
   // A prepared statement runs the SQL prepare() was given; its values are bound.
   if (STATEMENT_CONTAINERS[name]?.includes(container)) return [];
@@ -121,17 +123,14 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   // template's strings), or used as a value, it could run any SQL.
   const store = TAG_CONTAINERS[name];
   if (store?.container === container && store.tags.includes(method)) return call && Node.isTaggedTemplateExpression(call) ? fromSql(templateText(call.getTemplate())) : unknown;
-  if (TEXT_METHODS[name]!.includes(method) && (!textContainer || container === textContainer)) {
+  if (TEXT_METHODS[name]!.includes(method)) {
     // Used as a value (no call), the SQL is unknown.
     if (!call) return unknown;
     const args = argumentsOf(call);
     if (name === "mysql2" && method === "query") return mysqlQuery(args);
     return fromSql(queryText(args[0]));
   }
-  if (SAFE_METHODS[name]?.includes(method) || (textContainer && container !== textContainer && TEXT_METHODS[name]!.includes(method))) {
-    return [];
-  }
-  return unknown;
+  return SAFE_METHODS[name]!.includes(method) ? [] : unknown;
 }
 
 /**

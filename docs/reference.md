@@ -133,7 +133,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `.bind`, whose arguments can't be read. An extended client's (`$extends`)
     operations name their model only where they're called on one
     (`client.lead.findMany(...)`); reached any other way, they could be any
-    operation of any model. So could a model chosen at run time, with a key that
+    operation of any model, and a fluent step (`.owner`) could read any related
+    table. So could a model chosen at run time, with a key that
     isn't one literal (`prisma[model].findMany()`, `(prisma as any)[name]`): bare
     `db.read` and `db.write` where it's chosen. A query extension's `query`
     (`$extends({ query: { lead: { findMany({ args, query }) {...} } } })`) runs the
@@ -171,10 +172,12 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     touch any table. A column's `$defaultFn` and `$onUpdateFn` (and `$default`,
     `$onUpdate`) run when drizzle builds a statement, which then holds the SQL they
     return: every insert into the table is charged with the defaults' SQL and the
-    update functions', and every update with the update functions'. For an insert
-    or update into a table PermLang can't find, or whose columns it can't all see
-    (spread from something other than a `const` or a project function that returns
-    them), that SQL could read any table: bare `db.read`.
+    update functions', and every update with the update functions'. A function
+    written elsewhere (`$defaultFn(makeDefault)`) is judged by its return type: one
+    that could return SQL could read any table. For an insert or update into a
+    table PermLang can't find, or whose columns it can't all see (spread from
+    something other than a `const` or a project function that returns them, or
+    16 or more groups of them), that SQL could read any table: bare `db.read`.
   - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
     `postgres`, `@neondatabase/serverless`, `@vercel/postgres`, and Node's own
     `node:sqlite`). When the query
@@ -214,8 +217,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     text (before 1.0) is read like `query()`. Any client method PermLang doesn't
     know needs bare `db.read` and `db.write` too, so new APIs can't pass silently;
     postgres.js's query modifiers (`.values()`, `.cursor()`, `.describe()`, ...),
-    mysql2's `.promise()`, and a prepared statement's methods (mysql2's and
-    `node:sqlite`'s) touch nothing beyond the query they belong to. A `?`
+    mysql2's `.promise()`, and a prepared statement's methods (mysql2's, sqlite3's,
+    and `node:sqlite`'s) touch nothing beyond the query they belong to. A `?`
     placeholder is read as MySQL and SQLite read it, on its own (SQLite's `?12`
     takes digits too), so in `?FROM secrets` the word after it is the keyword
     `FROM`. Schema-qualified names are declared as written (`db.read(public.users)`).

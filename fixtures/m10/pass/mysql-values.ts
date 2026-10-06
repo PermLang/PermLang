@@ -28,6 +28,15 @@ export async function narrow<T extends string>(value: T) {
   await myp.query("SELECT * FROM leads WHERE id = ?", [value]);
 }
 
+// A JSON value's type refers to itself; a tuple's elements, spread in, are each plain.
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+/** @perm db.write(leads) */
+export async function shapes(doc: Json, pair: [string, number], ids: number[]) {
+  await myp.query("UPDATE leads SET doc = ? WHERE id = ?", [doc, 1]);
+  await myp.query("UPDATE leads SET name = ? WHERE id = ?", [...pair]);
+  await myp.query("UPDATE leads SET seen = 1 WHERE id IN (?)", [[...ids, 0]]);
+}
+
 // execute() binds values on the server, which never calls toSqlString(); a prepared
 // statement runs the SQL prepare() read.
 /** @perm db.read(leads), db.write(leads) */

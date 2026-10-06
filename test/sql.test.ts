@@ -175,6 +175,8 @@ describe("sqlTables: anything else is unknown", () => {
     "SELECT :a::b('x) FROM secrets --')",
     "SELECT :a::('x) FROM secrets --')",
     "SELECT $1::1lower('x) FROM secrets --')",
+    // A suffix that never closes.
+    "SELECT name, :a(x",
     // SQLite reads `[` to the first `]` as a name, whatever is in between.
     "SELECT ['] FROM secrets --'] FROM leads",
     'SELECT ["] FROM secrets --"] FROM leads',
@@ -208,6 +210,10 @@ describe("sqlTables: anything else is unknown", () => {
       // Its quote tracking starts a string at the apostrophe in the comment, so it ends one
       // where the string really starts, and fills in `:a` inside it.
       "/* it's */ SELECT * FROM leads WHERE x = ':a'",
+      "/* \\\\' */ SELECT * FROM leads WHERE x = ':a'",
+      // It reads a backslash as escaping the next character, even in a comment: this
+      // apostrophe starts no string there, so it fills in the `:a` in the next comment.
+      "/* \\' */ SELECT * FROM leads /* :a */",
     ])("unknown: %j", (sql) => {
       expect(sqlTables(sql, { formatted: true })).toBeUndefined();
       expect(sqlTables(sql)).toBeDefined();
@@ -217,6 +223,8 @@ describe("sqlTables: anything else is unknown", () => {
       ["SELECT * FROM leads WHERE id = ? AND note = '12:30'", ["leads"]],
       ["SELECT * FROM leads WHERE created > '10:30' AND id = :id", ["leads"]],
       ['SELECT ":a" FROM leads', ["leads"]],
+      // A doubled quote doesn't end the string, for named-placeholders either.
+      ["SELECT * FROM leads WHERE note = 'it''s :x' AND id = ?", ["leads"]],
     ])("%j reads %j", (sql, read) => {
       expect(sqlTables(sql, { formatted: true })).toEqual({ read, write: [] });
     });
