@@ -34,8 +34,8 @@ This writes three files. Commit all of them:
 
 | File | What it is |
 | --- | --- |
-| `permlang.config.json` | Settings. Starts at `"strictness": "sketch"`: everything is reported, and only new access the lock doesn't record fails (plus any flow rules, or `"error"` policies, you add later). |
-| `permlang.lock.json` | What every function can reach today (network hosts, files, database tables, environment variables, processes), and what your workflows and `package.json` scripts grant (token permissions, secrets, Actions, install hooks). It also records which files were checked (`src` here), and the settings. |
+| `permlang.config.json` | Settings. Starts at `"strictness": "sketch"`: everything is reported, and only a difference between the code and the lock fails, such as new access the lock doesn't record (plus any flow rules, or `"error"` policies, you add later). |
+| `permlang.lock.json` | What every function can reach today (network hosts, files, database tables, environment variables, processes), and what your workflows and `package.json` scripts grant (token permissions, secrets, Actions, install hooks). It also records which files were checked (`src` here, and any files it imports from elsewhere), the settings, and the code PermLang can't check (packages with no adapter, imports with no types). |
 | `.github/workflows/permlang.yml` | Installs your dependencies (for their types), then runs PermLang on every pull request and comments the permission diff. |
 
 ## 3. Review what you have
@@ -50,18 +50,21 @@ Look at four things:
   trusts them. Each gets one warning (PERM006). For each one, either add an
   adapter (see [Adapter manifests](reference.md#adapter-manifests)) or declare it pure. A small
   team adapter file, listed under `"adapters"` in `permlang.config.json`, does
-  either.
+  either. The lock records them, so a pull request that starts using a new one
+  fails until it's reviewed and `permlang lock` records it.
 - **Unverifiable code** (PERM004): `eval`, `new Function`, computed calls on
   `fs` or `globalThis`, `require` of a computed path or of `child_process`,
   `data:` imports, calls into your own JavaScript through a hand-written `.d.ts`.
   It's reported on the exported function that reaches it, and the lock records
   every use. Rewrite it, or mark the function `@perm-unsafe reason:"..."`. Every
   override is listed in every report.
-- **Tools an AI model can call** (if you use MCP, the Vercel AI SDK, OpenAI
-  Agents, or LangChain). The report lists each tool and what it can reach. A
-  tool that can run commands, write data, or send to any address gets a warning
-  (PERM008): whoever controls the model's input can trigger it. Narrow what the
-  tool can do, or have a person confirm before it runs.
+- **Tools an AI model can call** (if you use MCP, the Vercel AI SDK, the OpenAI
+  SDK, OpenAI Agents, LangChain, LlamaIndex, Genkit, or another framework
+  [it recognizes](reference.md#tools-given-to-ai-models)). The report lists each
+  tool and what it can reach. A tool that can run commands, write data, send to
+  any address, or read whatever file, table, or secret the model names gets a
+  warning (PERM008): whoever controls the model's input can trigger it. Narrow
+  what the tool can do, or have a person confirm before it runs.
 - **The lock file.** It's the inventory of what your code can touch, and what
   your CI and scripts grant. Anything surprising in it is worth a look now.
 
@@ -92,6 +95,11 @@ fixes each of these, and the lock's diff shows what changed.
 Run `permlang check` and `permlang lock` with the same paths and options as your
 workflow (`src` here): the lock records them, and a check of other files, or with
 other settings, fails with one error that says what differs.
+
+Make the PermLang check a **required status check** in your branch protection
+rules or ruleset. A pull request runs its own version of the workflow, so without
+that, one that removes the PermLang step could still be merged. The
+[reference](reference.md#github-action) has more on protecting the workflow.
 
 ## 5. Enforce, when you're ready
 
@@ -124,12 +132,18 @@ Then raise `"strictness"` in `permlang.config.json`:
 Set `"unmapped": "error"` to require every package to be mapped or declared pure,
 and `"tools": "error"` to fail the build on risky AI tools.
 
-To say where a secret may go, add a flow rule. This fails any change that lets
-the Stripe key reach a server other than Stripe's:
+To say where a secret may go, add a flow rule. This fails a change where a
+function that gets hold of the Stripe key can also send to a server other than
+Stripe's, run a command, or call code PermLang can't see:
 
 ```json
 { "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] }] }
 ```
+
+It works from the functions that read the key, not the key itself: a key read into
+a constant outside any function, and used elsewhere, isn't followed. Read it inside
+the function that uses it. [Data-flow rules](reference.md#data-flow-rules) has the
+details and the other limits.
 
 Settings are recorded in the lock, so loosening one shows up in review like new
 access does. After changing `permlang.config.json`, run `npx permlang lock src`
