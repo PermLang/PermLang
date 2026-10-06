@@ -316,6 +316,26 @@ const caught: Record<string, string> = {
   rd83_module_member_constructed: "import dns from \"node:dns\";\nexport function t() { return new (dns as any).Resolver().resolve4(\"evil.example\"); }",
   rd84_module_member_called: "import module from \"node:module\";\nexport function t() { return (module as any).createRequire(__filename)(\"child_process\").exec(\"ls\"); }",
   rd85_module_socket_constructed: "import net from \"node:net\";\nexport function t() { return new (net as any).Socket().connect(443, \"evil.example\"); }",
+  // Destructured with a computed key (literal, or one that could be any member), or out of an array.
+  rd27_destructured_literal_key: "import * as cp from \"node:child_process\";\nexport function t() { const { [\"execSync\"]: run } = cp; return [\"id\"].map(run); }",
+  rd28_destructured_computed_key: "import * as cp from \"node:child_process\";\nexport function t(k: keyof typeof cp) { const { [k]: run } = cp; return run; }",
+  rd29_destructured_array: "import { execSync } from \"node:child_process\";\nexport function t(runners: (typeof execSync)[]) { const [run] = runners; return [\"id\"].map(run); }",
+  // An agent from a getter, or one whose type is lost, could connect anywhere.
+  rd61_http_agent_getter: "import http from \"node:http\";\ndeclare const other: http.Agent;\nexport function t() { return http.request({ hostname: \"good.example\", get agent() { return other; } }); }",
+  rd62_http_agent_untyped: "import http from \"node:http\";\ndeclare const AnyAgent: any;\nexport function t() { return http.request({ hostname: \"good.example\", agent: new AnyAgent() }); }",
+  // The environment taken apart in other patterns.
+  rd77_env_array_pattern: "export function t() { const [first] = process.env; return first; }",
+  rd78_env_assignment_rest: "export function t() { let all: object = {}; ({ env: { ...all } } = process); return all; }",
+  rd79_env_for_of_pattern: "export function t() { let k: string | undefined; for ({ env: { STRIPE_KEY: k } } of [process]); return k; }",
+  // A project that adds its variables to Node's environment type still reads the environment.
+  rd80_env_augmented_type: "declare global { namespace NodeJS { interface ProcessEnv { RD80_MODE?: string } } }\nexport function t() { return process.env.RD80_MODE; }",
+  // A module given to a rest parameter of a type parameter, or as an argument the function only reaches through `arguments`.
+  rd86_module_rest_generic: "import * as cp from \"node:child_process\";\nfunction all<T>(...ms: T[]) { return (ms[0] as any).exec(\"id\"); }\nexport function t() { return all(cp); }",
+  rd87_module_rest_type_parameter: "import * as cp from \"node:child_process\";\nfunction all<T extends unknown[]>(...ms: T) { return (ms[0] as any).exec(\"id\"); }\nexport function t() { return all(cp); }",
+  rd88_module_after_rest: "import * as cp from \"node:child_process\";\nimport * as path from \"node:path\";\nfunction run<T>(label: string, ...ms: T[]) { return (ms[1] as any).exec(label); }\nexport function t() { return run(\"id\", path, cp); }",
+  rd89_module_extra_argument: "import * as cp from \"node:child_process\";\nfunction none() { return (arguments[0] as any).exec(\"id\"); }\nexport function t() { return none(cp); }",
+  rd90_module_extra_after_parameters: "import * as cp from \"node:child_process\";\nfunction one(label: string) { return (arguments[1] as any).exec(label); }\nexport function t() { return one(\"id\", cp); }",
+  rd91_module_optional_generic: "import * as cp from \"node:child_process\";\nfunction maybe<T>(m?: T) { return (m as any)?.exec(\"id\"); }\nexport function t() { return maybe(cp); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -403,7 +423,11 @@ const silent: Record<string, string> = {
   rd_fp50_host_options_precise: "import tls from \"node:tls\";\nimport net from \"node:net\";\nimport http from \"node:http\";\nimport http2 from \"node:http2\";\n/** @perm net(good.example) */\nexport function t(d: string) {\n  tls.connect(443, \"good.example\", { servername: \"good.example\", rejectUnauthorized: true }, () => {}).end(d);\n  tls.connect(443, \"good.example\", { host: \"good.example\" }).end(d);\n  net.connect(443, \"good.example\", () => {}).end(d);\n  http.request({ hostname: \"good.example\", agent: new http.Agent({ keepAlive: true }) }).end(d);\n  http.get(\"http://good.example/\", { agent: false });\n  http2.connect(\"https://good.example\", { host: \"good.example\" }, () => {});\n  http2.connect(\"https://good.example\", () => {});\n  return fetch(\"https://good.example/\", { method: \"POST\", headers: { a: \"b\" }, body: d, signal: undefined });\n}",
   rd_fp51_shared_agent: "import https from \"node:https\";\nconst keepAlive = new https.Agent({ keepAlive: true });\nconst agent = new https.Agent();\n/** @perm net(good.example) */\nexport function t() { return [https.get({ hostname: \"good.example\", agent: keepAlive }), https.get(\"https://good.example/\", { agent })]; }\nexport function stop() { keepAlive.destroy(); }",
   rd_fp70_env_lookalike_patterns: "/** @perm env(MODE) */\nexport function t(cfg: { env: { MODE: string; OTHER: string } }) { const { env: { OTHER } } = cfg; const { env: { MODE } } = process; let a = \"\"; ({ a } = { a: OTHER }); return [a, MODE]; }",
+  rd_fp71_own_process_env_type: "interface ProcessEnv { [key: string]: string }\ndeclare const settings: ProcessEnv;\nexport function t() { return [settings.MODE, settings]; }",
   rd_fp80_module_kept_typed: "import * as cp from \"node:child_process\";\nimport * as path from \"node:path\";\nimport http from \"node:http\";\nfunction keep<T>(m: T) { return m; }\nfunction pick(m: Pick<typeof path, \"join\">) { return m.join(\"a\", \"b\"); }\n/** @perm exec */\nexport function t() { const copy = { ...path }; return [keep(path), pick(path), copy.join(\"a\"), (cp as any).execSync(\"id\"), (http as any).validateHeaderName(\"x-a\"), Object.freeze(cp)]; }",
+  rd_fp04_mapped_member_value: "type Ops = { [K in \"trim\"]: (x: string) => string };\ndeclare const ops: Ops;\nexport function t(xs: string[]) { return xs.map(ops.trim); }",
+  rd_fp05_destructured_computed_key: "const ops = { a: (s: string) => s, b: (s: string) => s.trim() };\nexport function t(k: \"a\" | \"b\", xs: string[]) { const { [k]: op } = ops; return xs.map(op); }",
+  rd_fp81_module_typed_parameter: "import * as cp from \"node:child_process\";\nfunction keep(m: { execSync: typeof cp.execSync }, label: string) { return label + typeof m; }\nexport function t() { return keep(cp, \"x\"); }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
@@ -511,4 +535,21 @@ describe("re-verification (detectors): reported as the access it is", () => {
   for (const name of ["rd80_module_spread_copy", "rd81_module_generic_parameter", "rd82_module_partial_parameter", "rd83_module_member_constructed", "rd84_module_member_called", "rd85_module_socket_constructed"]) {
     it(name, () => expect(capabilities(name)).toEqual(["unverifiable"]));
   }
+  it("rd27_destructured_literal_key", () => expect(capabilities("rd27_destructured_literal_key")).toEqual(["exec"]));
+  it("rd28_destructured_computed_key", () => expect(capabilities("rd28_destructured_computed_key")).toEqual(["unverifiable"]));
+  it("rd29_destructured_array", () => expect(capabilities("rd29_destructured_array")).toEqual(["exec"]));
+  it("rd61_http_agent_getter", () => expect(capabilities("rd61_http_agent_getter")).toEqual(["net"]));
+  it("rd62_http_agent_untyped", () => expect(capabilities("rd62_http_agent_untyped")).toEqual(["net"]));
+  it("rd77_env_array_pattern", () => expect(capabilities("rd77_env_array_pattern")).toEqual(["env"]));
+  it("rd78_env_assignment_rest", () => expect(capabilities("rd78_env_assignment_rest")).toEqual(["env"]));
+  it("rd79_env_for_of_pattern", () => expect(capabilities("rd79_env_for_of_pattern")).toEqual(["env(STRIPE_KEY)"]));
+  it("rd80_env_augmented_type", () => expect(capabilities("rd80_env_augmented_type")).toEqual(["env(RD80_MODE)"]));
+  for (const name of ["rd86_module_rest_generic", "rd87_module_rest_type_parameter", "rd88_module_after_rest", "rd89_module_extra_argument", "rd90_module_extra_after_parameters", "rd91_module_optional_generic"]) {
+    it(name, () => expect(capabilities(name)).toEqual(["unverifiable"]));
+  }
+  // Named as the parameter's own type: the elements a rest parameter passes, or the type parameter it is.
+  it("rd86 and rd87 name the type the module is passed as", () => {
+    expect(errorsIn("rd86_module_rest_generic").map((d) => d.call)).toEqual(["cp passed on as `T`"]);
+    expect(errorsIn("rd87_module_rest_type_parameter").map((d) => d.call)).toEqual(["cp passed on as `T`"]);
+  });
 });

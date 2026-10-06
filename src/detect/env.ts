@@ -14,7 +14,7 @@
 // `import.meta.env` (or `import.meta["env"]`, an alias, a destructured name) when
 // nothing declares it.
 
-import { Node, SyntaxKind, ts, type Identifier, type ObjectBindingPattern, type ObjectLiteralExpression, type SourceFile } from "ts-morph";
+import { Node, SyntaxKind, ts, type ArrayBindingPattern, type Identifier, type ObjectBindingPattern, type ObjectLiteralExpression, type SourceFile } from "ts-morph";
 import type { Capability } from "../capability.js";
 import { literalString, unwrapExpression, type CapabilityUse } from "./shared.js";
 import { forEachDescendant } from "../walk.js";
@@ -107,25 +107,41 @@ function keyOf(name: Node): string | undefined {
  * `const { KEY } = process.env`, is read where the environment is named, in classify.)
  */
 function nestedPattern(pattern: ObjectBindingPattern | ObjectLiteralExpression): EnvUse | undefined {
-  const nested = Node.isObjectBindingPattern(pattern) ? Node.isBindingElement(pattern.getParent()) : isNestedAssignmentTarget(pattern);
-  if (!nested) return undefined;
-  const kind = Node.isObjectBindingPattern(pattern) ? envType(pattern) ?? untypedNested(pattern) : assignedEnvType(pattern);
+  const kind = Node.isObjectBindingPattern(pattern) ? nestedBindingEnv(pattern) : nestedTargetEnv(pattern);
   const capabilities = kind ? patternReads(pattern, kind) : [];
   return capabilities.length > 0 ? read(pattern, capabilities) : undefined;
+}
+
+/** `{ KEY }` in `const { env: { KEY } } = process`: typed as the environment, or the `env` of an untyped holder. */
+function nestedBindingEnv(pattern: ObjectBindingPattern): Environment | undefined {
+  const element = pattern.getParent();
+  if (!Node.isBindingElement(element)) return undefined;
+  // In an array pattern (`[{ KEY }]`), the element has no property name.
+  const key = element.getPropertyNameNode();
+  return envType(pattern) ?? (key !== undefined && keyOf(key) === "env" ? environment(patternHolder(element.getParent())) : undefined);
+}
+
+/** `{ KEY: k }` in `({ env: { KEY: k } } = process)`: typed as what it's given, rather than as the literal. */
+function nestedTargetEnv(literal: ObjectLiteralExpression): Environment | undefined {
+  if (!isNestedAssignmentTarget(literal)) return undefined;
+  const checker = literal.getProject().getTypeChecker().compilerObject;
+  return environmentOf(checker.getTypeOfAssignmentPattern(literal.compilerNode));
 }
 
 /** An object literal destructured into, inside another: the `{ KEY: k }` in `({ env: { KEY: k } } = process)`. */
 function isNestedAssignmentTarget(literal: ObjectLiteralExpression): boolean {
   const property = literal.getParent();
   if (!Node.isPropertyAssignment(property) || property.getInitializer() !== literal) return false;
+  // Up through the enclosing patterns, to what they're given.
   let node: Node = property;
-  for (let parent = node.getParent(); parent; node = parent, parent = parent.getParent()) {
-    if (Node.isObjectLiteralExpression(parent) || Node.isArrayLiteralExpression(parent) || Node.isPropertyAssignment(parent)) continue;
-    if (Node.isBinaryExpression(parent)) return parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken && parent.getLeft() === node;
-    if (Node.isForOfStatement(parent) || Node.isForInStatement(parent)) return parent.getInitializer() === node;
-    return false;
+  let parent = node.getParentOrThrow();
+  while (Node.isObjectLiteralExpression(parent) || Node.isArrayLiteralExpression(parent) || Node.isPropertyAssignment(parent)) {
+    node = parent;
+    parent = parent.getParentOrThrow();
   }
-  return false;
+  if (Node.isBinaryExpression(parent)) return parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken && parent.getLeft() === node;
+  // A for...in variable is a string, so only for...of destructures one.
+  return Node.isForOfStatement(parent) && parent.getInitializer() === node;
 }
 
 /** Typed as Node's ProcessEnv, or as ImportMetaEnv (vite/client, and the frameworks that copy it). */
@@ -133,17 +149,21 @@ function envType(node: Node): Environment | undefined {
   return environmentOf(node.getType().compilerType);
 }
 
-/** The type of what an object literal destructuring target is given, rather than of the literal itself. */
-function assignedEnvType(literal: ObjectLiteralExpression): Environment | undefined {
-  const checker = literal.getProject().getTypeChecker().compilerObject;
-  return environmentOf(checker.getTypeOfAssignmentPattern(literal.compilerNode));
-}
-
 function environmentOf(type: ts.Type): Environment | undefined {
   const symbol = type.getSymbol() ?? type.aliasSymbol;
   if (symbol?.getName() === "ImportMetaEnv") return "import.meta";
-  const fromLib = symbol?.getName() === "ProcessEnv" && (symbol.getDeclarations() ?? []).some((d) => d.getSourceFile().isDeclarationFile);
+  // Node's ProcessEnv is declared in a declaration file (a project may add to it); a project's own
+  // type of that name isn't the environment. A type's own symbol, an interface or an alias, always
+  // has its declarations.
+  const fromLib = symbol?.getName() === "ProcessEnv" && symbol.getDeclarations()!.some((d) => d.getSourceFile().isDeclarationFile);
   return fromLib ? "process" : undefined;
+}
+
+/** What an untyped expression or pattern holds: the environment's holder, or the global object (whose `env` isn't one). */
+type Holder = Environment | "global";
+
+function environment(holder: Holder | undefined): Environment | undefined {
+  return holder === "global" ? undefined : holder;
 }
 
 /**
@@ -157,43 +177,45 @@ function untypedEnv(node: Node): Environment | undefined {
     : Node.isElementAccessExpression(node) && literalString(node.getArgumentExpression()) === "env" ? node.getExpression()
     : undefined;
   // `(process as any).env` too: without types, the cast hides nothing more.
-  return object && untypedHolder(unwrapExpression(object));
+  return object && environment(untypedHolder(unwrapExpression(object)));
 }
 
 /** `env` in `const { env } = process`, or `e` in `const { env: e } = globalThis.process`, without types. */
 function destructuredEnv(identifier: Identifier): Environment | undefined {
   const declaration = identifier.getSymbol()?.getDeclarations()[0];
   if (!Node.isBindingElement(declaration) || declaration.getDotDotDotToken()) return undefined;
-  return keyOf(declaration.getPropertyNameNode() ?? declaration.getNameNode()) === "env" ? patternHolder(declaration.getParent()) : undefined;
+  return keyOf(declaration.getPropertyNameNode() ?? declaration.getNameNode()) === "env" ? environment(patternHolder(declaration.getParent())) : undefined;
 }
 
-/** `{ KEY }` in `const { env: { KEY } } = process`, without types. */
-function untypedNested(pattern: ObjectBindingPattern): Environment | undefined {
-  const element = pattern.getParent();
-  if (!Node.isBindingElement(element)) return undefined;
-  const key = element.getPropertyNameNode();
-  return key && keyOf(key) === "env" ? patternHolder(element.getParent()) : undefined;
-}
-
-/** What a destructuring pattern is given, if it's the untyped holder of the environment. */
-function patternHolder(pattern: Node): Environment | undefined {
+/**
+ * What a destructuring pattern is given, if it's an untyped holder: the initializer of a variable
+ * or parameter, or, nested, the `process` member of the global object an enclosing pattern is
+ * given (`const { process: { env } } = globalThis`). An array's element isn't followed.
+ */
+function patternHolder(pattern: ObjectBindingPattern | ArrayBindingPattern): Holder | undefined {
   const owner = pattern.getParent();
-  const initializer = Node.isVariableDeclaration(owner) || Node.isParameterDeclaration(owner) ? owner.getInitializer() : undefined;
+  if (Node.isBindingElement(owner)) {
+    const key = owner.getPropertyNameNode();
+    return key !== undefined && keyOf(key) === "process" && patternHolder(owner.getParent()) === "global" ? "process" : undefined;
+  }
+  const initializer = owner.getInitializer();
   return initializer && untypedHolder(unwrapExpression(initializer));
 }
 
 /**
- * Whether an untyped expression holds the environment: the global `process` (also as
- * `globalThis.process` or `global.process`), `import.meta`, or a const alias of one
+ * What an untyped expression holds: the global `process` (also as `globalThis.process` or
+ * `global.process`), `import.meta`, the global object itself, or a const alias of one
  * (`const p = process`).
  */
-function untypedHolder(object: Node, depth = 0): Environment | undefined {
+function untypedHolder(object: Node, depth = 0): Holder | undefined {
   if (object.getText() === "import.meta") return "import.meta";
-  if (Node.isIdentifier(object) && object.getText() === "process") return isGlobalWithoutNodeTypes(object) ? "process" : undefined;
+  if (Node.isIdentifier(object) && isGlobalWithoutNodeTypes(object)) {
+    if (object.getText() === "process") return "process";
+    if (/^(globalThis|global)$/.test(object.getText())) return "global";
+  }
   if (Node.isPropertyAccessExpression(object)) {
-    const owner = unwrapExpression(object.getExpression());
-    const global = Node.isIdentifier(owner) && /^(globalThis|global)$/.test(owner.getText()) && isGlobalWithoutNodeTypes(owner);
-    return global && object.getName() === "process" && isGlobalWithoutNodeTypes(object.getNameNode()) ? "process" : undefined;
+    const owner = untypedHolder(unwrapExpression(object.getExpression()), depth + 1);
+    return owner === "global" && object.getName() === "process" && isGlobalWithoutNodeTypes(object.getNameNode()) ? "process" : undefined;
   }
   if (!Node.isIdentifier(object) || depth > 8) return undefined;
   const declaration = object.getSymbol()?.getDeclarations()[0];

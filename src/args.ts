@@ -79,9 +79,39 @@ export interface Args {
   summary?: string;
 }
 
+/** Options with no value after them, and what each sets. */
+const FLAGS = {
+  "--json": (a: Args) => void (a.json = true),
+  "--github-annotations": (a: Args) => void (a.githubAnnotations = true),
+  "--no-lock": (a: Args) => void (a.noLock = true),
+  "--require-lock": (a: Args) => void (a.requireLock = true),
+  "--workflow": (a: Args) => void (a.workflow = true),
+};
+
+const project = (a: Args, v: string) => void (a.project = v);
+
+/** Options followed by a value, and what each sets with it. */
+const VALUED = {
+  "--project": project,
+  "-p": project,
+  "--config": (a: Args, v: string) => void (a.config = v),
+  "--adapter": (a: Args, v: string) => void a.adapters.push(v),
+  "--strictness": (a: Args, v: string) => void (a.strictness = v),
+  "--unmapped": (a: Args, v: string) => void (a.unmapped = v),
+  "--lock": (a: Args, v: string) => void (a.lock = v),
+  "--base": (a: Args, v: string) => void (a.base = v),
+  "--sarif": (a: Args, v: string) => void (a.sarif = v),
+  "--head": (a: Args, v: string) => void (a.head = v),
+  "--format": (a: Args, v: string) => void (a.format = v),
+  "--summary": (a: Args, v: string) => void (a.summary = v),
+  "--spec": (a: Args, v: string) => void a.specs.push(v),
+};
+
+type Option = keyof typeof FLAGS | keyof typeof VALUED;
+
 /** Options that choose the files and settings: every command takes them. */
-const SETTINGS = ["--project", "-p", "--config", "--adapter", "--strictness", "--unmapped", "--lock"];
-const CHECK = [...SETTINGS, "--no-lock", "--require-lock", "--base", "--json", "--github-annotations", "--sarif"];
+const SETTINGS: Option[] = ["--project", "-p", "--config", "--adapter", "--strictness", "--unmapped", "--lock"];
+const CHECK: Option[] = [...SETTINGS, "--no-lock", "--require-lock", "--base", "--json", "--github-annotations", "--sarif"];
 /** check's options that diff takes but that don't change it. */
 const IGNORED_BY_DIFF = new Set(["--require-lock", "--github-annotations", "--sarif"]);
 
@@ -93,15 +123,12 @@ const IGNORED_BY_DIFF = new Set(["--require-lock", "--github-annotations", "--sa
  * the Action passes the same arguments to both.
  */
 const TAKES: Record<Command, ReadonlySet<string>> = {
-  init: new Set([...SETTINGS, "--workflow"]),
+  init: new Set<Option>([...SETTINGS, "--workflow"]),
   check: new Set(CHECK),
   lock: new Set(SETTINGS),
-  diff: new Set([...CHECK.filter((o) => o !== "--base"), "--head", "--format", "--summary"]),
-  spec: new Set([...SETTINGS, "--json", "--spec"]),
+  diff: new Set<Option>([...CHECK.filter((o) => o !== "--base"), "--head", "--format", "--summary"]),
+  spec: new Set<Option>([...SETTINGS, "--json", "--spec"]),
 };
-
-/** Options followed by a value. */
-const VALUED = new Set(["--project", "-p", "--config", "--adapter", "--strictness", "--unmapped", "--lock", "--base", "--sarif", "--head", "--format", "--summary", "--spec"]);
 
 /** @throws UsageError for an option the command doesn't take, or one missing its value. */
 export function parseArgs(command: Command, rest: readonly string[]): Args {
@@ -114,30 +141,16 @@ export function parseArgs(command: Command, rest: readonly string[]): Args {
     }
     if (arg === "--help" || arg === "-h") throw new UsageError(`${arg} goes on its own: \`permlang ${command} --help\`.`);
     if (!TAKES[command].has(arg)) throw new UsageError(misplaced(command, arg));
-    let v = "";
-    if (VALUED.has(arg)) {
-      v = rest[++i] ?? "";
-      // A value that's another option is a mistake (`--format --lock x`), and reading it as a value
-      // would hide the option it names.
-      if (v === "" || v.startsWith("-")) throw new UsageError(`${arg} needs a value${v ? `, not the option "${printable(v)}"` : ""}.`);
+    // Every option a command takes is a flag or takes a value.
+    if (Object.hasOwn(FLAGS, arg)) {
+      FLAGS[arg as keyof typeof FLAGS](args);
+      continue;
     }
-    if (arg === "--json") args.json = true;
-    else if (arg === "--github-annotations") args.githubAnnotations = true;
-    else if (arg === "--no-lock") args.noLock = true;
-    else if (arg === "--require-lock") args.requireLock = true;
-    else if (arg === "--workflow") args.workflow = true;
-    else if (arg === "--sarif") args.sarif = v;
-    else if (arg === "--base") args.base = v;
-    else if (arg === "--spec") args.specs.push(v);
-    else if (arg === "--project" || arg === "-p") args.project = v;
-    else if (arg === "--config") args.config = v;
-    else if (arg === "--adapter") args.adapters.push(v);
-    else if (arg === "--strictness") args.strictness = v;
-    else if (arg === "--unmapped") args.unmapped = v;
-    else if (arg === "--lock") args.lock = v;
-    else if (arg === "--head") args.head = v;
-    else if (arg === "--format") args.format = v;
-    else if (arg === "--summary") args.summary = v;
+    const v = rest[++i] ?? "";
+    // A value that's another option is a mistake (`--format --lock x`), and reading it as a value
+    // would hide the option it names.
+    if (v === "" || v.startsWith("-")) throw new UsageError(`${arg} needs a value${v ? `, not the option "${printable(v)}"` : ""}.`);
+    VALUED[arg as keyof typeof VALUED](args, v);
   }
   return args;
 }

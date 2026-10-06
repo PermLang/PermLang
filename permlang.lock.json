@@ -87,8 +87,14 @@
       "fs.read(tsconfig.json)",
       "fs.write"
     ],
+    "src/init-workflow.ts#canonical": [
+      "fs.read"
+    ],
     "src/init-workflow.ts#defaultBranch": [
       "exec"
+    ],
+    "src/init-workflow.ts#file": [
+      "fs.read"
     ],
     "src/init-workflow.ts#gitRoot": [
       "exec",
@@ -102,6 +108,9 @@
       "fs.read"
     ],
     "src/init-workflow.ts#read": [
+      "fs.read"
+    ],
+    "src/init-workflow.ts#workflowArgs": [
       "fs.read"
     ],
     "src/init-workflow.ts#workflowFile": [
@@ -125,6 +134,9 @@
       "fs.read"
     ],
     "src/lock-moves.ts#atBase": [
+      "exec"
+    ],
+    "src/lock-moves.ts#git": [
       "exec"
     ],
     "src/lock-moves.ts#gitText": [

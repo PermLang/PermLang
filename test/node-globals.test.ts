@@ -177,6 +177,12 @@ describe("process without Node's types, reached another way", () => {
       "export function nested() { const { env: { G } } = process; return G; }",
       "/** @perm env(A) */",
       "export function lookalikes(o: { env: { H: string } }) { const { env } = o; const local = { env: { I: \"1\" } }; return [env.H, local.env.I]; }",
+      "/** @perm env(A) */",
+      "export function parameter({ env } = process) { return env.J; }",
+      "/** @perm env(A) */",
+      "export function nestedGlobal() { const { process: { env } } = globalThis; return env.K; }",
+      "/** @perm env(A) */",
+      "export function moreLookalikes({ env: given }: { env: { L: string } }) { const { env: own } = globalThis; const { other: { env: theirs } } = globalThis; const holder = { process: { env: { M: \"1\" } } }; const { process: { env: held } } = holder; const [{ env: listed }] = [{ env: { Q: \"1\" } }]; return [given.L, own.N, theirs.O, holder.process.env.M, held.P, listed.Q, undeclared.env.R]; }",
     ].join("\n"),
   });
   const sorted = (fn: string) => errors(report, fn).sort();
@@ -188,7 +194,12 @@ describe("process without Node's types, reached another way", () => {
     expect(sorted("bracket")).toEqual(["PERM001 env(E)"]);
     expect(sorted("renamed")).toEqual(["PERM001 env", "PERM001 env(F)"]);
     expect(sorted("nested")).toEqual(["PERM001 env(G)"]);
+    expect(sorted("parameter")).toEqual(["PERM001 env(J)"]);
+    expect(sorted("nestedGlobal")).toEqual(["PERM001 env(K)"]);
     expect(sorted("lookalikes")).toEqual([]);
+    // A parameter given from outside, `globalThis.env`, another global member, a local object's `process`,
+    // an array's element, and a name nothing declares.
+    expect(sorted("moreLookalikes")).toEqual([]);
   });
 
   it("warns that the rest of process can't be checked, at globalThis.process too", () => {
@@ -250,11 +261,14 @@ describe("browser timers, without Node's types", () => {
       "export function boundStored(codes: string[]) { const later = window.setTimeout.bind(window); codes.forEach(later); }",
       "/** @perm env(MODE) */",
       "export function boundArgument() { const run = setTimeout.bind(window, \"alert(1)\"); run(); }",
+      "/** @perm env(MODE) */",
+      "export function bindMethod(wrap: (f: unknown) => void) { wrap(setTimeout.bind); return [window.setInterval.bind]; }",
     ].join("\n"),
   });
 
   it("treats a timer that may be given a string as unverifiable", () => {
-    for (const fn of ["forEachCode", "thenCode", "reflectCode", "stored", "handlerType", "handlerAny", "handlerUnknown", "handlerUnion", "boundInPlace", "boundStored", "boundArgument"]) {
+    // `bindMethod` hands out the timer's own `bind`, which makes copies nothing checks the calls of.
+    for (const fn of ["forEachCode", "thenCode", "reflectCode", "stored", "handlerType", "handlerAny", "handlerUnknown", "handlerUnion", "boundInPlace", "boundStored", "boundArgument", "bindMethod"]) {
       expect(errors(report, fn), fn).toEqual(["PERM004 unverifiable"]);
     }
   });

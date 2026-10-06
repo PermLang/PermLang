@@ -29,8 +29,7 @@ export function movedLocks(base: string, lockFile: string | undefined): string[]
   const cwd = realpathSync.native(process.cwd());
   const fromRoot = (file: string) => path.relative(root, path.resolve(cwd, file)).replaceAll("\\", "/");
   const atBase: Reader = (file) => gitText(root, "cat-file", "blob", `${base}:${file}`);
-  const baseWorkflows = gitText(root, "ls-tree", "-z", "--name-only", base, "--", ".github/workflows/");
-  const baseFiles = (baseWorkflows ?? "").split("\0").filter(isWorkflow);
+  const baseFiles = git(root, "ls-tree", "-z", "--name-only", base, "--", ".github/workflows/").split("\0").filter(isWorkflow);
   const read = locksRead(baseFiles, atBase);
   if (read.size === 0) read.add(fromRoot(DEFAULT_LOCK));
   if (lockFile !== undefined && read.has(fromRoot(lockFile))) return [];
@@ -44,8 +43,8 @@ export function movedLocks(base: string, lockFile: string | undefined): string[]
 
 /** A step that runs the PermLang Action, with its `working-directory` and `args` as written (undefined when not set). */
 export interface PermLangStep {
-  workingDirectory?: string;
-  args?: string;
+  workingDirectory: string | undefined;
+  args: string | undefined;
 }
 
 /** The steps in these workflows that run the PermLang Action. */
@@ -62,8 +61,7 @@ export function permLangSteps(files: readonly string[], read: Reader): PermLangS
             if (uses === undefined || !isPermLang(uses, read)) continue;
             const inputs = yaml.get(step, "with");
             const input = (name: string) => scalar(yaml, inputs.flatMap((w) => yaml.get(w, name)));
-            const [workingDirectory, args] = [input("working-directory"), input("args")];
-            found.push({ ...(workingDirectory !== undefined ? { workingDirectory } : {}), ...(args !== undefined ? { args } : {}) });
+            found.push({ workingDirectory: input("working-directory"), args: input("args") });
           }
         }
       }
@@ -129,14 +127,21 @@ function isWorkflow(file: string): boolean {
 }
 
 function repositoryRoot(): string {
-  const root = gitText(process.cwd(), "rev-parse", "--show-toplevel")?.trim();
-  return realpathSync.native(root || process.cwd());
+  return realpathSync.native(git(process.cwd(), "rev-parse", "--show-toplevel").trim());
 }
 
-/** What git prints, or undefined when it fails (a file that doesn't exist at the commit, say). */
+/**
+ * What git prints. @throws when git fails: the callers have read `base` already, so this runs in
+ * a repository that has it, and a failure is a problem to report, not a list to leave empty.
+ */
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+}
+
+/** What git prints, or undefined when it fails: a file that doesn't exist at the commit. */
 function gitText(cwd: string, ...args: string[]): string | undefined {
   try {
-    return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024 });
+    return git(cwd, ...args);
   } catch {
     return undefined;
   }

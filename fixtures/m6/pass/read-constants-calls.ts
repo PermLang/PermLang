@@ -32,3 +32,36 @@ export function copy() {
 export function use() {
   return [fetch(SOURCE.url), fetch(READER.url), fetch(Api.url)];
 }
+
+// `this` that isn't the fixed object's: a class's, a function declared inside, a callback's, and
+// an arrow's at the top of the module. And `apply` given the object as a source.
+const SCOPED = {
+  url: "https://good.example/x",
+  Model: class {
+    url = "";
+    set(u: string) {
+      this.url = u;
+    },
+  },
+  make() {
+    function local(this: { url: string }) {
+      this.url = "https://evil.example/x";
+    }
+    [1].forEach(function (this: { url: string }) {
+      this.url = "https://evil.example/x";
+    }, { url: "" });
+    return local;
+  },
+  outer: () => {
+    (this as unknown as { url: string }).url = "https://evil.example/x";
+  },
+} as const;
+
+export function copyMore() {
+  return [Object.assign.apply(null, [{}, SOURCE]), SCOPED.make(), SCOPED.outer()];
+}
+
+/** @perm net(good.example) */
+export function useMore() {
+  return fetch(SCOPED.url);
+}

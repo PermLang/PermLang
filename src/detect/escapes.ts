@@ -47,7 +47,7 @@ import {
 import type { AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { isDatabaseObject, requiresCapabilityModule } from "./functions.js";
-import { argumentsOf, callText, containerName, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CapabilityUse } from "./shared.js";
+import { argumentsOf, callText, containerName, literalString, resolveAlias, resolvedDeclaration, signatureDeclarations, unwrapExpression, type CapabilityUse } from "./shared.js";
 import { capabilitiesOf, constructorCapabilities } from "./web.js";
 import { forEachDescendant } from "../walk.js";
 
@@ -278,13 +278,15 @@ function genericParameterType(identifier: Identifier): Type | undefined {
   const declaration = index < 0 ? undefined : resolvedDeclaration(call);
   if (!declaration || declaration.getSourceFile().isDeclarationFile() || !("getParameters" in declaration)) return undefined;
   const parameters = (declaration as { getParameters(): ParameterDeclaration[] }).getParameters();
-  const parameter = parameters[index] ?? parameters.at(-1);
-  if (!parameter || (index >= parameters.length && !parameter.isRestParameter())) return undefined;
+  // Past the last parameter, an argument is the rest parameter's. (With none, its contextual type
+  // is `any`, which typeLostBy reports before this is asked.)
+  const parameter = parameters[Math.min(index, parameters.length - 1)]!;
   const declared = parameter.getType();
-  const type = parameter.isRestParameter() ? declared.getArrayElementType() : declared;
+  // A rest parameter passes its elements, or is a type parameter itself (`...args: T`).
+  const type = parameter.isRestParameter() ? declared.getArrayElementType() ?? declared : declared;
   // An optional parameter's type is a union with `undefined`.
   const generic = (t: Type) => t.isTypeParameter() || (t.getObjectFlags() & ts.ObjectFlags.Mapped) !== 0;
-  return type && (type.isUnion() ? type.getUnionTypes() : [type]).some(generic) ? type : undefined;
+  return (type.isUnion() ? type.getUnionTypes() : [type]).some(generic) ? type : undefined;
 }
 
 /**
@@ -459,8 +461,8 @@ function awaited(type: Type): Type {
 
 /** Whether calling a value of `type`, or one of its methods, reaches a capability. */
 function carriesCapabilities(type: Type, adapters: AdapterIndex): boolean {
-  const reaches = (declaration: Node | undefined) => declaration !== undefined && capabilitiesOf(declaration, [], adapters).length > 0;
-  if (type.getCallSignatures().some((s) => reaches(s.compilerSignature.declaration && s.getDeclaration()))) return true;
+  const reaches = (declaration: Node) => capabilitiesOf(declaration, [], adapters).length > 0;
+  if (signatureDeclarations(type.getCallSignatures()).some(reaches)) return true;
   return type.getProperties().some((p) => resolveAlias(p).getDeclarations().some(reaches));
 }
 

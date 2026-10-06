@@ -1,7 +1,7 @@
 // Minimal stand-in for drizzle-orm, shaped like its real typings (verified against
 // drizzle-orm's pg-core: PgDatabase, PgSelectBuilder, RelationalQueryBuilder, pgTable).
 declare module "drizzle-orm/pg-core" {
-  import type { SQL } from "drizzle-orm";
+  import type { Name, SQL, SQLChunk } from "drizzle-orm";
   export interface PgTable {
     readonly _: { name: string };
   }
@@ -24,8 +24,11 @@ declare module "drizzle-orm/pg-core" {
     readonly defaultFn: (() => string | SQL) | undefined;
   }
   export class IndexBuilder {
+    // What it was given. Drizzle has types that refer to themselves, as these do.
+    readonly config: { columns: SQLChunk[]; where?: SQL; using: IndexUsing };
     where(condition: unknown): this;
   }
+  export type IndexUsing = Name | IndexUsing[];
   export function index(name: string): { on(...columns: unknown[]): IndexBuilder };
   export class CheckBuilder {
     name: string;
@@ -98,6 +101,12 @@ declare module "drizzle-orm" {
     readonly value: string[];
     constructor(value: string | readonly string[]);
   }
+  // A name, quoted where it's pasted in: sql.identifier() makes one.
+  export class Name {
+    readonly value: string;
+    constructor(value: string);
+  }
+  export type SQLChunk = StringChunk | SQLChunk[] | Name | SQL;
   export class SQL {
     readonly queryChunks: unknown[];
     constructor(queryChunks: unknown[]);
@@ -109,5 +118,6 @@ declare module "drizzle-orm" {
     function raw(str: string): SQL;
     function identifier(value: string): SQL;
     function fromList(list: unknown[]): SQL;
+    function join(chunks: unknown[], separator?: unknown): SQL;
   }
 }

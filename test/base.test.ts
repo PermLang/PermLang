@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { locksRead, permLangSteps } from "../src/lock-moves.js";
 import { runCli } from "./run-cli.js";
 
 let dir: string;
@@ -171,9 +172,51 @@ describe("permlang check --base", () => {
     permlang(".", "lock", "src", "--lock", "elsewhere.json");
     const base = commit("base");
     expect(permlang(".", "check", "src", "--base", base)).toMatchObject({ code: 0 });
-    // Another Action's --lock isn't a lock PermLang checks with.
-    workflow("permlang.yml", { args: "src --lock elsewhere.json" }, { uses: "someone/permlang@v1", args: "--lock elsewhere.json" });
+    // Another Action's --lock isn't a lock PermLang checks with, and neither is a local Action that isn't there.
+    workflow("permlang.yml", { args: "src --lock elsewhere.json" }, { uses: "someone/permlang@v1", args: "--lock elsewhere.json" }, { uses: "./nowhere", args: "--lock permlang.lock.json" });
     expect(permlang(".", "check", "src", "--lock", "elsewhere.json", "--base", base).out).toContain("stops checking with permlang.lock.json");
+  });
+
+  // With the base's lock at another path, `args: src --no-lock` turned the comparison off without
+  // touching any lock file the base has.
+  it("fails a change that stops checking with any lock file", () => {
+    app(".");
+    workflow("permlang.yml", { args: "src --lock locks/app.json" });
+    mkdirSync(path.join(dir, "locks"));
+    permlang(".", "lock", "src", "--lock", "locks/app.json");
+    const base = commit("base");
+    app(".", "api.data-broker.example");
+    workflow("permlang.yml", { args: "src --no-lock" });
+    const { code, out } = permlang(".", "check", "src", "--no-lock", "--base", base);
+    expect(code).toBe(1);
+    expect(out).toContain("error PERM005: This change stops checking with locks/app.json, which the base commit's workflow checks with. A lock file the base doesn't check with");
+    // The comment says so too, and names no lock file read instead.
+    const md = permlang(".", "diff", base, "src", "--no-lock", "--format", "markdown").out;
+    expect(md).toContain("**This pull request stops checking with <code>locks/app.json</code>**, which the base commit's workflow checks with. A lock file");
+    // Neither commit has permlang.lock.json, so everything is new; but the change deletes no lock file.
+    expect(md).toContain("There's no <code>permlang.lock.json</code> at the base commit, so everything is listed as new.");
+    expect(md).not.toContain("deletes");
+    expect(JSON.parse(permlang(".", "diff", base, "src", "--no-lock", "--lock", "locks/app.json", "--json").out)).toMatchObject({ lockMoved: ["locks/app.json"] });
+  });
+
+  it("counts the base's lock file as left behind when the change deletes the workflows", () => {
+    app(".");
+    workflow("permlang.yml", { args: "src --lock checked.json" });
+    permlang(".", "lock", "src", "--lock", "checked.json");
+    const base = commit("base");
+    rmSync(path.join(dir, ".github"), { recursive: true });
+    permlang(".", "lock", "src", "--lock", "other.json");
+    expect(permlang(".", "check", "src", "--lock", "other.json", "--base", base)).toMatchObject({ code: 1, out: expect.stringContaining("stops checking with checked.json") });
+  });
+
+  // A workflow committed before its lock file, as in a project adopting PermLang in two steps.
+  it("leaves out a lock file the base's workflow names but the base doesn't have", () => {
+    app(".");
+    workflow("permlang.yml", { args: "src --lock planned.json" });
+    const base = commit("workflow first");
+    workflow("permlang.yml", { args: "src" });
+    permlang(".", "lock", "src");
+    expect(permlang(".", "check", "src", "--base", base)).toMatchObject({ code: 0 });
   });
 
   it("is a usage error when the base isn't a commit here", () => {
@@ -181,5 +224,64 @@ describe("permlang check --base", () => {
     permlang(".", "lock", "src");
     commit("base");
     expect(permlang(".", "check", "src", "--base", "1".repeat(40))).toMatchObject({ code: 2, out: expect.stringMatching(/isn't a commit in this repository; fetch it first/) });
+  });
+});
+
+describe("the lock files a workflow's PermLang steps read", () => {
+  const files: Record<string, string> = {
+    ".github/workflows/many.yml": [
+      "on: pull_request",
+      "jobs:",
+      "  a:",
+      "    runs-on: ubuntu-latest",
+      "    steps:",
+      "      - uses: actions/checkout@v7",
+      "      - uses: PermLang/permlang@v0", // no inputs: permlang.lock.json at the root
+      "      - uses: permlang/PERMLANG@0123456789abcdef0123456789abcdef01234567", // names are case-insensitive
+      "        with: { working-directory: web }",
+      "      - uses: PermLang/permlang/sub@v0",
+      "        with: { working-directory: api, args: src --lock locks/api.json }",
+      "      - uses: PermLang/permlang@v0",
+      "        with: { working-directory: off, args: src --no-lock }", // reads none
+      "      - uses: PermLang/permlang@v0",
+      "        with: { args: src --lock /etc/permlang.lock.json }", // outside the repository
+      "      - uses: PermLang/permlang@v0",
+      "        with: { args: src --lock C:/locks/permlang.lock.json }",
+      "      - uses: PermLang/permlang@v0",
+      "        with: { args: \"${{ matrix.args }}\" }", // can't be told
+      "      - uses: PermLang/permlang@v0",
+      "        with: { args: src --frob }", // the check would stop
+      "      - uses: someone/permlang@v1",
+      "        with: { args: --lock other.json }", // another Action
+      "      - uses: ./tools/permlang", // a local Action named PermLang
+      "        with: { args: --lock tools.json }",
+      "      - uses: ./tools/yaml-only", // its action.yaml, when there's no action.yml
+      "        with: { args: --lock yaml.json }",
+      "      - uses: ./tools/other", // a local Action with another name
+      "        with: { args: --lock other.json }",
+      "      - uses: ./tools/missing", // a local Action that isn't there
+      "        with: { args: --lock missing.json }",
+      "",
+    ].join("\n"),
+    ".github/workflows/broken.yml": "jobs: [\n",
+    "tools/permlang/action.yml": "name: PermLang\n",
+    "tools/yaml-only/action.yaml": "name: PermLang\n",
+    "tools/other/action.yml": "name: Other\n",
+  };
+  const read = (file: string) => files[file];
+
+  it("finds each step's lock from its working-directory and --lock, and leaves out the ones it can't tell", () => {
+    const workflows = [".github/workflows/many.yml", ".github/workflows/broken.yml", ".github/workflows/gone.yml"];
+    expect([...locksRead(workflows, read)].sort()).toEqual(["api/locks/api.json", "permlang.lock.json", "tools.json", "web/permlang.lock.json", "yaml.json"]);
+  });
+
+  it("reads each PermLang step's inputs as written", () => {
+    const steps = permLangSteps([".github/workflows/many.yml"], read);
+    expect(steps.slice(0, 3)).toEqual([
+      { workingDirectory: undefined, args: undefined },
+      { workingDirectory: "web", args: undefined },
+      { workingDirectory: "api", args: "src --lock locks/api.json" },
+    ]);
+    expect(steps).toHaveLength(10);
   });
 });

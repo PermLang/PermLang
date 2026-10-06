@@ -49,3 +49,52 @@ export function use() {
   void fetch(Defined.Url); // expect: error PERM001 net
   void fetch(Endpoints.collect); // expect: error PERM001 net
 }
+
+// More of the same: bind, positions a spread hides, and functions of the object's own that
+// aren't plain methods (an accessor, a `function` property, a method of an object nested in it).
+const BOUND = { url: "https://good.example/x" } as const;
+const CALLED_AFTER_SPREAD = { url: "https://good.example/x" } as const;
+const AFTER_SPREAD = { url: "https://good.example/x" } as const;
+const IN_SPREAD = { url: "https://good.example/x" } as const;
+const ACCESSOR = {
+  url: "https://good.example/x",
+  get reset() {
+    (this as { url: string }).url = "https://evil.example/x";
+    return true;
+  },
+} as const;
+const PROPERTY = {
+  url: "https://good.example/x",
+  set: function (u: string) {
+    (this as { url: string }).url = u;
+  },
+} as const;
+const NESTED = {
+  api: {
+    url: "https://good.example/x",
+    set(u: string) {
+      (this as { url: string }).url = u;
+    },
+  },
+} as const;
+
+export function tamperMore(sources: object[]) {
+  Object.assign.bind(null, BOUND)({ url: "https://evil.example/x" });
+  Object.assign.call(null, ...sources, CALLED_AFTER_SPREAD);
+  Object.assign(...(sources as [object]), AFTER_SPREAD);
+  Object.assign(...([...sources, IN_SPREAD] as [object]));
+  void ACCESSOR.reset;
+  PROPERTY.set("https://evil.example/x");
+  NESTED.api.set("https://evil.example/x");
+}
+
+/** @perm net(good.example) */
+export function useMore() {
+  void fetch(BOUND.url); // expect: error PERM001 net
+  void fetch(CALLED_AFTER_SPREAD.url); // expect: error PERM001 net
+  void fetch(AFTER_SPREAD.url); // expect: error PERM001 net
+  void fetch(IN_SPREAD.url); // expect: error PERM001 net
+  void fetch(ACCESSOR.url); // expect: error PERM001 net
+  void fetch(PROPERTY.url); // expect: error PERM001 net
+  void fetch(NESTED.api.url); // expect: error PERM001 net
+}

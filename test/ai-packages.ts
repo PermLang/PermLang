@@ -24,10 +24,39 @@ export { OpenAI } from "./client.mjs";
 `,
   "client": `import { Chat } from "./resources/chat/chat.mjs";
 import { Responses } from "./resources/responses/responses.mjs";
+import { Beta } from "./resources/beta/beta.mjs";
 export declare class OpenAI {
     constructor(options?: { apiKey?: string });
     chat: Chat;
     responses: Responses;
+    beta: Beta;
+}
+`,
+  // The beta Agents API: a session turn runs the handlers in its toolHandlers record.
+  "resources/beta/beta": `import * as AgentsAPI from "./agents/agents.mjs";
+export declare class Beta {
+    agents: AgentsAPI.Agents;
+}
+`,
+  "resources/beta/agents/agents": `import * as SessionsAPI from "./sessions/sessions.mjs";
+export declare class Agents {
+    sessions: SessionsAPI.Sessions;
+}
+`,
+  "resources/beta/agents/sessions/sessions": `import { AgentSessionStream, type AgentSessionStreamParams } from "../../../../lib/agents/agent-session-stream.mjs";
+export declare class Sessions {
+    stream<T = never>(sessionID: string, params: AgentSessionStreamParams<T>): AgentSessionStream<T>;
+}
+`,
+  "lib/agents/agent-session-stream": `export type AgentToolOutput = object | null;
+export type AgentToolHandler = (arguments_: Record<string, unknown>) => AgentToolOutput | PromiseLike<AgentToolOutput>;
+export type AgentSessionStreamParams<T = never> = {
+    input: string;
+    toolHandlers?: Record<string, AgentToolHandler>;
+    idempotencyKey?: string;
+};
+export declare class AgentSessionStream<T> {
+    finalResult(): Promise<T>;
 }
 `,
   "resources/chat/chat": `import * as CompletionsAPI from "./completions/completions.mjs";

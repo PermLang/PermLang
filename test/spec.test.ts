@@ -200,5 +200,25 @@ describe("specs that can't be checked as written", () => {
     it("checks typed code as usual", () => {
       expect(check("shout").status).toBe("perms ok");
     });
+
+    it("covers tagged templates, and shortens a long name", () => {
+      expect(check("viaTag").diagnostics[0]!.message).toMatch(/: it calls lib\.sql, whose type is any\.$/);
+      expect(check("viaLong").diagnostics[0]!.message).toMatch(
+        /: it calls JSON\.parse\(json\)\.aVeryLongPropertyNameThatGoesOnAndOn\.ano\.\.\., whose type is any\.$/,
+      );
+    });
+
+    it("leaves what a loaded module gives to the module's own checks", () => {
+      // A package loaded with require() is trusted, like any package with no adapter.
+      expect(check("viaRequire").status).toBe("perms ok");
+      // A module with no types is reported once, as that.
+      expect(check("viaImport").diagnostics[0]!.message).toMatch(/: it calls into \.\/nowhere\.js, whose types can't be found\.$/);
+    });
+
+    it("says how to fix both kinds at once", () => {
+      expect(check("viaBoth").diagnostics[0]!.fix).toBe(
+        "install the missing types (@types/node for Node's modules and globals, such as process), and give what it calls a type other than any, so PermLang can follow the call, then run it again.",
+      );
+    });
   });
 });

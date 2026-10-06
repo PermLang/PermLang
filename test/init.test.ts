@@ -2,7 +2,8 @@
 // temporary directory.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -214,6 +215,22 @@ describe("permlang init --workflow", () => {
     expect(out).toMatch(/GitHub reads it as an expression/);
   });
 
+  // The repository root is found with its links resolved, so a path written another way (through a
+  // link, or a Windows short name such as RUNNER~1, as on GitHub's Windows runners) must be too.
+  it("reads a path given through a link to the folder as inside the repository", () => {
+    git("init", "-q");
+    const link = `${dir}-link`;
+    symlinkSync(dir, link, "junction");
+    try {
+      const { code, out } = permlang("init", path.join(link, "src"), "--lock", path.join(link, "new.lock.json"), "--workflow");
+      expect(out).not.toMatch(/outside the repository/);
+      expect(code).toBe(0);
+      expect(read("permlang.yml").inputs.args).toBe("src --lock new.lock.json");
+    } finally {
+      unlinkSync(link);
+    }
+  });
+
   it("quotes names YAML would read as something else", () => {
     git("init", "-q");
     for (const folder of ["packages/@acme/api", "#x", "[a]", "my app", "1e3"]) {
@@ -261,7 +278,85 @@ describe("permlang init --workflow", () => {
   });
 
   it("counts functions and configuration entries apart", () => {
+    // The settings alone, then the workflow too.
+    expect(permlang("init", "src").out).toMatch(/Wrote permlang\.lock\.json: 1 function reaches something, across 1 file, and 1 configuration entry records the settings and project files\./);
+    rmSync(path.join(dir, "permlang.lock.json"));
     const { out } = permlang("init", "src", "--workflow");
     expect(out).toMatch(/Wrote permlang\.lock\.json: 1 function reaches something, across 1 file, and 2 configuration entries record the settings and project files\./);
+  });
+
+  it("writes `.` for the folder it runs in", () => {
+    git("init", "-q");
+    expect(permlang("init", ".", "--workflow").code).toBe(0);
+    const { inputs } = read("permlang.yml");
+    expect(inputs.args).toBe(".");
+    expect(actionCheck(inputs)).toMatchObject({ code: 0 });
+  });
+
+  it("refuses an --unmapped policy, or a path with a control character, before writing anything", () => {
+    git("init", "-q");
+    expect(permlang("init", "src", "--unmapped", "ignore", "--workflow")).toMatchObject({ code: 2, out: expect.stringMatching(/^"unmapped" must be one of: warn, error, trust\./) });
+    const { code, out } = permlang("init", "src", "--lock", "x\u0007.json", "--workflow");
+    expect(code).toBe(2);
+    expect(out).toMatch(/^The GitHub Action can't be given a path with a line break or control character in it \("x\\u0007\.json"\)/);
+    expect(existsSync(path.join(dir, "permlang.config.json"))).toBe(false);
+    expect(existsSync(path.join(dir, ".github"))).toBe(false);
+  });
+
+  // GitHub's Windows runners name a drive the path can't be on. Linux has no such path.
+  it.runIf(process.platform === "win32")("refuses a path on a drive that doesn't exist", () => {
+    git("init", "-q");
+    const drive = "QRSTUVWXYZ".split("").find((d) => !existsSync(`${d}:\\`));
+    if (drive === undefined) return;
+    const { code, out } = permlang("init", "src", "--lock", `${drive}:/locks/x.json`, "--workflow");
+    expect(code).toBe(2);
+    expect(out).toMatch(/is outside the repository/);
+  });
+
+  describe("with workflows already there", () => {
+    /** A workflow with these steps, each its `uses:` and, optionally, its `with:`, in the repository's .github/workflows. */
+    const workflow = (file: string, steps: [uses: string, inputs?: string][]) => {
+      mkdirSync(path.join(dir, ".github", "workflows"), { recursive: true });
+      const lines = steps.flatMap(([uses, inputs]) => [`      - uses: ${uses}`, ...(inputs ? [`        with: ${inputs}`] : [])]);
+      writeFileSync(path.join(dir, ".github", "workflows", file), ["on: pull_request", "jobs:", "  check:", "    runs-on: ubuntu-latest", "    steps:", ...lines, ""].join("\n"));
+    };
+    const pkg = (folder: string) => {
+      mkdirSync(path.join(dir, folder, "src"), { recursive: true });
+      writeFileSync(path.join(dir, folder, "src", "app.ts"), "export function ok() { return 1; }\n");
+      return path.join(dir, folder);
+    };
+    const hash = createHash("sha256").update("packages_web").digest("hex").slice(0, 8);
+
+    it("keeps one it can't tell is another folder's", () => {
+      git("init", "-q");
+      const web = pkg("packages_web");
+      // No PermLang step it can read (a local Action that isn't there), or a folder from an expression.
+      for (const steps of [[["./tools/missing"]], [["PermLang/permlang@v0", "{ working-directory: \"${{ matrix.dir }}\" }"]]] as [string, string?][][]) {
+        workflow("permlang-packages-web.yml", steps);
+        const { code, out } = runCli(["init", "src", "--workflow"], { cwd: web });
+        expect(code).toBe(0);
+        expect(out).toContain("Kept ../.github/workflows/permlang-packages-web.yml.");
+        expect(readdirSync(path.join(dir, ".github", "workflows"))).toEqual(["permlang-packages-web.yml"]);
+        rmSync(path.join(web, "permlang.lock.json"));
+      }
+    });
+
+    it("takes one that runs PermLang at the repository root as another folder's", () => {
+      git("init", "-q");
+      const web = pkg("packages_web");
+      workflow("permlang-packages-web.yml", [["PermLang/permlang@v0"]]);
+      expect(runCli(["init", "src", "--workflow"], { cwd: web }).out).toContain(`Wrote ../.github/workflows/permlang-packages-web-${hash}.yml`);
+    });
+
+    it("refuses, before writing anything, when other folders' workflows have both names", () => {
+      git("init", "-q");
+      const web = pkg("packages_web");
+      workflow("permlang-packages-web.yml", [["PermLang/permlang@v0", "{ working-directory: packages/web }"]]);
+      workflow(`permlang-packages-web-${hash}.yml`, [["PermLang/permlang@v0", "{ working-directory: packages-web }"]]);
+      const { code, out } = runCli(["init", "src", "--workflow"], { cwd: web });
+      expect(code).toBe(2);
+      expect(out).toMatch(new RegExp(`^\\.github/workflows has workflows that run PermLang in other folders under both names this one would get \\(permlang-packages-web\\.yml, and with -${hash}\\)\\. Add a PermLang step for packages_web to one of them\\.`));
+      expect(readdirSync(web)).toEqual(["src"]);
+    });
   });
 });

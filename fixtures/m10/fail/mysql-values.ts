@@ -20,6 +20,9 @@ export async function values(a: unknown, b: object, c: Lead, d: unknown[], e: Re
   await myp.query("SELECT * FROM leads WHERE ?", [g]); // expect: error PERM001 db.read expect: error PERM001 db.write
   // A cast doesn't change the value.
   await myp.query("SELECT * FROM leads WHERE id = ?", [a as number]); // expect: error PERM001 db.read expect: error PERM001 db.write
+  // An object literal with the method itself, and values spread in from a list of anything.
+  await myp.query("SELECT * FROM leads WHERE id = ?", [{ toSqlString() { return "(SELECT 1 FROM secrets)"; } }]); // expect: error PERM001 db.read expect: error PERM001 db.write
+  await myp.query("SELECT * FROM leads WHERE id = ?", [...d]); // expect: error PERM001 db.read expect: error PERM001 db.write
 }
 
 /** @perm db.read(leads) */

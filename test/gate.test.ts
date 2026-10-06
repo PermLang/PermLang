@@ -633,6 +633,13 @@ describe("a default import TypeScript gives no type (module commonjs, no esModul
     expect(reaches("src/reexported.ts")).toEqual({ "<module>": ["unverifiable"] });
     for (const harmless of ["src/constant.ts", "src/pure.ts", "src/typed.ts"]) expect(reaches(harmless)).toEqual({});
   });
+
+  it("reports a cast of it once, as the cast", () => {
+    write("tsconfig.json", JSON.stringify({ compilerOptions: { module: "commonjs", strict: true, types: ["node"], typeRoots }, include: ["src"] }));
+    write("src/cast.ts", 'import cp from "node:child_process";\n/** @perm env(NONE) */\nexport function cast() {\n  return (cp as any).execSync("id");\n}\n');
+    const report = JSON.parse(permlang("check", "--no-lock", "--json").out) as { diagnostics: { function: string; capability?: string; call?: string }[] };
+    expect(report.diagnostics.filter((d) => d.function === "cast").map((d) => `${d.capability} ${d.call}`)).toEqual(["unverifiable cp cast to `any`"]);
+  });
 });
 
 describe("new code PermLang can't check is recorded in the lock", () => {
@@ -684,6 +691,16 @@ describe("new code PermLang can't check is recorded in the lock", () => {
     expect(check.code).toBe(1);
     const line = read("permlang.lock.json").split("\n").findIndex((l) => l.includes('"unchecked.import(src/telemetry.cjs)"')) + 1;
     expect(check.out).toContain(`permlang.lock.json:${line}:1 error PERM005: permlang.lock.json records src/telemetry.cjs as code PermLang can't check, which the code no longer imports.`);
+  });
+
+  it("names an entry a hand-edited lock adds, however it's written", () => {
+    expect(permlang("lock", "src", "--strictness", "sketch").code).toBe(0);
+    const lock = lockJson();
+    lock.functions["permlang.config.json#<unchecked>"] = ["unchecked.package(leftpad2"];
+    writeLock(lock);
+    const check = permlang("check", "src", "--strictness", "sketch");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("error PERM005: permlang.lock.json records leftpad2 as code PermLang can't check, which the code no longer calls into.");
   });
 
   it("tells apart files of the same name imported from different folders", () => {

@@ -251,18 +251,24 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     if (!declared.has(node)) declared.set(node, createDeclaredUnit(node));
     return declared.get(node);
   };
+  //    A file that couldn't be analyzed has only its top-level unit, which stands for all of
+  //    its code: a call into any of its functions reaches it.
+  const unanalyzedUnit = (node: Node): Unit | undefined => {
+    const file = units.get(node.getSourceFile());
+    return file && unanalyzed.has(file) ? file : undefined;
+  };
   //    An anonymous function that a call reaches through its type (a function kept in a Map,
   //    say) gets a unit too: the part of the unit around it that's inside it.
   const anonymous = new Map<Node, Unit>();
   const anonymousUnit = (node: Node): Unit | undefined => {
     if (!Node.isArrowFunction(node) && !Node.isFunctionExpression(node)) return undefined;
-    const around = units.get(enclosingUnitNode(node));
-    if (!around) return undefined;
-    if (!anonymous.has(node)) anonymous.set(node, createAnonymousUnit(node, around));
-    return anonymous.get(node);
+    let unit = anonymous.get(node);
+    // (Every unit of a file that was analyzed is known; one that wasn't is handled above.)
+    if (!unit) anonymous.set(node, (unit = createAnonymousUnit(node, units.get(enclosingUnitNode(node))!)));
+    return unit;
   };
   const context: GraphContext = {
-    unitOf: (node: Node) => units.get(node) ?? declaredUnit(node) ?? anonymousUnit(node),
+    unitOf: (node: Node) => units.get(node) ?? declaredUnit(node) ?? unanalyzedUnit(node) ?? anonymousUnit(node),
     // Every analyzed file has one: its top-level code.
     exportedUnits: (file) => exported.get(file)!,
     hierarchy: new Hierarchy(sourceFiles),
@@ -309,7 +315,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   const policy = options.unmapped ?? "warn";
   if (policy !== "trust") {
     for (const u of unmappedUses) {
-      const unit = units.get(enclosingUnitNode(u.node))!;
+      // In a file that couldn't be analyzed, only its top-level code has a unit.
+      const unit = units.get(enclosingUnitNode(u.node)) ?? units.get(u.node.getSourceFile())!;
       const counts = `${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}`;
       diagnostics.push({
         severity: policy === "error" ? "error" : "warning",

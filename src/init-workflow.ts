@@ -70,12 +70,26 @@ function isOwn(root: string, file: string, folder: string): boolean {
   return steps.some((s) => path.posix.normalize((s.workingDirectory ?? ".").replaceAll("\\", "/")).replace(/\/$/, "") === folder);
 }
 
+/** The repository's root, or undefined outside a repository (where git fails, or an old git prints nothing, which realpath fails on too). */
 function gitRoot(): string | undefined {
   try {
-    const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return root ? realpathSync.native(root) : undefined;
+    return realpathSync.native(execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * `file` with links and Windows short names (`RUNNER~1`) resolved, as the root and the working
+ * folder are, so the three compare. As far as it exists: a file init is told about, such as a new
+ * --lock, may not exist yet.
+ */
+function canonical(file: string): string {
+  try {
+    return realpathSync.native(file);
+  } catch {
+    const parent = path.dirname(file);
+    return parent === file ? file : path.join(canonical(parent), path.basename(file));
   }
 }
 
@@ -101,7 +115,9 @@ function defaultBranch(): string {
  */
 export function workflowArgs(args: Args, target: WorkflowTarget): string {
   const file = (p: string) => {
-    const absolute = path.resolve(target.cwd, p);
+    // A Windows-style path (`.\src\`) means the same folder wherever init runs: on Linux a
+    // backslash is part of a name, so it's turned into a slash before the path is resolved.
+    const absolute = canonical(path.resolve(target.cwd, p.replaceAll("\\", "/")));
     const fromRoot = path.relative(target.root, absolute);
     if (fromRoot.startsWith("..") || path.isAbsolute(fromRoot)) {
       throw new UsageError(`${printable(p)} is outside the repository, so the GitHub Action's checkout won't have it. Move it into the repository.`);

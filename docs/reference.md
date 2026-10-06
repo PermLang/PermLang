@@ -57,8 +57,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `process.env` (and `(process as any).env`) is
     read the same way without Node's types, or with a project's own
     `declare const process`, also as `globalThis.process.env`,
-    `global.process.env`, `process["env"]`, or through `const p = process` or
-    `const { env } = process`, whose uses are followed (an untyped
+    `global.process.env`, `process["env"]`, or through `const p = process`,
+    `const { env } = process`, or `const { process: { env } } = globalThis`,
+    whose uses are followed (an untyped
     `const env = process.env` reads every variable); a `process`
     that doesn't resolve also gets a PERM007 warning, since its other APIs
     can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
@@ -133,7 +134,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `.bind`, whose arguments can't be read. An extended client's (`$extends`)
     operations name their model only where they're called on one
     (`client.lead.findMany(...)`); reached any other way, they could be any
-    operation of any model. So could a model chosen at run time, with a key that
+    operation of any model, and a fluent step (`.owner`) could read any related
+    table. So could a model chosen at run time, with a key that
     isn't one literal (`prisma[model].findMany()`, `(prisma as any)[name]`): bare
     `db.read` and `db.write` where it's chosen. A query extension's `query`
     (`$extends({ query: { lead: { findMany({ args, query }) {...} } } })`) runs the
@@ -171,10 +173,12 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     touch any table. A column's `$defaultFn` and `$onUpdateFn` (and `$default`,
     `$onUpdate`) run when drizzle builds a statement, which then holds the SQL they
     return: every insert into the table is charged with the defaults' SQL and the
-    update functions', and every update with the update functions'. For an insert
-    or update into a table PermLang can't find, or whose columns it can't all see
-    (spread from something other than a `const` or a project function that returns
-    them), that SQL could read any table: bare `db.read`.
+    update functions', and every update with the update functions'. A function
+    written elsewhere (`$defaultFn(makeDefault)`) is judged by its return type: one
+    that could return SQL could read any table. For an insert or update into a
+    table PermLang can't find, or whose columns it can't all see (spread from
+    something other than a `const` or a project function that returns them, or
+    16 or more groups of them), that SQL could read any table: bare `db.read`.
   - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
     `postgres`, `@neondatabase/serverless`, `@vercel/postgres`, and Node's own
     `node:sqlite`). When the query
@@ -214,8 +218,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     text (before 1.0) is read like `query()`. Any client method PermLang doesn't
     know needs bare `db.read` and `db.write` too, so new APIs can't pass silently;
     postgres.js's query modifiers (`.values()`, `.cursor()`, `.describe()`, ...),
-    mysql2's `.promise()`, and a prepared statement's methods (mysql2's and
-    `node:sqlite`'s) touch nothing beyond the query they belong to. A `?`
+    mysql2's `.promise()`, and a prepared statement's methods (mysql2's, sqlite3's,
+    and `node:sqlite`'s) touch nothing beyond the query they belong to. A `?`
     placeholder is read as MySQL and SQLite read it, on its own (SQLite's `?12`
     takes digits too), so in `?FROM secrets` the word after it is the keyword
     `FROM`. Schema-qualified names are declared as written (`db.read(public.users)`).
@@ -247,7 +251,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     (`const { execSync: run } = cp`, `const { fetch } = globalThis`,
     `const { promises: { writeFile } } = fs`, `({ exec }: typeof cp) => ...`).
     A chain of more than 32 aliases is unverifiable. A value whose code isn't in
-    sight is judged by its type: `require` used as a value
+    sight is judged by its type, as is an element destructured from an array
+    (`const [run] = runners`): `require` used as a value
     (`require.call(null, name)`, `["x"].map(require)`, `load(require)`), or what
     `createRequire()` returns, is unverifiable; `require.resolve()`,
     `require.main`, `require.cache`, and `typeof require` aren't uses. Testing
@@ -294,7 +299,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   (`table[name]()`), loading a module whose result can't be checked (see
   [loading modules](#loading-modules)), calls into the project's own JavaScript
   through a hand-written `.d.ts`, and a file PermLang couldn't analyze (code
-  nested thousands of levels deep, say). The only way to accept it is
+  nested thousands of levels deep, say), whether it's imported or one of its
+  functions is called. The only way to accept it is
   `@perm-unsafe`, which also stops it from failing the function's callers'
   annotations. It doesn't hide it from AI tools or flow rules (see the escape
   hatch above).
@@ -407,7 +413,7 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 | a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
 | a package with no adapter | listed and warned about (PERM006), like an import of it |
 | a package declared pure, or data (see below) | nothing |
-| a specifier that can't be traced, or a file outside the project | unverifiable |
+| a specifier that can't be traced, or a file outside the project (an absolute path, `/opt/x.js` or `C:/x.js` wherever the check runs) | unverifiable |
 
 `data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
 every form of import: the code isn't a file in the project. A query or fragment
@@ -490,8 +496,10 @@ no test yet.
     `Promise.resolve(cp).then((m: any) => ...)`; or given as `this` to a function
     of the project's own, as in `run.call(cp)`; copied with a spread,
     `{ ...cp }`; or passed to a parameter of the project's own typed with a type
-    parameter or a mapped type, as in `function run<T>(m: T)` or
-    `function run(m: Partial<typeof cp>)`) is unverifiable (PERM004).
+    parameter or a mapped type, as in `function run<T>(m: T)`,
+    `function run<T>(...ms: T[])`, or `function run(m: Partial<typeof cp>)`; or
+    passed as an argument the function has no parameter for, which only
+    `arguments` reaches) is unverifiable (PERM004).
     Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
     checked through that parameter like the module itself. A module's function
     or class called past a cast returns `any` too, so when what it returns or
@@ -557,13 +565,16 @@ no test yet.
   `Reflect.defineProperty`, `Reflect.deleteProperty`, or
   `Reflect.setPrototypeOf`, matched by declaration however they're reached:
   `Object["assign"]`, `const { assign } = Object`, `globalThis.Object.assign`,
-  `.call`, `.apply`, `Reflect.apply`, or a spread list of arguments), and so is
-  an `as const` object's own method that writes to `this`. Values read from a
-  written object are unknown. A plain exported `const`, enum, or `as const`
-  object is also unknown when the object holding the exports is written: its
-  namespace (`namespace Api { export const url = ... }` with
-  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS, the module's
-  `exports` object reached by a namespace import (`import * as config` with
+  `.call`, `.bind`, `.apply`, `Reflect.apply`, or a spread list of arguments),
+  and so is an `as const` object's own method, getter, setter, or `function`
+  property (also one of an object nested in it) that writes to `this`. Values
+  read from a written object are unknown. A plain exported `const`, enum, or
+  `as const` object is also unknown when the object holding the exports is
+  written: its namespace (`namespace Api { export const url = ... }` with
+  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS (a `.cts` file;
+  under node16 or nodenext, one in a package that isn't `"type": "module"`;
+  otherwise per the `module` option), the module's `exports` object reached by
+  a namespace import or `import x = require()` (`import * as config` with
   `Object.assign(config, ...)`); an ES module's namespace can't be written. An
   object passed to a function that writes to it, or stored in another variable
   first, isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)),
@@ -853,9 +864,12 @@ that has it and can hand it back:
   setting `headers.authorization`, `load(store)` calling `store.set(...)` or
   `bus.emit(...)`, or a callback writing into a list's elements. Any use of
   such a parameter counts except reading it: its fields' values
-  (`order.total`), the standard library's methods that change nothing
-  (`items.join(",")`, `lines.map((l) => l.sku)`), and tests (`if (!order)`).
-  Passing it on, storing it, or calling any other method could write to it;
+  (`order.total`, `counts.tries++`), the standard library's methods that change
+  nothing (`items.join(",")`, `lines.map((l) => l.sku)`), tests (`if (order)`,
+  `!order`, `order === other`, `typeof order`, `ready && order` as a condition),
+  and assigning to the parameter itself. Passing it on, storing it
+  (`kept = order ?? fallback`), calling it or any other method, or a callback
+  nested more than five deep could write to it;
 - as the object a constructor builds (`new StripeClient()`), or what a module
   exports.
 
@@ -1361,7 +1375,10 @@ If the diff can't be computed at all (the base commit can't be read, or the
 arguments are wrong, say), `--format markdown` still prints a comment that says
 so, and the command exits 2. With no lock file in the working tree or at the
 base commit, there's nothing to compare: the command exits 2, and
-`--format markdown` prints a short notice saying so.
+`--format markdown` prints a short notice saying so. The exception is a change
+that stops checking with the lock file the base's workflows check with (such as
+`args: src --no-lock` where the base had `--lock locks/app.json`): then the diff
+lists all access as new, under a warning that says so, since the check fails.
 
 `--format json` (or `--json`) is for tools, and includes `unrecorded` (where the
 code and the lock file differ, or `null`), `unsafeChanged`, `analysisError` (or

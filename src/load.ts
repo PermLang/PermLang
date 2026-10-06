@@ -4,6 +4,7 @@
 // reported as unverifiable (see check.ts); the rest of the project is checked as usual.
 // It's emptied where it is, so files that import it get the empty one too.
 
+import { statSync } from "node:fs";
 import path from "node:path";
 import { Project, ts, type FileSystemHost, type SourceFile } from "ts-morph";
 
@@ -30,14 +31,12 @@ export function failureReason(error: unknown): string {
 export function projectOfFiles(files: readonly string[], compilerOptions: ts.CompilerOptions): Project {
   const blank = new Set<string>();
   const project = new Project({ compilerOptions, fileSystem: blanking(blank) });
-  try {
-    project.addSourceFilesAtPaths([...files]);
-  } catch {
-    // Again, a file at a time, to find the ones that can't be parsed. A pattern is added whole.
-    for (const file of files) {
-      if (/[*?{[]/.test(file)) project.addSourceFilesAtPaths(file);
-      else add(project, file, blank);
-    }
+  // A file that exists is added by its own path, a file at a time, which also finds the ones that
+  // can't be parsed. Given to ts-morph together as glob patterns, files on more than one Windows
+  // drive matched nothing, and went unchecked. Anything else (`src/**/*.ts`) is a pattern.
+  for (const file of files) {
+    if (isFile(file)) add(project, file, blank);
+    else project.addSourceFilesAtPaths(file);
   }
   project.resolveSourceFileDependencies();
   return project;
@@ -63,6 +62,14 @@ export function projectOfTsConfig(tsConfigFilePath: string): Project {
   for (const file of parsed!.fileNames) add(project, file, blank);
   project.resolveSourceFileDependencies();
   return project;
+}
+
+function isFile(file: string): boolean {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function add(project: Project, file: string, blank: Set<string>): void {

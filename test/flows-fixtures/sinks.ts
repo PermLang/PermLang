@@ -31,3 +31,13 @@ import { beam } from "untyped-beacon";
 export function viaUntyped() {
   beam(process.env.STRIPE_KEY!);
 }
+
+// Built with new, or handed on as a value: still a call into it.
+import { Beacon } from "untyped-beacon";
+export function viaUntypedClass() {
+  new Beacon(process.env.STRIPE_KEY);
+}
+export function viaUntypedValue() {
+  const send = beam;
+  send(process.env.STRIPE_KEY);
+}

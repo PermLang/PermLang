@@ -18,6 +18,7 @@ import path from "node:path";
 import { Node, SyntaxKind, ts, type CallExpression, type SourceFile } from "ts-morph";
 import { packageName, type AdapterIndex } from "../adapters.js";
 import { isRequire, requiresCapabilityModule } from "./functions.js";
+import { emitsCommonJs, importCallsUseRequire } from "./module-format.js";
 import { literalString, resolvedDeclaration, unwrapExpression, type CallLike } from "./shared.js";
 
 export type LoadTarget =
@@ -77,8 +78,8 @@ export function loadTarget(load: Load, adapters: AdapterIndex): LoadTarget {
   if (file && !file.isDeclarationFile() && !file.getFilePath().split("/").includes("node_modules")) return { kind: "file", file };
   const viaRequire = mode === "require" || importCallsUseRequire(from);
   if (loadsData(specifier, from, viaRequire) || (!viaRequire && resolved?.endsWith(".json"))) return { kind: "none" };
-  // A relative path that isn't a project file: JavaScript the checker doesn't analyze.
-  if (specifier.startsWith(".") || specifier.startsWith("/")) return { kind: "unverifiable" };
+  // A path that isn't a project file: JavaScript the checker doesn't analyze.
+  if (isPath(specifier)) return { kind: "unverifiable" };
 
   const name = packageName(specifier);
   if (adapters.isPure(name)) return { kind: "none" };
@@ -109,11 +110,17 @@ export function loadsData(specifier: string, from: SourceFile, viaRequire: boole
   // Node picks the loader by the exact extension (`./data.JSON` runs as JavaScript), and
   // a query string is part of the file name.
   if (!specifier.endsWith(".json")) return false;
-  if (specifier.startsWith(".") || path.isAbsolute(specifier)) {
-    return from.getProject().getFileSystem().fileExistsSync(path.resolve(from.getDirectoryPath(), specifier));
-  }
+  if (isPath(specifier)) return from.getProject().getFileSystem().fileExistsSync(path.resolve(from.getDirectoryPath(), specifier));
   // A package's file: TypeScript finds it when it's told it may resolve JSON.
   return resolve(specifier, from, "require", { resolveJsonModule: true })?.endsWith(".json") === true;
+}
+
+/**
+ * A path rather than a package name: relative, or absolute on any system (`/opt/x.js`,
+ * `C:/x.js`), since where the code runs may not be where it's checked.
+ */
+function isPath(specifier: string): boolean {
+  return specifier.startsWith(".") || path.posix.isAbsolute(specifier) || path.win32.isAbsolute(specifier);
 }
 
 /**
@@ -125,47 +132,6 @@ export function referenceUsesRequire(reference: Node): boolean {
   if (Node.isImportEqualsDeclaration(reference)) return true;
   if (Node.isCallExpression(reference)) return importCallsUseRequire(reference.getSourceFile());
   return emitsCommonJs(reference.getSourceFile());
-}
-
-// TypeScript's module kinds that emit ES modules: imports stay imports.
-const ES_MODULE_KINDS = new Set([ts.ModuleKind.ES2015, ts.ModuleKind.ES2020, ts.ModuleKind.ES2022, ts.ModuleKind.ESNext, ts.ModuleKind.Preserve]);
-const commonJs = new WeakMap<SourceFile, boolean>();
-
-/**
- * Whether TypeScript compiles a file's imports into require() calls: "module" is CommonJS
- * (or AMD, UMD, or unset with an old target), or the file is Node's CommonJS: a .cts file,
- * or, under Node16 and later, one in a package that isn't `"type": "module"`.
- */
-function emitsCommonJs(file: SourceFile): boolean {
-  let known = commonJs.get(file);
-  if (known === undefined) {
-    const project = file.getProject();
-    const options = project.getCompilerOptions();
-    const name = file.getFilePath();
-    const kind = moduleKind(options);
-    if (/\.c[jt]s$/.test(name)) known = true;
-    else if (/\.m[jt]s$/.test(name)) known = false;
-    else if (isNodeModuleKind(kind)) known = ts.getImpliedNodeFormatForFile(name, undefined, project.getModuleResolutionHost(), options) !== ts.ModuleKind.ESNext;
-    else known = !ES_MODULE_KINDS.has(kind);
-    commonJs.set(file, known);
-  }
-  return known;
-}
-
-/** Whether TypeScript compiles `import(x)` in this file into require(x). Node16 and later keep it, even in CommonJS. */
-function importCallsUseRequire(file: SourceFile): boolean {
-  const kind = moduleKind(file.getProject().getCompilerOptions());
-  return emitsCommonJs(file) && !isNodeModuleKind(kind) && kind !== ts.ModuleKind.Preserve;
-}
-
-/** "module" as TypeScript defaults it: CommonJS, unless the target is ES2015 or later. */
-function moduleKind(options: ts.CompilerOptions): ts.ModuleKind {
-  if (options.module !== undefined) return options.module;
-  return (options.target ?? ts.ScriptTarget.ES5) >= ts.ScriptTarget.ES2015 ? ts.ModuleKind.ES2015 : ts.ModuleKind.CommonJS;
-}
-
-function isNodeModuleKind(kind: ts.ModuleKind): boolean {
-  return kind >= ts.ModuleKind.Node16 && kind <= ts.ModuleKind.NodeNext;
 }
 
 // Non-code imports that bundlers handle; TypeScript doesn't resolve them without declarations.

@@ -3,10 +3,10 @@
 import {
   Node,
   SyntaxKind,
-  ts,
   type CallExpression,
   type NewExpression,
   type ObjectLiteralExpression,
+  type Signature,
   type Symbol as MorphSymbol,
   type Identifier,
   type SourceFile,
@@ -14,6 +14,7 @@ import {
   type Type,
 } from "ts-morph";
 import type { Capability } from "../capability.js";
+import { emitsCommonJs } from "./module-format.js";
 
 export type CallLike = CallExpression | NewExpression | TaggedTemplateExpression;
 
@@ -149,24 +150,29 @@ function cachedWrite(key: Node, compute: () => boolean): boolean {
   return result;
 }
 
-/** An `as const` object with a method that writes to its own object: `set(u) { (this as any).url = u; }`. */
+/**
+ * An `as const` object with a function of its own that writes to `this`, which is the object
+ * (or an object nested in it): `set(u) { (this as any).url = u; }`, also as a getter or setter,
+ * or a `function` held as a property.
+ */
 function writesItself(name: Identifier): boolean {
   const holder = name.getParent();
   const initializer = Node.isVariableDeclaration(holder) ? holder.getInitializer() : undefined;
   const object = initializer && unwrapExpression(initializer);
   if (!object || !Node.isObjectLiteralExpression(object)) return false;
-  // Functions declared with `function` or as classes inside it have a `this` of their own.
-  return object.getDescendantsOfKind(SyntaxKind.ThisKeyword).some((self) => {
-    const owner = self.getFirstAncestor((a) => Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a) || Node.isClassDeclaration(a) || Node.isClassExpression(a) || Node.isMethodDeclaration(a) || Node.isGetAccessorDeclaration(a) || Node.isSetAccessorDeclaration(a));
-    return owner !== undefined && ownMethod(owner, object) && writesThrough(self);
-  });
+  return object.getDescendantsOfKind(SyntaxKind.ThisKeyword).some((self) => isObjectThis(self) && writesThrough(self));
 }
 
-/** A method, accessor, or function property written directly in `object`. */
-function ownMethod(owner: Node, object: Node): boolean {
-  const parent = owner.getParentOrThrow();
-  if (Node.isMethodDeclaration(owner) || Node.isGetAccessorDeclaration(owner) || Node.isSetAccessorDeclaration(owner)) return parent === object;
-  return Node.isFunctionExpression(owner) && Node.isPropertyAssignment(parent) && parent.getParent() === object;
+/**
+ * Whether `this` is an object literal's: in its method or accessor, or a `function` it holds as a
+ * property. `this` belongs to the nearest function that isn't an arrow, or class, so a class, a
+ * function declared inside, and a function passed as a callback have one of their own.
+ */
+function isObjectThis(self: Node): boolean {
+  const owner = self.getFirstAncestor((a) => Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a) || Node.isMethodDeclaration(a) ||
+    Node.isGetAccessorDeclaration(a) || Node.isSetAccessorDeclaration(a) || Node.isClassDeclaration(a) || Node.isClassExpression(a));
+  const parent = owner?.getParent();
+  return Node.isObjectLiteralExpression(parent) || (Node.isFunctionExpression(owner) && Node.isPropertyAssignment(parent));
 }
 
 /**
@@ -197,16 +203,6 @@ function exportsWritten(file: SourceFile): boolean {
   }));
 }
 
-/** Whether a file is compiled to CommonJS, where its exports are a plain object. */
-function emitsCommonJs(file: SourceFile): boolean {
-  const format = file.compilerNode.impliedNodeFormat;
-  if (format !== undefined) return format === ts.ModuleKind.CommonJS;
-  const options = file.getProject().getCompilerOptions();
-  const fallback = (options.target ?? ts.ScriptTarget.ES5) >= ts.ScriptTarget.ES2015 ? ts.ModuleKind.ES2015 : ts.ModuleKind.CommonJS;
-  const kind = options.module ?? fallback;
-  return kind === ts.ModuleKind.CommonJS || kind === ts.ModuleKind.AMD || kind === ts.ModuleKind.UMD;
-}
-
 /** Whether one reference to an object writes to it. */
 function writesThrough(reference: Node): boolean {
   let chain: Node = reference;
@@ -232,7 +228,7 @@ function writesThrough(reference: Node): boolean {
 /**
  * Whether `target` is what a writing function changes: the first argument of
  * `Object.assign(target, ...)` and the like, however the function is reached
- * (`fn.call(thisArg, target)`, `fn.apply(thisArg, [target])`,
+ * (`fn.call(thisArg, target)`, `fn.bind(thisArg, target)`, `fn.apply(thisArg, [target])`,
  * `Reflect.apply(fn, thisArg, [target])`). In a list of arguments that's spread
  * (`Object.assign(...[target, source])`), or after a spread, any position could be the first.
  */
@@ -245,12 +241,11 @@ function isWritingCallTarget(target: Node): boolean {
   if (list === undefined && isWritingFunction(resolvedDeclaration(call))) return first;
   const callee = unwrapExpression(call.getExpression());
   if (Node.isPropertyAccessExpression(callee) && writes(callee.getExpression())) {
-    // `fn.call(thisArg, target, ...)`, `fn.apply(thisArg, [target, ...])`.
-    if (callee.getName() === "call") return list === undefined && (index === 1 || index === -1);
-    if (callee.getName() === "apply") return list === 1 && first;
+    // `fn.apply(thisArg, [target, ...])`; `fn.call(thisArg, target, ...)` and `fn.bind(thisArg, target)`.
+    return callee.getName() === "apply" ? list === 1 && first : list === undefined && (index === 1 || index === -1);
   }
   // `Reflect.apply(fn, thisArg, [target, ...])`.
-  return list === 2 && first && isReflectApply(call) && writes(call.getArguments()[0]);
+  return list === 2 && first && isReflectApply(call) && writes(call.getArguments()[0]!);
 }
 
 /**
@@ -290,8 +285,8 @@ function outermost(node: Node): Node {
 }
 
 /** Whether a function value is one of WRITING_FUNCTIONS: `Object.assign`, or an alias of it. */
-function writes(fn: Node | undefined): boolean {
-  return fn !== undefined && fn.getType().getCallSignatures().some((s) => isWritingFunction(s.compilerSignature.declaration && s.getDeclaration()));
+function writes(fn: Node): boolean {
+  return signatureDeclarations(fn.getType().getCallSignatures()).some(isWritingFunction);
 }
 
 function isWritingFunction(declaration: Node | undefined): boolean {
@@ -375,6 +370,14 @@ export function resolvedDeclaration(call: CallLike): Node | undefined {
   }
   resolved.set(call, declaration);
   return declaration;
+}
+
+/**
+ * The declarations of signatures that have one. A class with no constructor and no base class
+ * has a construct signature without one, which ts-morph can't wrap (it throws).
+ */
+export function signatureDeclarations(signatures: readonly Signature[]): Node[] {
+  return signatures.flatMap((s) => (s.compilerSignature.declaration ? [s.getDeclaration()] : []));
 }
 
 /** `Reflect.apply(fn, thisArg, args)`, the standard library's: a call of `fn` with `args`. */
