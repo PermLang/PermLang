@@ -44,7 +44,8 @@ This writes three files. Commit all of them:
 npx permlang check src
 ```
 
-Look at four things:
+At sketch, each exported function without a `@perm` annotation gets a warning
+(PERM003). Those can wait until step 5. Look at four things:
 
 - **Packages with no adapter.** PermLang can't see what these touch, so it
   trusts them. Each gets one warning (PERM006). For each one, either add an
@@ -70,17 +71,22 @@ Look at four things:
 
 ## 4. Work with the lock
 
-From now on, when a change gives code new access, `permlang check` fails:
+From now on, when a change gives code new access, `permlang check` fails. Here,
+a new `enrich` helper sends leads to a data broker, and `handleLead` calls it:
 
 ```
-src/leads.ts:5:9 error PERM005: handleLead can now reach net(api.data-broker.io), which permlang.lock.json doesn't record.
+src/leads.ts:21:21 error PERM005: enrich can now reach net(api.data-broker.io), which permlang.lock.json doesn't record.
+  -> run `permlang lock` and commit the change so reviewers see it.
+
+src/leads.ts:30:16 error PERM005: handleLead can now reach net(api.data-broker.io), which permlang.lock.json doesn't record.
   -> run `permlang lock` and commit the change so reviewers see it.
 ```
 
 If the access is intended, run `npx permlang lock src` and commit the lock change.
 Reviewers see it in the pull request, and the Action's comment shows where the
 new access happens and which functions can now reach it. Until the lock change is
-committed, the comment is marked **Not approved yet**, matching the failing check:
+committed, the comment is marked **Not approved yet**, matching the failing check.
+To see the same diff on your machine:
 
 ```bash
 npx permlang diff origin/main src
@@ -89,8 +95,10 @@ npx permlang diff origin/main src
 The lock has to match the code exactly, so the check also fails when the lock
 records access the code no longer reaches (otherwise a change could approve
 access in advance by editing only the lock), when a `@perm-unsafe` override is
-added, removed, or reworded, and when the lock file is deleted. `permlang lock`
-fixes each of these, and the lock's diff shows what changed.
+added, removed, or reworded, and when code starts or stops using a package with
+no adapter. In the GitHub Action, it also fails when a pull request deletes the
+lock file. `permlang lock` fixes each of these, and the lock's diff shows what
+changed.
 
 Run `permlang check` and `permlang lock` with the same paths and options as your
 workflow (`src` here): the lock records them, and a check of other files, or with
@@ -134,7 +142,8 @@ and `"tools": "error"` to fail the build on risky AI tools.
 
 To say where a secret may go, add a flow rule. This fails a change where a
 function that gets hold of the Stripe key can also send to a server other than
-Stripe's, run a command, or call code PermLang can't see:
+Stripe's, send an email (or take another action an adapter defines), run a
+command, or call code PermLang can't see:
 
 ```json
 { "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] }] }
