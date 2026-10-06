@@ -14,7 +14,7 @@ import { buildLock, lockDrift, type LockFile } from "./lock.js";
 import { moduleComments, strayPermTags, type AnnotationError } from "./annotations.js";
 import { projectFiles } from "./project-files.js";
 import { findTools, handlerReach } from "./tools.js";
-import { flowDiagnostics, type FlowRule } from "./flows.js";
+import { checkFlowTargets, flowDiagnostics, opaqueUses, type FlowRule } from "./flows.js";
 import { failureReason, projectOfFiles, projectOfTsConfig, unparsedReason } from "./load.js";
 import { clearResolutionCache, resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
@@ -204,7 +204,7 @@ export function checkTsConfig(tsConfigFilePath: string, options: CheckOptions = 
 }
 
 /**
- * @throws AdapterError when an adapter manifest is invalid.
+ * @throws AdapterError when an adapter manifest is invalid, and FlowRuleError when a flow rule lists an app capability no adapter defines.
  * @perm fs.read
  */
 export function checkProject(project: Project, options: CheckOptions = {}): Report {
@@ -215,6 +215,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   // Folders with their own package.json: the project's own, and packages in its folders.
   const packages = new PackageFolders(sourceFiles);
   const adapters = new AdapterIndex(loaded.adapters, (declaration) => packages.localPackage(declaration)?.name);
+  if (options.flows) checkFlowTargets(options.flows, adapters.vocabulary);
   const strictness = options.strictness ?? "development";
 
   const units = new Map<Node, Unit>();
@@ -279,8 +280,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     const inside = isInside(unit.node);
     for (const edge of aroundEdges.get(unit.around!) ?? []) if (inside(edge)) edges.push({ ...edge, from: unit });
   }
-  const reach = propagate([...units.values(), ...declared.values(), ...anonymous.values()], edges);
+  const all = [...units.values(), ...declared.values(), ...anonymous.values()];
+  const reach = propagate(all, edges);
   const edgesFrom = groupBy(edges, (e) => e.from);
+  // @perm-unsafe accepts a function's unverifiable code for annotations only. What a model's
+  // input can trigger, or where a protected secret can go, still includes it.
+  const unvouched = all.some((u) => u.own?.unsafe) ? propagate(all, edges, { vouched: false }) : reach;
 
   // 3. Compare declared with actual.
   const functions: FunctionReport[] = [];
@@ -358,12 +363,14 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
       if (registered.has(t.site)) continue;
       registered.add(t.site);
       const registrar = units.get(enclosingUnitNode(t.site))!;
-      const reaches = [...handlerReach(t, { units, reach, edgesFrom })].sort();
+      const reaches = [...handlerReach(t, { units, reach: unvouched, edgesFrom })].sort();
       const file = t.site.getSourceFile();
       const { line, column } = file.getLineAndColumnAtPos(t.site.getStart());
       tools.push({ name: t.name, framework: t.framework, file: file.getFilePath(), line, function: registrar.name, reaches });
       const risky = reaches.filter(isRiskyForTools);
       if (toolPolicy === "trust" || risky.length === 0) continue;
+      // A collection of tools that can't be listed: say so, rather than name a tool called "*".
+      const unlisted = t.unlisted && t.name === "*";
       diagnostics.push({
         severity: toolPolicy === "error" ? "error" : "warning",
         code: "PERM008",
@@ -373,14 +380,23 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         function: registrar.name,
         capability: t.name,
         call: "",
-        message: `tool ${t.name} (${t.framework}) can be called by an AI model, and reaches ${risky.join(", ")}.`,
-        fix: "anyone who controls the model's input can trigger it: limit what the tool can do, validate its arguments, or have a person confirm before it runs.",
+        message: unlisted
+          ? `tools given here (${t.framework}) can't all be listed, so what an AI model can trigger through them can't be checked.`
+          : `tool ${t.name} (${t.framework}) can be called by an AI model, and reaches ${risky.join(", ")}.`,
+        fix: unlisted
+          ? "write the tools out in the call, or in a constant it uses, so PermLang can follow each one; a tool a framework function makes (tool(...)) is followed where it's made."
+          : "anyone who controls the model's input can trigger it: limit what the tool can do, validate its arguments, or have a person confirm before it runs.",
       });
     }
   }
 
   // Data-flow rules: a function that reads protected data and can send it elsewhere.
-  if (options.flows && options.flows.length > 0) diagnostics.push(...flowDiagnostics(units.values(), edges, reach, options.flows));
+  // A package PermLang can't see into could send the data anywhere, so these rules also follow
+  // calls into packages with no adapter or no types. Only these rules: @perm and the lock don't.
+  if (options.flows && options.flows.length > 0) {
+    const flowReach = propagate(all, edges, { vouched: false, extraUses: opaqueUses(sourceFiles, adapters, packages, (node) => units.get(node)) });
+    diagnostics.push(...flowDiagnostics(units.values(), edges, flowReach, options.flows));
+  }
 
   // Sketch relaxes the annotation rules only. What the configuration asks for explicitly (flow
   // rules, and "error" for unmapped packages or AI tools) fails at every level.

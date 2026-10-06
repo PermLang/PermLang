@@ -200,7 +200,7 @@ describe("permlang spec", () => {
     write("svc/ping.perm", spec("net(api.example.com)"));
     const { code, out } = permlang("spec", "svc");
     expect(code).toBe(1);
-    expect(out).toContain("perms     unchecked: reaches code whose types can't be found");
+    expect(out).toContain("perms     unchecked: reaches code PermLang can't see");
     expect(out).toContain(
       "error SPEC005: perm ping: ping reaches code PermLang can't see, so its permissions can't be checked: it calls into untyped-pinger, whose types can't be found.\n    -> install the missing types",
     );
@@ -370,6 +370,13 @@ describe("data-flow rules", () => {
     const { code, out } = permlang("check", "my lib", "--no-lock");
     expect(code).toBe(2);
     expect(out).toContain('flows[0]: "to" must be a list of capabilities');
+  });
+
+  it("rejects an app capability no adapter defines, once the adapters are loaded", () => {
+    writeFileSync(path.join(dir, "permlang.config.json"), JSON.stringify({ flows: [{ from: "env(API_KEY)", to: ["email.sent"] }] }));
+    const { code, out } = permlang("check", "my lib", "--no-lock");
+    expect(code).toBe(2);
+    expect(out).toContain('permlang.config.json: flows[0]: "to" lists email.sent, which no adapter defines, so it could never match.');
   });
 });
 

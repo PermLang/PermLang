@@ -29,6 +29,7 @@ import { workflowArgs, workflowFile, workflowTarget } from "./init-workflow.js";
 import { LOCK_VERSION, LockError, buildLock, diffLocks, isConfigKey, keyed, lockDrift, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { movedLocks } from "./lock-moves.js";
 import { formatAnnotations, formatText, printable, toJson, toSarif } from "./report.js";
+import { FlowRuleError } from "./flows.js";
 import { DEFAULT_CONFIG, SettingsError, readConfig, readTsConfig, settingsEntries, type Origin, type Settings } from "./settings.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
@@ -394,7 +395,14 @@ function analyze(args: Args): Report {
   };
   const scope = settings.scope;
   const selected = "project" in scope ? readTsConfig(scope.project).fileNames : scope.paths.flatMap(expand);
-  const report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(selected, options);
+  let report: Report;
+  try {
+    report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(selected, options);
+  } catch (e) {
+    // A flow rule can only be checked against the adapters once they're loaded.
+    if (e instanceof FlowRuleError) throw new SettingsError(`${path.relative(process.cwd(), settings.configFile)}: ${e.message}`);
+    throw e;
+  }
   // What the check ran on and with is recorded in the lock, like what the code reaches, and so
   // are the files it read only because the selected ones import them, and the code it couldn't check.
   report.functions.push(...settingsEntries(settings, root, importedFiles(report, selected)));
