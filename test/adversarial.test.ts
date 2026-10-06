@@ -268,6 +268,18 @@ const caught: Record<string, string> = {
   // A chain of const aliases too long to follow is unverifiable, not nothing.
   rd25_long_alias_chain: "import { execSync } from \"node:child_process\";\nconst a1 = execSync; const a2 = a1; const a3 = a2; const a4 = a3; const a5 = a4; const a6 = a5;\nconst a7 = a6; const a8 = a7; const a9 = a8; const a10 = a9; const a11 = a10; const a12 = a11;\nconst a13 = a12; const a14 = a13; const a15 = a14; const a16 = a15; const a17 = a16; const a18 = a17;\nconst a19 = a18; const a20 = a19; const a21 = a20; const a22 = a21; const a23 = a22; const a24 = a23;\nconst a25 = a24; const a26 = a25; const a27 = a26; const a28 = a27; const a29 = a28; const a30 = a29;\nconst a31 = a30; const a32 = a31; const a33 = a32; const a34 = a33; const a35 = a34;\nexport function t() { return [\"id\"].map(a35); }",
   rd26_alias_chain_eleven: "import { execSync } from \"node:child_process\";\nconst a1 = execSync; const a2 = a1; const a3 = a2; const a4 = a3; const a5 = a4;\nconst a6 = a5; const a7 = a6; const a8 = a7; const a9 = a8; const a10 = a9; const a11 = a10;\nexport function t() { return a11.call(null, \"id\"); }",
+  // Timers that may run a string: lib.dom's evaluates one, and this suite has both lib.dom and Node's types.
+  rd30_timer_reflect_apply_string: "export function t() { Reflect.apply(setTimeout, window, [\"alert(1)\"]); }",
+  rd31_timer_for_each_strings: "export function t(codes: string[]) { codes.forEach(setTimeout); }",
+  rd32_timer_then_string: "export function t(code: string) { return Promise.resolve(code).then(setTimeout); }",
+  rd33_timer_any_handler: "export function t(body: string) { setTimeout(JSON.parse(body).code, 0); }",
+  rd34_timer_handler_type: "export function t(h: TimerHandler) { setTimeout(h, 0); }",
+  rd35_timer_string_or_function: "export function t(h: string | (() => void)) { window.setTimeout(h, 0); }",
+  // Script loaders and file writes that had no rule.
+  rd40_service_worker: "export function t() { return navigator.serviceWorker.register(\"/sw.js\"); }",
+  rd41_worklet_module: "export function t(ctx: AudioContext) { return ctx.audioWorklet.addModule(\"/w.js\"); }",
+  rd42_report_write: "export function t() { process.report.writeReport(\"/etc/cron.d/x\"); }",
+  rd43_compile_cache: "import module from \"node:module\";\nexport function t() { module.enableCompileCache(\"/etc/cron.d\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -345,6 +357,8 @@ const silent: Record<string, string> = {
   rd_fp11_create_require_members: "import { createRequire } from \"node:module\";\nconst load = createRequire(__filename);\nexport function t() { return [load.resolve(\"node:path\"), load(\"node:path\")]; }",
   rd_fp20_export_default_reference: "export default fetch;",
   rd_fp25_boolean_detection: "export function t() { return [Boolean(globalThis.fetch), !!globalThis.WebSocket, Boolean(window.EventSource) && 1]; }",
+  rd_fp30_timer_functions: "export function t(h: () => void, hs: (() => void)[]) { hs.forEach(setTimeout); setTimeout(h, 1); return Promise.resolve(h).then(setTimeout); }",
+  rd_fp40_script_lookalikes: "export function t() { const registry = { register: (x: string) => x }; return [registry.register(\"/sw.js\"), process.report.getReport()]; }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
@@ -428,4 +442,7 @@ describe("re-verification (detectors): reported as the access it is", () => {
   it("rd17_reflect_apply_arguments", () => expect(capabilities("rd17_reflect_apply_arguments")).toEqual(["fs.read(/etc/cron.d)", "fs.write(/etc/cron.d)"]));
   it("rd25_long_alias_chain", () => expect(capabilities("rd25_long_alias_chain")).toEqual(["unverifiable"]));
   it("rd26_alias_chain_eleven", () => expect(capabilities("rd26_alias_chain_eleven")).toEqual(["exec"]));
+  it("rd30_timer_reflect_apply_string", () => expect(capabilities("rd30_timer_reflect_apply_string")).toEqual(["unverifiable"]));
+  it("rd42_report_write", () => expect(capabilities("rd42_report_write")).toEqual(["fs.write(/etc/cron.d/x)"]));
+  it("rd43_compile_cache", () => expect(capabilities("rd43_compile_cache")).toEqual(["fs.read(/etc/cron.d)", "fs.write(/etc/cron.d)"]));
 });

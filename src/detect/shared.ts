@@ -9,6 +9,7 @@ import {
   type Symbol as MorphSymbol,
   type Identifier,
   type TaggedTemplateExpression,
+  type Type,
 } from "ts-morph";
 import type { Capability } from "../capability.js";
 
@@ -267,6 +268,12 @@ export function evaluatesString(arg: Node | undefined): boolean {
     type.isStringLiteral() ||
     type.isTemplateLiteral()
   );
+}
+
+/** Whether a string can be given where `type` is expected: `string`, `any`, `unknown`, `{}`, or a union with one (lib.dom's `TimerHandler`). */
+export function admitsString(type: Type, at: Node): boolean {
+  const checker = at.getProject().getTypeChecker().compilerObject;
+  return checker.isTypeAssignableTo(checker.getStringType(), type.compilerType);
 }
 
 /** Strips parentheses, `as`, `!`, and `satisfies` to reach the expression underneath. */

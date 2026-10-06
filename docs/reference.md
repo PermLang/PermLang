@@ -82,7 +82,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `chown`, and `utimes`) change a file however it was opened, so they need
     `fs.write`. `process.chdir(dir)` needs `fs.read(dir)` and `fs.write(dir)`,
     because every relative path the program uses afterwards resolves inside
-    `dir`.
+    `dir`. `process.report.writeReport(file)` needs `fs.write(file)`, and
+    `module.enableCompileCache(dir)` needs `fs.read(dir)` and `fs.write(dir)`
+    (bare when they're called without a literal path).
   - `db`: **Prisma**. The table is the
     model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
     SQL (`$queryRaw`, `$executeRaw`, ...) needs bare `db.read` and `db.write`.
@@ -180,7 +182,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     (`const WS = WebSocket`), a subclass, `super(url)`, a `typeof WebSocket`
     parameter, or `Reflect.construct(WebSocket, ...)`;
   - browser APIs in indirect forms: `navigator.sendBeacon.call(...)`,
-    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`;
+    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`,
+    `Reflect.apply(setTimeout, window, ["code"])`, `self.importScripts(url)`;
   - calls through an interface or base class, which reach every first-party
     implementation (see [how calls are followed](#how-calls-are-followed));
   - `super()`, implicit constructors, instance field initializers, classes built
@@ -194,9 +197,14 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `import x = require()`, `require()`, and `import()`, including one whose
     specifier is a `const`, an `as const` property, or an enum member).
 - **Unverifiable code (PERM004).** Code whose effects can't be determined is
-  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
-  `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`, and
-  `importScripts()`), native code and hooks (`process.dlopen`,
+  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`
+  (and, in a program with lib.dom's timers, a handler that may be a string, such
+  as one typed `any`, `unknown`, or `TimerHandler`, and a timer used as a value
+  that may later be given one, as in `codes.forEach(setTimeout)`; a timer given
+  only functions, or Node's `promisify(setTimeout)`, runs no string),
+  `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`,
+  `importScripts()`, a service worker's `register()`, and a worklet's
+  `addModule()`), native code and hooks (`process.dlopen`,
   `crypto.setEngine`, `module.register`, `registerHooks`, `runMain`,
   `module.require`, `new Module()`), the inspector's `Session.post`,
   `require` used as a value, `process.binding()`,

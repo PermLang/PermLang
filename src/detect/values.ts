@@ -19,9 +19,9 @@
 // functions its call signatures declare.
 
 import { Node, SyntaxKind, type BindingElement, type CallExpression, type Identifier, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
-import type { AdapterIndex } from "../adapters.js";
+import { packageOf, type AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
-import { callText, containerName, isReflectApply, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
+import { admitsString, callText, containerName, isReflectApply, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 import { capabilitiesOf, constructorCapabilities, type Reach } from "./web.js";
 import { descendantsOfKind } from "../walk.js";
 
@@ -44,7 +44,8 @@ export function valueUses(sourceFile: SourceFile, adapters: AdapterIndex): Value
     const symbol = Node.isShorthandPropertyAssignment(parent) ? parent.getValueSymbol() : id.getSymbol();
     if (!symbol) continue;
     const invoked = invocation(site);
-    const capabilities = heldCapabilities(symbol, adapters, invoked) ?? (constructs ? constructorCapabilities(type, adapters) : []);
+    const use = invoked ?? { args: [], reach: valueReach(site) };
+    const capabilities = heldCapabilities(symbol, adapters, use) ?? (constructs ? constructorCapabilities(type, adapters) : []);
     if (capabilities.length === 0) continue;
     const node = invoked?.call ?? site;
     const call = invoked ? callText(invoked.call) : `${site.getText().replace(/\s+/g, " ")} as a value`;
@@ -55,7 +56,7 @@ export function valueUses(sourceFile: SourceFile, adapters: AdapterIndex): Value
 
 /** What the function a symbol names could touch, called with any arguments; see heldCapabilities. */
 export function functionCapabilities(symbol: MorphSymbol, adapters: AdapterIndex): Capability[] {
-  return heldCapabilities(symbol, adapters, undefined) ?? [];
+  return heldCapabilities(symbol, adapters, { args: [], reach: "value" }) ?? [];
 }
 
 // How many aliases are followed before giving up. Past it, what the chain holds is unknown.
@@ -68,7 +69,7 @@ const MAX_ALIASES = 32;
  * constructors. A chain of aliases that loops holds no function (reading it throws); one too
  * long to follow is unverifiable.
  */
-function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, invoked: Invocation | undefined, seen = new Set<MorphSymbol>()): Capability[] | undefined {
+function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, use: Use, seen = new Set<MorphSymbol>()): Capability[] | undefined {
   const target = resolveAlias(symbol);
   if (seen.has(target)) return undefined;
   if (seen.size >= MAX_ALIASES) return [{ name: UNVERIFIABLE }];
@@ -76,7 +77,7 @@ function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, invoked: 
   for (const declaration of target.getDeclarations()) {
     if (Node.isClassDeclaration(declaration) || Node.isInterfaceDeclaration(declaration)) continue;
     const held = aliasedSymbol(declaration);
-    const capabilities = held ? heldCapabilities(held, adapters, invoked, seen) : declaredCapabilities(declaration, adapters, invoked);
+    const capabilities = held ? heldCapabilities(held, adapters, use, seen) : declaredCapabilities(declaration, adapters, use);
     if (capabilities && capabilities.length > 0) return capabilities;
   }
   return undefined;
@@ -134,8 +135,8 @@ function isOpaque(declaration: Node): boolean {
 }
 
 /** What reaching a declaration touches; for an opaque one, what the functions its type can be called as touch. */
-function declaredCapabilities(declaration: Node, adapters: AdapterIndex, invoked: Invocation | undefined): Capability[] {
-  const reach = (d: Node) => capabilitiesOf(d, invoked?.args ?? [], adapters, invoked?.reach ?? "value");
+function declaredCapabilities(declaration: Node, adapters: AdapterIndex, use: Use): Capability[] {
+  const reach = (d: Node) => capabilitiesOf(d, use.args, adapters, use.reach);
   const capabilities = reach(declaration);
   if (capabilities.length > 0 || !isOpaque(declaration)) return capabilities;
   // `require` is declared as a variable of type NodeJS.Require, whose call signature loads modules.
@@ -147,10 +148,42 @@ function declaredCapabilities(declaration: Node, adapters: AdapterIndex, invoked
   return [];
 }
 
-interface Invocation {
-  call: CallLike;
+/** How a function is reached: the arguments it's called with, when they're known. */
+interface Use {
   args: Node[];
   reach: Reach;
+}
+
+interface Invocation extends Use {
+  call: CallLike;
+}
+
+/**
+ * How a function used as a value will be called: with anything, or, where whatever receives
+ * it only ever passes it a function first (`[handler].forEach(setTimeout)`, or Node's
+ * `promisify(setTimeout)`, which uses its own promise version), with functions.
+ */
+function valueReach(site: Node): Reach {
+  const parent = site.getParent();
+  if (Node.isCallExpression(parent) && parent.getArguments()[0] === site && isNodePromisify(parent)) return "value given functions";
+  const contextual = Node.isExpression(site) ? site.getContextualType()?.getNonNullableType() : undefined;
+  const signatures = contextual?.getCallSignatures() ?? [];
+  const givenFunctions = signatures.length > 0 && signatures.every((signature) => {
+    const [first] = signature.getParameters();
+    const declaration = first?.getValueDeclaration();
+    if (!first || !declaration) return first === undefined;
+    const type = first.getTypeAtLocation(site);
+    // A rest parameter (`...args: unknown[]`) passes its elements.
+    const passed = Node.isParameterDeclaration(declaration) && declaration.isRestParameter() ? type.getArrayElementType() : type;
+    return passed !== undefined && !admitsString(passed, site);
+  });
+  return givenFunctions ? "value given functions" : "value";
+}
+
+/** Node's util.promisify. */
+function isNodePromisify(call: CallExpression): boolean {
+  const declaration = resolvedDeclaration(call);
+  return Node.isFunctionDeclaration(declaration) && declaration.getName() === "promisify" && packageOf(declaration) === "util";
 }
 
 /**

@@ -155,11 +155,76 @@ describe("web workers", () => {
       "export function load() { importScripts(\"https://cdn.example/lib.js\"); }",
       "/** @perm net(cdn.example) */",
       "export function get() { return self.fetch(\"https://cdn.example/data.json\"); }",
+      "/** @perm net(cdn.example) */",
+      "export function loadSelf() { self.importScripts(\"https://cdn.example/lib.js\"); }",
+      "/** @perm net(cdn.example) */",
+      "export function loadAlias() { const i = self.importScripts; i(\"https://cdn.example/lib.js\"); }",
+      "/** @perm net(cdn.example) */",
+      "export function loadDestructured() { const { importScripts: i } = self; [\"https://cdn.example/lib.js\"].forEach(i); }",
+      "/** @perm net(cdn.example) */",
+      "export function register() { return navigator.serviceWorker.register(\"/sw.js\"); }",
     ].join("\n"),
   });
 
   it("treats importScripts as code it can't see", () => expect(errors(report, "load")).toEqual(["PERM004 unverifiable"]));
   it("still reads self.fetch's host", () => expect(errors(report, "get")).toEqual([]));
+  it("matches importScripts as the worker scope's method too", () => {
+    for (const fn of ["loadSelf", "loadAlias", "loadDestructured"]) expect(errors(report, fn), fn).toEqual(["PERM004 unverifiable"]);
+  });
+  it("treats registering a service worker as code it can't see", () => expect(errors(report, "register")).toEqual(["PERM004 unverifiable"]));
+});
+
+// Without Node's types, setTimeout is only the browser's, which evaluates a string handler.
+describe("browser timers, without Node's types", () => {
+  const report = check({ lib: ["ES2022", "DOM"], types: [] }, {
+    "timers.ts": [
+      "/** @perm env(MODE) */",
+      "export function forEachCode(codes: string[]) { codes.forEach(setTimeout); }",
+      "/** @perm env(MODE) */",
+      "export function thenCode(code: string) { return Promise.resolve(code).then(setTimeout); }",
+      "/** @perm env(MODE) */",
+      "export function reflectCode() { Reflect.apply(setTimeout, window, [\"alert(1)\"]); }",
+      "/** @perm env(MODE) */",
+      "export function stored() { return { later: setTimeout }; }",
+      "/** @perm env(MODE) */",
+      "export function handlerType(h: TimerHandler) { setTimeout(h, 0); }",
+      "/** @perm env(MODE) */",
+      "export function handlerAny(body: string) { setTimeout(JSON.parse(body).code, 0); }",
+      "/** @perm env(MODE) */",
+      "export function handlerUnknown(h: unknown) { setTimeout(h as TimerHandler, 0); }",
+      "/** @perm env(MODE) */",
+      "export function handlerUnion(h: string | (() => void)) { window.setTimeout(h, 0); }",
+      "/** @perm env(MODE) */",
+      "export function functions(h: () => void, f: Function) { setTimeout(h, 0); setTimeout(f, 0); [h].forEach(setTimeout); setTimeout.call(window, h, 1); Reflect.apply(setTimeout, window, [h, 1]); return Promise.resolve(h).then(setInterval); }",
+    ].join("\n"),
+  });
+
+  it("treats a timer that may be given a string as unverifiable", () => {
+    for (const fn of ["forEachCode", "thenCode", "reflectCode", "stored", "handlerType", "handlerAny", "handlerUnknown", "handlerUnion"]) {
+      expect(errors(report, fn), fn).toEqual(["PERM004 unverifiable"]);
+    }
+  });
+  it("leaves timers given only functions alone", () => expect(errors(report, "functions")).toEqual([]));
+});
+
+// Browser APIs that load a script the checker can't see, like a Worker.
+describe("script loaders", () => {
+  const report = check({ lib: ["ES2022", "DOM"], types: [] }, {
+    "app.ts": [
+      "/** @perm env(MODE) */",
+      "export function worklet(ctx: AudioContext) { return ctx.audioWorklet.addModule(\"/w.js\"); }",
+      "/** @perm env(MODE) */",
+      "export function register() { return navigator.serviceWorker.register(\"/sw.js\"); }",
+      "/** @perm env(MODE) */",
+      "export function lookalikes() { const registry = { register: (x: string) => x, addModule: (x: string) => x }; return [registry.register(\"/sw.js\"), registry.addModule(\"/w.js\"), navigator.serviceWorker.getRegistrations()]; }",
+    ].join("\n"),
+  });
+
+  it("treats a worklet module and a service worker as unverifiable", () => {
+    expect(errors(report, "worklet")).toEqual(["PERM004 unverifiable"]);
+    expect(errors(report, "register")).toEqual(["PERM004 unverifiable"]);
+  });
+  it("leaves look-alikes alone", () => expect(errors(report, "lookalikes")).toEqual([]));
 });
 
 describe("a project's own declarations", () => {
