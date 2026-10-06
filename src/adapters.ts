@@ -27,7 +27,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Node } from "ts-morph";
 import { BUILTIN_VOCABULARY, CAPABILITY_NAME, UNVERIFIABLE, parsePermList, type Capability } from "./capability.js";
-import { containerName, hostOf, literalString, nodeRequestHost, nodeSocketHost } from "./detect/shared.js";
+import { containerName, hostOf, literalString, nodeRequestHost, nodeSessionHost, nodeSocketHost } from "./detect/shared.js";
 import { printable } from "./report.js";
 
 interface Template {
@@ -238,10 +238,12 @@ function instantiate(t: Template, args: readonly Node[], pkg: string): Capabilit
   if (t.arg === undefined || typeof t.arg === "string") return t.arg === undefined ? { name: t.name } : { name: t.name, arg: t.arg };
   const { kind, index } = t.arg;
   // {host:N+}: Node's http.request(url, options), where options can replace the URL's host.
+  // http2.connect(authority, options) passes its options on to net or tls, where their `host` wins.
   const value =
     kind === "arg" ? literalString(args[index])
     : t.arg.overridable ? nodeRequestHost(args, index)
     : NODE_SOCKET_PACKAGES.has(pkg) ? nodeSocketHost(args, index)
+    : pkg === "http2" ? nodeSessionHost(args, index)
     : hostOf(args[index]);
   return value === undefined ? { name: t.name, dynamic: true } : { name: t.name, arg: value };
 }

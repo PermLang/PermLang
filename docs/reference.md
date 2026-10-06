@@ -48,14 +48,24 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **All v0.1 capabilities.**
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
-    (`const env = process.env; env.KEY`). Spreading or enumerating the
-    environment needs bare `env`. `process.env` (and `(process as any).env`) is
+    (`const env = process.env; env.KEY`), and patterns that take the
+    environment out of what holds it (`const { env: { KEY } } = process`,
+    `const { process: { env: { KEY } } } = globalThis`,
+    `({ env: { KEY: k } } = process)`, a parameter
+    `({ env: { KEY } }: NodeJS.Process)`). Spreading or enumerating the
+    environment, a rest element, or a computed key needs bare `env`.
+    `process.env` (and `(process as any).env`) is
     read the same way without Node's types, or with a project's own
-    `declare const process`; a `process`
+    `declare const process`, also as `globalThis.process.env`,
+    `global.process.env`, `process["env"]`, or through `const p = process` or
+    `const { env } = process`, whose uses are followed (an untyped
+    `const env = process.env` reads every variable); a `process`
     that doesn't resolve also gets a PERM007 warning, since its other APIs
     can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
-    `env(KEY)`, except what Vite sets itself (`MODE`, `DEV`, `PROD`, `SSR`,
-    `BASE_URL`). `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
+    `env(KEY)`, also as `import.meta["env"]`, through `const m = import.meta`,
+    or destructured (`const { env } = import.meta`), except what Vite sets
+    itself (`MODE`, `DEV`, `PROD`, `SSR`, `BASE_URL`).
+    `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
     (`./.env` by default).
   - `exec`: `child_process` (`exec`, `execFile`, `spawn`, `fork`, and their
     `Sync` forms), `process.kill`, `process.execve`, and `cluster.fork` /
@@ -67,22 +77,42 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     and ignores a `url` option; after a URL, an options `hostname` replaces the
     URL's host but a `host` doesn't (Node's URL parsing sets `hostname`); `net`
     and `tls` connect to `host` (or `connect(port, host)`) and ignore
-    `hostname`. Other libraries' options must name one host in all of `url`,
-    `hostname`, and `host`. A spread, an accessor, a computed key, or a
+    `hostname`. `tls.connect(port, host, options)` merges the options over the
+    host argument, so their `host` wins: options that set a different one (or
+    may, with a spread or computed key) need bare `net`. `http2.connect(url,
+    options)` hands its options to `net` or `tls` the same way, so a `host`,
+    `path`, `socket`, `lookup`, or `createConnection` there, or options that
+    aren't written out, need bare `net`. An `http` / `https` request's `agent`
+    makes the connection, so any agent other than none (`false`, `undefined`) or
+    Node's own `new http.Agent({...})` / `new https.Agent({...})` without a
+    spread or redirecting option (written in place, or held by a `const` the
+    program never changes) needs bare `net`: a subclass or an agent passed in
+    could connect anywhere. `fetch`'s `dispatcher` option (Node's undici agent)
+    does the same, so options that set one, may set one, or aren't written out
+    where they're used need bare `net`; ordinary written-out options (`method`,
+    `headers`, `body`, ...) keep the URL's host. Other libraries' options must
+    name one host in all of `url`, `hostname`, and `host`. A spread, an
+    accessor, a computed key, or a
     `socketPath`, `lookup`, or `createConnection` option (or a `path` for `net`
     and `tls`) could send the connection anywhere, so it needs bare `net`. So do
     options that aren't written out where they're used (a variable, even one that
     may be `undefined`), and a first argument to `net.connect` or `tls.connect`
-    that isn't a port number or written-out options.
-  - `fs.read` / `fs.write`: `readFile` and `createReadStream` with a writing
-    `flag` / `flags` option (`"w"`, `"a+"`, or one that can't be read) write the
-    file, and used as values they could be called with any flags, as `open` can.
+    that isn't a port number or written-out options. A callback where options
+    could be (`net.connect(port, host, onConnect)`) isn't options.
+  - `fs.read` / `fs.write`: `readFile` with a writing `flag` option, and
+    `createReadStream` (or `new fs.ReadStream`) with a writing `flags` option
+    (`"w"`, `"a+"`, or one that can't be read), write the file. As Node does,
+    each reads only its own name and ignores the other (`readFile`'s `flags`, a
+    stream's `flag`). Used as values, they could be called with any flags, as
+    `open` can.
     `new fs.Utf8Stream({ dest })`, `ReadStream`, and `WriteStream` open their
     path. `fchmod`, `fchown`, and `futimes` (and a `FileHandle`'s `chmod`,
     `chown`, and `utimes`) change a file however it was opened, so they need
     `fs.write`. `process.chdir(dir)` needs `fs.read(dir)` and `fs.write(dir)`,
     because every relative path the program uses afterwards resolves inside
-    `dir`.
+    `dir`. `process.report.writeReport(file)` needs `fs.write(file)`, and
+    `module.enableCompileCache(dir)` needs `fs.read(dir)` and `fs.write(dir)`
+    (bare when they're called without a literal path).
   - `db`: **Prisma**. The table is the
     model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
     SQL (`$queryRaw`, `$executeRaw`, ...) needs bare `db.read` and `db.write`.
@@ -154,20 +184,35 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   what the function reaches.
 - **Adversarial coverage.** Tricks that try to hide access are caught:
   - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
-    `paths.forEach(unlinkSync)`, `{ fetch }`. `send.call(thisArg, url)` and
-    `send.apply(thisArg, [url])` are checked as calls, with their arguments. Calls
-    through a `const` alias resolve to the original; the alias used as a value
+    `paths.forEach(unlinkSync)`, `{ fetch }`, also inside what a module exports
+    (`export default [execSync]`, `export default { pick: () => execSync }`;
+    `export default fetch` on its own just exports the function, and calls
+    through the import are checked). `send.call(thisArg, url)`,
+    `send.apply(thisArg, [url])`, `Reflect.apply(send, thisArg, [url])`, and
+    `send.bind(thisArg, url)` (which fixes `url` for every later call) are
+    checked as calls, with their arguments. Calls through a `const` alias resolve
+    to the original; the alias used as a value
     (`const run = execSync; run.call(null, cmd)`, `Reflect.apply(run, ...)`,
-    `urls.map(get)` with `const get = fetch`) is a use of what it holds. Testing
+    `urls.map(get)` with `const get = fetch`) is a use of what it holds, and so
+    is a name destructured from a module, a global, or a parameter
+    (`const { execSync: run } = cp`, `const { fetch } = globalThis`,
+    `const { promises: { writeFile } } = fs`, `({ exec }: typeof cp) => ...`).
+    A chain of more than 32 aliases is unverifiable. A value whose code isn't in
+    sight is judged by its type: `require` used as a value
+    (`require.call(null, name)`, `["x"].map(require)`, `load(require)`), or what
+    `createRequire()` returns, is unverifiable; `require.resolve()`,
+    `require.main`, `require.cache`, and `typeof require` aren't uses. Testing
     whether a function exists (`if (globalThis.fetch)`, `!WebSocket`,
-    `x instanceof WebSocket`, `if (ready && window.WebSocket)`) isn't a use, but
+    `Boolean(globalThis.fetch)`, `x instanceof WebSocket`,
+    `if (ready && window.WebSocket)`) isn't a use, but
     picking one with `&&`, `||`, or `??` outside a condition
     (`const WS = window.WebSocket || Fallback`) is;
   - capability classes reached indirectly: through an alias
     (`const WS = WebSocket`), a subclass, `super(url)`, a `typeof WebSocket`
     parameter, or `Reflect.construct(WebSocket, ...)`;
   - browser APIs in indirect forms: `navigator.sendBeacon.call(...)`,
-    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`;
+    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`,
+    `Reflect.apply(setTimeout, window, ["code"])`, `self.importScripts(url)`;
   - calls through an interface or base class, which reach every first-party
     implementation (see [how calls are followed](#how-calls-are-followed));
   - `super()`, implicit constructors, instance field initializers, classes built
@@ -181,12 +226,20 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `import x = require()`, `require()`, and `import()`, including one whose
     specifier is a `const`, an `as const` property, or an enum member).
 - **Unverifiable code (PERM004).** Code whose effects can't be determined is
-  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
-  `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`, and
-  `importScripts()`), native code and hooks (`process.dlopen`,
+  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`
+  (and, in a program with lib.dom's timers, a handler that may be a string, such
+  as one typed `any`, `unknown`, or `TimerHandler`, and a timer used as a value
+  that may later be given one, as in `codes.forEach(setTimeout)`; a timer given
+  only functions, Node's `promisify(setTimeout)`, and a copy made with
+  `setTimeout.bind(window)` and kept in a `const`, whose calls are checked
+  where they're made, run no string),
+  `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`,
+  `importScripts()`, a service worker's `register()`, and a worklet's
+  `addModule()`), native code and hooks (`process.dlopen`,
   `crypto.setEngine`, `module.register`, `registerHooks`, `runMain`,
   `module.require`, `new Module()`), the inspector's `Session.post`,
-  `process.binding()`, `process.getBuiltinModule(name)` with a computed name (a
+  `require` used as a value, `process.binding()`,
+  `process.getBuiltinModule(name)` with a computed name (a
   literal name is like importing the module), computed calls on sensitive
   objects (`fs[method]()`, `globalThis[name]()`) or behind an index signature
   (`table[name]()`), loading a module whose result can't be checked (see
@@ -378,9 +431,15 @@ so the list can't go stale.
     `keys`; read or written with a computed key, also by `Reflect.get`; or
     given to a callback parameter typed `any` or `unknown`, as in
     `Promise.resolve(cp).then((m: any) => ...)`; or given as `this` to a function
-    of the project's own, as in `run.call(cp)`) is unverifiable (PERM004).
+    of the project's own, as in `run.call(cp)`; copied with a spread,
+    `{ ...cp }`; or passed to a parameter of the project's own typed with a type
+    parameter or a mapped type, as in `function run<T>(m: T)` or
+    `function run(m: Partial<typeof cp>)`) is unverifiable (PERM004).
     Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
-    checked through that parameter like the module itself.
+    checked through that parameter like the module itself. A module's function
+    or class called past a cast returns `any` too, so when what it returns or
+    builds reaches a capability (`new (pg as any).Client()`,
+    `(module as any).createRequire(file)`), the call is unverifiable.
   - A default import of a capability module that the compiler options give no
     default export (`import cp from "node:child_process"` with
     `allowSyntheticDefaultImports` off, as under `"module": "commonjs"` without
@@ -400,7 +459,8 @@ so the list can't go stale.
   `function handle(m: any)`), since only callbacks written in place are
   matched to what they're given. A module that's passed on from somewhere other
   than its own name (an array element or an object's property, as in
-  `use(modules[0])`) isn't followed either. Imports
+  `use(modules[0])`) isn't followed either, nor is an object holding one that's
+  then cast (`const holder = { cp }; (holder as any).cp.exec(cmd)`). Imports
   whose types can't be found, including packages shimmed with
   `declare module "x";`, are reported (PERM007), whether reached by `import`,
   `import x = require()`, or a literal `import()`. A default import of a
@@ -431,19 +491,39 @@ so the list can't go stale.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
 - `as const` objects and enum members are trusted as fixed values, though code
   can change them at runtime. Every reference to one is checked for a write (an
-  assignment, `delete`, `++`, or destructuring into a member; a cast; or
-  `Object.assign`, `Object.defineProperty`, `Reflect.set`, and the like with it
-  as the target), and values read from a written object are unknown. An object
-  passed to a function that writes to it, or stored in another variable first,
-  isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)).
-  Treating every such value as unknown instead would turn most uses of
-  constants into bare capabilities.
+  assignment, `delete`, `++`, or destructuring into a member; a cast; or being
+  the first argument of `Object.assign`, `Object.defineProperty`,
+  `Object.defineProperties`, `Object.setPrototypeOf`, `Reflect.set`,
+  `Reflect.defineProperty`, `Reflect.deleteProperty`, or
+  `Reflect.setPrototypeOf`, matched by declaration however they're reached:
+  `Object["assign"]`, `const { assign } = Object`, `globalThis.Object.assign`,
+  `.call`, `.apply`, `Reflect.apply`, or a spread list of arguments), and so is
+  an `as const` object's own method that writes to `this`. Values read from a
+  written object are unknown. A plain exported `const`, enum, or `as const`
+  object is also unknown when the object holding the exports is written: its
+  namespace (`namespace Api { export const url = ... }` with
+  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS, the module's
+  `exports` object reached by a namespace import (`import * as config` with
+  `Object.assign(config, ...)`); an ES module's namespace can't be written. An
+  object passed to a function that writes to it, or stored in another variable
+  first, isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)),
+  and neither are a CommonJS module's exports written through `require()`,
+  `module.exports`, or a namespace re-exported from another file
+  (`export * as config from "./config"`). Treating every such value as unknown
+  instead would turn most uses of constants into bare capabilities.
 
 Other gaps, not yet in fixtures:
 
 - Third-party packages without an adapter: what they touch is trusted. They are
   listed in every report and warned about (PERM006; see below).
 - A `ProcessEnv` received as a parameter typed as a plain object.
+- A library client's options that route a request through something else
+  aren't read: axios's `proxy`, `httpAgent`, and `httpsAgent`, node-fetch's
+  `agent`, or a `dispatcher` given to the `undici` package's own `request()` or
+  `fetch()`. The host is taken from the URL. (Node's `http`, `https`, `http2`,
+  `tls`, and the global `fetch` read theirs; see `net` above.) An `http.Agent`
+  held by a `const` is trusted unless the program writes to that `const` where
+  it's named; one passed to a function that changes it isn't followed.
 - The browser loading a resource for the page (an image's `src`, a script or
   stylesheet element, a CSS `url()`) or leaving it (`location.href = url`,
   `window.open(url)`, a form submission), which reaches the network without a
@@ -628,7 +708,11 @@ where it lands depends on where the program runs. On Windows, a drive (`C:\`), a
 network share (`\\server\share`), and a drive-relative path (`C:x`, which is
 relative to drive C's own working directory) are each separate roots, so
 `fs.write(/evil)` doesn't cover `\\evil\share\x`, and `fs.read(.)` doesn't cover
-`C:..\x`. Drive letters match in any case.
+`C:..\x`. Drive letters match in any case. A network path is covered only when
+it's inside both as Windows reads it, where `..` can't climb out of the share
+(`\\server\share\..\x` is `\\server\share\x`), and as other systems read it
+(`//server/share/../x` is `/server/x`): `fs.write(//server/x)` doesn't cover
+`\\server\share\..\x\f`.
 
 ## Data-flow rules
 
