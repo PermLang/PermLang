@@ -120,6 +120,14 @@ describe("import.meta.env", () => {
       "export function whole() { return { ...import.meta.env }; }",
       "/** @perm env(VITE_API_URL) */",
       "export function alias() { const env = import.meta.env; return env.VITE_TOKEN; }",
+      "/** @perm env(VITE_API_URL) */",
+      "export function metaAlias() { const m = import.meta; return m.env.VITE_TOKEN; }",
+      "/** @perm env(VITE_API_URL) */",
+      "export function metaBracket() { return import.meta[\"env\"].VITE_TOKEN; }",
+      "/** @perm env(VITE_API_URL) */",
+      "export function metaDestructured() { const { env } = import.meta; return env.VITE_TOKEN; }",
+      "/** @perm env(VITE_API_URL) */",
+      "export function metaNested() { const { env: { VITE_TOKEN, MODE } } = import.meta; return [VITE_TOKEN, MODE]; }",
     ].join("\n"),
   };
   // What vite/client declares.
@@ -144,8 +152,48 @@ describe("import.meta.env", () => {
       it("follows an alias, or reads every variable through one it can't follow", () => {
         expect(errors(report, "alias")).toEqual([name === "without types" ? "PERM001 env" : "PERM001 env(VITE_TOKEN)"]);
       });
+
+      it("reads through an alias of import.meta, a quoted `env`, and destructuring", () => {
+        for (const fn of ["metaAlias", "metaBracket", "metaDestructured", "metaNested"]) expect(errors(report, fn), fn).toEqual(["PERM001 env(VITE_TOKEN)"]);
+      });
     });
   }
+});
+
+describe("process without Node's types, reached another way", () => {
+  const report = check({ lib: ["ES2022"], types: [] }, {
+    "app.ts": [
+      "/** @perm env(A) */",
+      "export function viaGlobal() { return globalThis.process.env.B; }",
+      "/** @perm env(A) */",
+      "export function destructured() { const { env } = process; return env.C; }",
+      "/** @perm env(A) */",
+      "export function aliased() { const p = process; return p.env.D; }",
+      "/** @perm env(A) */",
+      "export function bracket() { return process[\"env\"].E; }",
+      "/** @perm env(A) */",
+      "export function renamed() { const { env: e } = globalThis.process; return [e.F, e]; }",
+      "/** @perm env(A) */",
+      "export function nested() { const { env: { G } } = process; return G; }",
+      "/** @perm env(A) */",
+      "export function lookalikes(o: { env: { H: string } }) { const { env } = o; const local = { env: { I: \"1\" } }; return [env.H, local.env.I]; }",
+    ].join("\n"),
+  });
+  const sorted = (fn: string) => errors(report, fn).sort();
+
+  it("reads variables by name", () => {
+    expect(sorted("viaGlobal")).toEqual(["PERM001 env(B)"]);
+    expect(sorted("destructured")).toEqual(["PERM001 env(C)"]);
+    expect(sorted("aliased")).toEqual(["PERM001 env(D)"]);
+    expect(sorted("bracket")).toEqual(["PERM001 env(E)"]);
+    expect(sorted("renamed")).toEqual(["PERM001 env", "PERM001 env(F)"]);
+    expect(sorted("nested")).toEqual(["PERM001 env(G)"]);
+    expect(sorted("lookalikes")).toEqual([]);
+  });
+
+  it("warns that the rest of process can't be checked, at globalThis.process too", () => {
+    expect(report.diagnostics.filter((d) => d.code === "PERM007").map((d) => `${d.capability} ${path.basename(d.file)}:${d.line}`)).toEqual(["node:process app.ts:2"]);
+  });
 });
 
 describe("web workers", () => {

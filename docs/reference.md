@@ -48,14 +48,24 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **All v0.1 capabilities.**
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
-    (`const env = process.env; env.KEY`). Spreading or enumerating the
-    environment needs bare `env`. `process.env` (and `(process as any).env`) is
+    (`const env = process.env; env.KEY`), and patterns that take the
+    environment out of what holds it (`const { env: { KEY } } = process`,
+    `const { process: { env: { KEY } } } = globalThis`,
+    `({ env: { KEY: k } } = process)`, a parameter
+    `({ env: { KEY } }: NodeJS.Process)`). Spreading or enumerating the
+    environment, a rest element, or a computed key needs bare `env`.
+    `process.env` (and `(process as any).env`) is
     read the same way without Node's types, or with a project's own
-    `declare const process`; a `process`
+    `declare const process`, also as `globalThis.process.env`,
+    `global.process.env`, `process["env"]`, or through `const p = process` or
+    `const { env } = process`, whose uses are followed (an untyped
+    `const env = process.env` reads every variable); a `process`
     that doesn't resolve also gets a PERM007 warning, since its other APIs
     can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
-    `env(KEY)`, except what Vite sets itself (`MODE`, `DEV`, `PROD`, `SSR`,
-    `BASE_URL`). `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
+    `env(KEY)`, also as `import.meta["env"]`, through `const m = import.meta`,
+    or destructured (`const { env } = import.meta`), except what Vite sets
+    itself (`MODE`, `DEV`, `PROD`, `SSR`, `BASE_URL`).
+    `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
     (`./.env` by default).
   - `exec`: `child_process` (`exec`, `execFile`, `spawn`, `fork`, and their
     `Sync` forms), `process.kill`, `process.execve`, and `cluster.fork` /
