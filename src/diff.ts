@@ -127,7 +127,9 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
       diff.unsafeChanged.length > 0 ? `**${plural(diff.unsafeChanged.length, "changed <code>@perm-unsafe</code> reason")}**` : "",
       diff.unsafeRemoved.length > 0 ? plural(diff.unsafeRemoved.length, "removed <code>@perm-unsafe</code> override") : "",
     ].filter(Boolean);
-    top.push(counts.join(" · "), "");
+    // A summary that only names the one section right below it would say the same thing twice.
+    const onlyNamesItsSection = counts.length === 1 && (counts[0] === "**Check settings changed**" || counts[0] === "**New code PermLang can't check**");
+    if (!onlyNamesItsSection) top.push(counts.join(" · "), "");
   }
   const blocks: Block[] = [{ head: top }];
 
