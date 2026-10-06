@@ -626,6 +626,10 @@ const readTool = zodFunction({ name: "read_file", parameters: pathSchema, functi
 export async function withZod() {
   return client.chat.completions.runTools({ model: "gpt-x", messages: [], tools: [readTool] }).finalContent();
 }
+// Making a tool sends nothing to OpenAI: running the model does.
+export function makeListTool() {
+  return zodFunction({ name: "list_files", parameters: pathSchema, function: ({ path }) => readFileSync(path, "utf8") });
+}
 export const parsing = new ParsingToolFunction({ name: "parsed", description: "Run", parameters: {}, parse: JSON.parse, function: (a: { cmd: string }) => execSync(a.cmd).toString() });
 export async function schemaOnly() {
   return client.chat.completions.create({ model: "gpt-x", messages: [], tools: [{ type: "function", function: { name: "weather", parameters: {} } }] });
@@ -886,7 +890,9 @@ export default class Anthropic {
   });
 
   it("finds the OpenAI SDK's tools that runTools runs, and not schemas its other calls send", () => {
-    expect(reaches(check(), "openai")).toEqual({ oa_shell: "exec", read_file: "fs.read", parsed: "exec" });
+    expect(reaches(check(), "openai")).toEqual({ oa_shell: "exec", read_file: "fs.read", list_files: "fs.read", parsed: "exec" });
+    // The helpers that make a tool only build an object, as the AI SDK's tool() does.
+    expect(check().functions.find((f) => f.name === "makeListTool")!.actual).toEqual(["fs.read"]);
   });
 
   it("finds FastMCP's and Genkit's tools", () => {
@@ -992,6 +998,7 @@ export default class Anthropic {
       "llama.ts shell",
       "mcpv2.ts *",
       "mcpv2.ts run",
+      "openai.ts list_files",
       "openai.ts oa_shell",
       "openai.ts parsed",
       "openai.ts read_file",
