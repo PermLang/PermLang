@@ -241,6 +241,33 @@ const caught: Record<string, string> = {
   i35_project_this: "import * as cp from \"node:child_process\";\nfunction run(this: unknown) { return (this as any).execSync(\"id\"); }\nexport function t() { return run.call(cp); }",
   i36_cast_function_this: "import * as cp from \"node:child_process\";\ndeclare const handler: (this: unknown) => void;\nexport function t() { return (handler as any).call(cp); }",
   j06_library_this: "import * as fs from \"node:fs\";\nexport function t() { return fs.readFileSync.bind(fs); }",
+  // Re-verification (detectors): capability functions destructured from a module or global, then used as values.
+  rd01_destructured_call: "import * as cp from \"node:child_process\";\nexport function t() { const { execSync: run } = cp; return run.call(null, \"id\"); }",
+  rd02_destructured_promisify: "import * as cp from \"node:child_process\";\nimport { promisify } from \"node:util\";\nexport function t() { const { exec } = cp; return promisify(exec)(\"id\"); }",
+  rd03_destructured_global_map: "export function t(urls: string[]) { const { fetch } = globalThis; return urls.map(fetch); }",
+  rd04_destructured_nested: "import * as fs from \"node:fs\";\nexport function t() { const { promises: { writeFile: w } } = fs; return w.call(null, \"/etc/x\", \"y\"); }",
+  rd05_destructured_parameter: "import * as cp from \"node:child_process\";\nexport function t({ execSync: run }: typeof cp) { return [\"id\"].map(run); }",
+  rd06_destructured_for_each: "import * as fs from \"node:fs\";\nexport function t(ps: string[]) { const { unlinkSync } = fs; ps.forEach(unlinkSync); }",
+  rd07_destructured_chdir_call: "export function t() { const { chdir } = process; chdir.call(process, \"/etc/cron.d\"); }",
+  rd08_destructured_then: "export function t(u: string) { const { fetch } = globalThis; return Promise.resolve(u).then(fetch); }",
+  rd09_destructured_assignment: "import * as cp from \"node:child_process\";\nexport function t() { let run: typeof cp.execSync; ({ execSync: run } = cp); return [\"id\"].map(run); }",
+  // require (or what createRequire returns) used as a value loads modules nothing traces.
+  rd10_require_call: "export function t() { return require.call(null, \"child_process\").exec(\"ls\"); }",
+  rd11_require_apply: "export function t() { return require.apply(null, [\"child_process\"]).exec(\"ls\"); }",
+  rd12_require_map: "export function t() { return [\"child_process\"].map(require)[0].exec(\"ls\"); }",
+  rd13_require_passed: "function load(r: (id: string) => any) { return r(\"child_process\"); }\nexport function t() { return load(require).exec(\"ls\"); }",
+  rd14_require_reflect: "export function t() { return Reflect.apply(require, null, [\"child_process\"]).execSync(\"id\"); }",
+  rd15_create_require_reflect: "import { createRequire } from \"node:module\";\nconst load = createRequire(__filename);\nexport function t() { return Reflect.apply(load, null, [\"child_process\"]).exec(\"ls\"); }",
+  rd16_require_then: "export function t() { return Promise.resolve(\"child_process\").then(require); }",
+  // Reflect.apply with a written-out list is a call with those arguments, like `.apply`.
+  rd17_reflect_apply_arguments: "export function t() { Reflect.apply(process.chdir, process, [\"/etc/cron.d\"]); }",
+  // A capability function inside what a module exports by default is used there, as in any other expression.
+  rd20_export_default_array: "import { execSync } from \"node:child_process\";\nexport default [execSync];",
+  rd21_export_default_arrow: "import { execSync } from \"node:child_process\";\nexport default { pick: () => execSync };",
+  rd22_export_default_map: "import { execSync } from \"node:child_process\";\nexport default new Map([[\"run\", execSync]]);",
+  // A chain of const aliases too long to follow is unverifiable, not nothing.
+  rd25_long_alias_chain: "import { execSync } from \"node:child_process\";\nconst a1 = execSync; const a2 = a1; const a3 = a2; const a4 = a3; const a5 = a4; const a6 = a5;\nconst a7 = a6; const a8 = a7; const a9 = a8; const a10 = a9; const a11 = a10; const a12 = a11;\nconst a13 = a12; const a14 = a13; const a15 = a14; const a16 = a15; const a17 = a16; const a18 = a17;\nconst a19 = a18; const a20 = a19; const a21 = a20; const a22 = a21; const a23 = a22; const a24 = a23;\nconst a25 = a24; const a26 = a25; const a27 = a26; const a28 = a27; const a29 = a28; const a30 = a29;\nconst a31 = a30; const a32 = a31; const a33 = a32; const a34 = a33; const a35 = a34;\nexport function t() { return [\"id\"].map(a35); }",
+  rd26_alias_chain_eleven: "import { execSync } from \"node:child_process\";\nconst a1 = execSync; const a2 = a1; const a3 = a2; const a4 = a3; const a5 = a4;\nconst a6 = a5; const a7 = a6; const a8 = a7; const a9 = a8; const a10 = a9; const a11 = a10;\nexport function t() { return a11.call(null, \"id\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -310,6 +337,14 @@ const silent: Record<string, string> = {
   fp25_reflect_get_reads: "export function t(k: string) { return [Reflect.get(globalThis, \"__APP__\"), Reflect.get(window, k)]; }",
   fp26_module_constant: "import * as fs from \"node:fs\";\nexport function t() { return fs.constants.F_OK; }",
   fp27_then_any_harmless: "export function t() { return Promise.resolve(1).then((n: any) => n + 1); }",
+  // Re-verification (detectors): look-alikes of the newly caught forms.
+  rd_fp01_destructured_local: "const tools = { fetch: (id: string) => id, exec: (c: string) => c };\nexport function t(ids: string[]) { const { fetch, exec } = tools; return ids.map(fetch).concat(ids.map(exec)); }",
+  rd_fp02_destructured_pure_module: "import * as path from \"node:path\";\nexport function t(ps: string[]) { const { normalize } = path; return ps.map(normalize); }",
+  rd_fp03_destructured_constant: "import * as fs from \"node:fs\";\nexport function t() { const { constants: { F_OK } } = fs; return F_OK; }",
+  rd_fp10_require_members: "export function t() { return [require.resolve(\"node:path\"), require.main === module, Object.keys(require.cache).length, typeof require === \"function\"]; }",
+  rd_fp11_create_require_members: "import { createRequire } from \"node:module\";\nconst load = createRequire(__filename);\nexport function t() { return [load.resolve(\"node:path\"), load(\"node:path\")]; }",
+  rd_fp20_export_default_reference: "export default fetch;",
+  rd_fp25_boolean_detection: "export function t() { return [Boolean(globalThis.fetch), !!globalThis.WebSocket, Boolean(window.EventSource) && 1]; }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
@@ -379,4 +414,18 @@ describe("silent", () => {
 
 describe("known misses (move to caught once fixed)", () => {
   for (const [name, { why }] of Object.entries(knownMisses)) it(`${name}: ${why}`, () => expect(errorsIn(name)).toEqual([]));
+});
+
+// Re-verification (detectors): the newly caught forms, reported with the scope they have.
+describe("re-verification (detectors): reported as the access it is", () => {
+  const capabilities = (name: string) => errorsIn(name).map((d) => d.capability).sort();
+  it("rd01_destructured_call", () => expect(capabilities("rd01_destructured_call")).toEqual(["exec"]));
+  it("rd03_destructured_global_map", () => expect(capabilities("rd03_destructured_global_map")).toEqual(["net"]));
+  it("rd04_destructured_nested", () => expect(capabilities("rd04_destructured_nested")).toEqual(["fs.write(/etc/x)"]));
+  it("rd07_destructured_chdir_call", () => expect(capabilities("rd07_destructured_chdir_call")).toEqual(["fs.read(/etc/cron.d)", "fs.write(/etc/cron.d)"]));
+  it("rd10_require_call", () => expect(capabilities("rd10_require_call")).toEqual(["unverifiable"]));
+  it("rd15_create_require_reflect", () => expect(capabilities("rd15_create_require_reflect")).toEqual(["unverifiable"]));
+  it("rd17_reflect_apply_arguments", () => expect(capabilities("rd17_reflect_apply_arguments")).toEqual(["fs.read(/etc/cron.d)", "fs.write(/etc/cron.d)"]));
+  it("rd25_long_alias_chain", () => expect(capabilities("rd25_long_alias_chain")).toEqual(["unverifiable"]));
+  it("rd26_alias_chain_eleven", () => expect(capabilities("rd26_alias_chain_eleven")).toEqual(["exec"]));
 });

@@ -230,6 +230,13 @@ export function resolvedDeclaration(call: CallLike): Node | undefined {
   return declaration;
 }
 
+/** `Reflect.apply(fn, thisArg, args)`, the standard library's: a call of `fn` with `args`. */
+export function isReflectApply(call: CallExpression): boolean {
+  const declaration = resolvedDeclaration(call);
+  return Node.isFunctionDeclaration(declaration) && declaration.getName() === "apply" &&
+    containerName(declaration) === "Reflect" && declaration.getSourceFile().isDeclarationFile();
+}
+
 /**
  * A global function or variable from the TypeScript lib or @types/node, such as
  * `fetch` or `eval`: declared in a .d.ts, and not inside a `declare module "x"`

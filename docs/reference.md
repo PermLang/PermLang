@@ -154,13 +154,26 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   what the function reaches.
 - **Adversarial coverage.** Tricks that try to hide access are caught:
   - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
-    `paths.forEach(unlinkSync)`, `{ fetch }`. `send.call(thisArg, url)` and
-    `send.apply(thisArg, [url])` are checked as calls, with their arguments. Calls
-    through a `const` alias resolve to the original; the alias used as a value
+    `paths.forEach(unlinkSync)`, `{ fetch }`, also inside what a module exports
+    (`export default [execSync]`, `export default { pick: () => execSync }`;
+    `export default fetch` on its own just exports the function, and calls
+    through the import are checked). `send.call(thisArg, url)`,
+    `send.apply(thisArg, [url])`, and `Reflect.apply(send, thisArg, [url])` are
+    checked as calls, with their arguments. Calls through a `const` alias resolve
+    to the original; the alias used as a value
     (`const run = execSync; run.call(null, cmd)`, `Reflect.apply(run, ...)`,
-    `urls.map(get)` with `const get = fetch`) is a use of what it holds. Testing
+    `urls.map(get)` with `const get = fetch`) is a use of what it holds, and so
+    is a name destructured from a module, a global, or a parameter
+    (`const { execSync: run } = cp`, `const { fetch } = globalThis`,
+    `const { promises: { writeFile } } = fs`, `({ exec }: typeof cp) => ...`).
+    A chain of more than 32 aliases is unverifiable. A value whose code isn't in
+    sight is judged by its type: `require` used as a value
+    (`require.call(null, name)`, `["x"].map(require)`, `load(require)`), or what
+    `createRequire()` returns, is unverifiable; `require.resolve()`,
+    `require.main`, `require.cache`, and `typeof require` aren't uses. Testing
     whether a function exists (`if (globalThis.fetch)`, `!WebSocket`,
-    `x instanceof WebSocket`, `if (ready && window.WebSocket)`) isn't a use, but
+    `Boolean(globalThis.fetch)`, `x instanceof WebSocket`,
+    `if (ready && window.WebSocket)`) isn't a use, but
     picking one with `&&`, `||`, or `??` outside a condition
     (`const WS = window.WebSocket || Fallback`) is;
   - capability classes reached indirectly: through an alias
@@ -186,7 +199,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   `importScripts()`), native code and hooks (`process.dlopen`,
   `crypto.setEngine`, `module.register`, `registerHooks`, `runMain`,
   `module.require`, `new Module()`), the inspector's `Session.post`,
-  `process.binding()`, `process.getBuiltinModule(name)` with a computed name (a
+  `require` used as a value, `process.binding()`,
+  `process.getBuiltinModule(name)` with a computed name (a
   literal name is like importing the module), computed calls on sensitive
   objects (`fs[method]()`, `globalThis[name]()`) or behind an index signature
   (`table[name]()`), loading a module whose result can't be checked (see
