@@ -9,7 +9,6 @@ import { Node, ts, type Project, type SourceFile } from "ts-morph";
 import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
 import { UNVERIFIABLE, covers, formatCapability } from "./capability.js";
 import { detectInFile } from "./detect/index.js";
-import { isPrismaClientApi } from "./detect/prisma.js";
 import { Hierarchy } from "./dispatch.js";
 import { buildLock, lockDrift, type LockFile } from "./lock.js";
 import { moduleComments, strayPermTags, type AnnotationError } from "./annotations.js";
@@ -240,7 +239,6 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   const declaredUnit = (node: Node): Unit | undefined => {
     if (Node.isSourceFile(node) || !node.getSourceFile().isDeclarationFile() || !isOwnDeclarationFile(node.getSourceFile())) return undefined;
     if (unitNodeForDeclaration(node) !== node) return undefined; // not a value the project declares (an ambient package, a type)
-    if (isPrismaClientApi(node)) return undefined; // a generated Prisma client, which the Prisma detector reads
     if (!declared.has(node)) declared.set(node, createDeclaredUnit(node));
     return declared.get(node);
   };
