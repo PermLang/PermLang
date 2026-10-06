@@ -569,7 +569,11 @@ where it lands depends on where the program runs. On Windows, a drive (`C:\`), a
 network share (`\\server\share`), and a drive-relative path (`C:x`, which is
 relative to drive C's own working directory) are each separate roots, so
 `fs.write(/evil)` doesn't cover `\\evil\share\x`, and `fs.read(.)` doesn't cover
-`C:..\x`. Drive letters match in any case.
+`C:..\x`. Drive letters match in any case. A network path is covered only when
+it's inside both as Windows reads it, where `..` can't climb out of the share
+(`\\server\share\..\x` is `\\server\share\x`), and as other systems read it
+(`//server/share/../x` is `/server/x`): `fs.write(//server/x)` doesn't cover
+`\\server\share\..\x\f`.
 
 ## Data-flow rules
 
