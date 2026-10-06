@@ -854,9 +854,12 @@ that has it and can hand it back:
   setting `headers.authorization`, `load(store)` calling `store.set(...)` or
   `bus.emit(...)`, or a callback writing into a list's elements. Any use of
   such a parameter counts except reading it: its fields' values
-  (`order.total`), the standard library's methods that change nothing
-  (`items.join(",")`, `lines.map((l) => l.sku)`), and tests (`if (!order)`).
-  Passing it on, storing it, or calling any other method could write to it;
+  (`order.total`, `counts.tries++`), the standard library's methods that change
+  nothing (`items.join(",")`, `lines.map((l) => l.sku)`), tests (`if (order)`,
+  `!order`, `order === other`, `typeof order`, `ready && order` as a condition),
+  and assigning to the parameter itself. Passing it on, storing it
+  (`kept = order ?? fallback`), calling it or any other method, or a callback
+  nested more than five deep could write to it;
 - as the object a constructor builds (`new StripeClient()`), or what a module
   exports.
 

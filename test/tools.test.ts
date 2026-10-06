@@ -462,6 +462,164 @@ describe("tools given to AI models", () => {
   });
 });
 
+// What a tools collection can hold, written every way PermLang tells apart. The stand-ins'
+// generateText takes any object, so each form type-checks.
+describe("entries of a tools collection", () => {
+  const source = `import { generateText, tool } from "ai";
+import { DynamicStructuredTool } from "@langchain/core/tools";
+import { execSync } from "node:child_process";
+type Definition = { description: string; execute: () => string };
+type Listed = { name: string; invoke: () => Promise<string> };
+function runCommand() {
+  return execSync("make").toString();
+}
+declare function handlerKey(): string;
+declare function declaredDefinition(): Definition;
+declare const untyped: any;
+class MyTool extends DynamicStructuredTool {}
+class CommandRunner {
+  execute() {
+    return execSync("make").toString();
+  }
+}
+const concise = () => ({ description: "concise", execute: () => execSync("ls").toString() });
+const helpers = {
+  make() {
+    return { description: "method", execute: () => execSync("ls").toString() };
+  },
+};
+const expression = function () {
+  return { description: "expression", execute: () => execSync("ls").toString() };
+};
+function nothing(): void {
+  return;
+}
+function either(flag: boolean): Definition | { description: string; run: () => string } {
+  return flag ? { description: "a", execute: () => "" } : { description: "b", run: () => "" };
+}
+function tagged(): Definition & { tag: string } {
+  return { description: "tagged", execute: () => "", tag: "t" };
+}
+function shellFrom() {
+  return { name: "shell", shell: { run: async () => "" } };
+}
+const loopA: any = loopB;
+const loopB: any = loopA;
+export async function ask(prompt: string, mine: MyTool, theirs: DynamicStructuredTool) {
+  return generateText({
+    prompt,
+    tools: [
+      runCommand,
+      async () => execSync("pwd").toString(),
+      ,
+      new MyTool({ name: "mine", description: "Mine", schema: {}, func: async () => "" }),
+      mine,
+      theirs,
+      nothing(),
+      declaredDefinition(),
+      concise(),
+      helpers.make(),
+      expression(),
+      either(true),
+      tagged(),
+      shellFrom(),
+      loopA,
+      untyped.build(),
+      new CommandRunner(),
+    ],
+  });
+}
+export const fnTools = generateText({ prompt: "hi", tools: runCommand });
+export async function askRecord(prompt: string) {
+  return generateText({
+    prompt,
+    tools: {
+      computed: { description: "Computed handler key", [handlerKey()]: async () => execSync("ls").toString() },
+      schema: { description: "Not a handler", [handlerKey()]: "settings" },
+    },
+  });
+}
+const spreadA: any = { ...spreadB };
+const spreadB: any = { ...spreadA };
+export const loopedSpread = tool({ ...spreadA, name: "loopedSpread" });
+const optionsA: any = { ...optionsB };
+const optionsB: any = { ...optionsA };
+export const loopedOptions = generateText({ ...optionsA, prompt: "hi" });
+const bracketed: Record<string, any> = {};
+bracketed["named"] = { description: "Named", execute: async () => execSync("ls").toString() };
+bracketed[handlerKey()] = { description: "Unnamed", execute: async () => execSync("pwd").toString() };
+bracketed.named.execute = runCommand;
+void bracketed.named;
+bracketed.named.execute();
+export const bracketedTools = generateText({ prompt: "hi", tools: bracketed });
+const more: Listed[] = [];
+const extra: Listed[] = [{ name: "extra", invoke: async () => execSync("ls").toString() }];
+more.push(...extra);
+more.splice(0, 0, { name: "spliced", invoke: async () => "" });
+more.includes(extra[0]!);
+export const moreTools = generateText({ prompt: "hi", tools: more });
+`;
+  let report: Report;
+  const listed = () => report.tools.map((t) => `${t.name} ${t.line}: ${t.reaches.join(", ") || "nothing"}`);
+
+  beforeAll(() => {
+    const project = mkdtempSync(path.join(tmpdir(), "permlang-tools-entries-"));
+    writeFileSync(
+      path.join(project, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, types: ["node"], typeRoots }, include: ["*.ts"] }),
+    );
+    writeFileSync(path.join(project, "frameworks.d.ts"), frameworks);
+    writeFileSync(path.join(project, "edges.ts"), source);
+    report = checkTsConfig(path.join(project, "tsconfig.json"), { strictness: "sketch" });
+    rmSync(project, { recursive: true, force: true });
+  }, 60_000);
+
+  it("follows a function given as the tool, and skips holes and tools made or typed by the framework", () => {
+    // Named by the function, else "tool".
+    expect(listed()).toContain("runCommand 45: exec");
+    expect(listed()).toContain("tool 46: exec");
+    // A hole; your subclass of the framework's tool class, registered once where it's made; a
+    // value typed as it, or as the framework's own class; a function that returns nothing.
+    expect(listed()).toContain("MyTool 48: nothing");
+    expect(listed().filter((t) => / (47|49|50|51):/.test(t))).toEqual([]);
+  });
+
+  it("can't follow a plain object a helper of yours builds, or a value it can't see", () => {
+    // A declared function, an arrow function, a method, a function expression; a union, an
+    // intersection, a built-in tool's object; constants in a loop; any; your own class.
+    for (const line of [52, 53, 54, 55, 56, 57, 58, 59, 60, 61]) expect(listed()).toContain(`* ${line}: unverifiable`);
+  });
+
+  it("reads a handler under a computed key, and skips a schema under one", () => {
+    expect(listed()).toContain("computed 70: exec");
+    expect(listed().filter((t) => t.includes(" 71:"))).toEqual([]);
+  });
+
+  it("stops in loops of spreads, and reports what it can't list", () => {
+    // A definition spread from constants that spread each other: no handler to follow.
+    expect(listed()).toContain("loopedSpread 77: unverifiable");
+    // Options spread from constants that spread each other could set any tools.
+    expect(listed()).toContain("* 79: unverifiable");
+    // A function given as the whole collection.
+    expect(listed()).toContain("* 65: unverifiable");
+  });
+
+  it("follows what's added to a constant collection later, and reports changes it can't list", () => {
+    // `tools["named"] = ...`, and a computed key, named by the definition, else "tool".
+    expect(listed()).toContain("named 82: exec");
+    expect(listed()).toContain("tool 83: exec");
+    // Changing an entry (`tools.named.execute = ...`); reading or calling one changes nothing.
+    expect(listed()).toContain("* 84: unverifiable");
+    expect(listed().filter((t) => / (85|86):/.test(t))).toEqual([]);
+    // `push(...more)` is listed; `splice` can't be; `includes` changes nothing.
+    expect(listed()).toContain("extra 89: exec");
+    expect(listed()).toContain("* 91: unverifiable");
+    expect(listed().filter((t) => t.includes(" 92:"))).toEqual([]);
+    // Nothing else.
+    expect(listed()).toHaveLength(22);
+  });
+});
+
 // The same frameworks, with their packages laid out as published (test/ai-packages.ts):
 // re-exports from sibling packages, minified chunk names, provider tools, and classes.
 describe("tools registered with frameworks as they're published", () => {
@@ -605,7 +763,17 @@ declare const config: Parameters<typeof hostedMcpTool>[0];
 export const fromConfig = hostedMcpTool(config);
 export function search(options: Parameters<typeof webSearchTool>[0]) {
   return webSearchTool(options);
-}`,
+}
+// A callback in options spread in from a constant; options parsed at run time.
+const approval = {
+  requireApproval: "always" as const,
+  onApproval: async () => {
+    execSync("notify-send approval");
+    return { approve: true };
+  },
+};
+export const spreadApproval = hostedMcpTool({ serverLabel: "docs", ...approval });
+export const parsedConfig = hostedMcpTool(JSON.parse("{}"));`,
     // Found in re-verification: frameworks that weren't recognized. OpenAI's SDK runs the
     // functions given to chat.completions.runTools; its other calls only send schemas.
     openai: `import OpenAI from "openai";
@@ -649,6 +817,23 @@ export async function schemaFromHelper() {
 }
 export async function responses() {
   return client.responses.create({ model: "gpt-x", input: "hi", tools: [{ type: "function", name: "weather", parameters: {}, strict: true }, { type: "web_search" }] });
+}
+// A runTools tool a helper of yours builds: it can't be followed.
+function runnable(cmd: string) {
+  return { type: "function" as const, function: { name: cmd, description: cmd, parameters: {}, function: () => execSync(cmd).toString() } };
+}
+export async function withHelper() {
+  return client.chat.completions.runTools({ model: "gpt-x", messages: [], tools: [runnable("ls")] }).finalContent();
+}
+// A session turn of the beta Agents API runs the handlers in toolHandlers.
+function runShell(args: Record<string, unknown>) {
+  return { output: execSync(String(args.cmd)).toString() };
+}
+export function agentTurn(sessionID: string) {
+  return client.beta.agents.sessions.stream(sessionID, { input: "hi", toolHandlers: { lookup: async (args) => ({ text: readFileSync(String(args.path), "utf8") }), shell: runShell } });
+}
+export function agentTurnWith(sessionID: string, handlers: Record<string, (args: Record<string, unknown>) => object>) {
+  return client.beta.agents.sessions.stream(sessionID, { input: "hi", toolHandlers: handlers });
 }`,
     fastmcp: `import { FastMCP } from "fastmcp";
 import { execSync } from "node:child_process";
@@ -666,6 +851,10 @@ export const gkAsk = dynamicTool({ name: "gk_ask", description: "Ask the user" }
 // Tools given by value or by name are registered where they're defined.
 export async function ask(prompt: string) {
   return ai.generate({ prompt, tools: [gk, "gk_tool"] });
+}
+// A list of names, passed in: names can't be a tool that runs.
+export async function askByName(prompt: string, names: string[]) {
+  return ai.generate({ prompt, tools: names });
 }`,
     // Found in re-verification: plain-object tools given in forms that were missed. Collections
     // that can't be listed could hold any tool.
@@ -886,11 +1075,31 @@ export default class Anthropic {
   });
 
   it("follows the callbacks given to a tool that runs at the provider", () => {
-    expect(reaches(check(), "hosted")).toEqual({ approved: "exec", byName: "nothing", noCallback: "nothing", fromConfig: "unverifiable", tool: "nothing" });
+    expect(reaches(check(), "hosted")).toEqual({
+      approved: "exec",
+      byName: "nothing",
+      noCallback: "nothing",
+      fromConfig: "unverifiable",
+      tool: "nothing",
+      // A callback spread in from a constant; options parsed at run time, which could hold one.
+      spreadApproval: "exec",
+      parsedConfig: "unverifiable",
+    });
   });
 
   it("finds the OpenAI SDK's tools that runTools runs, and not schemas its other calls send", () => {
-    expect(reaches(check(), "openai")).toEqual({ oa_shell: "exec", read_file: "fs.read", list_files: "fs.read", parsed: "exec" });
+    expect(reaches(check(), "openai")).toEqual({
+      oa_shell: "exec",
+      read_file: "fs.read",
+      list_files: "fs.read",
+      parsed: "exec",
+      // The beta Agents API's toolHandlers: written in the call, and a record passed in.
+      lookup: "fs.read",
+      shell: "exec",
+      "*": "unverifiable",
+    });
+    // A runTools tool built by a helper of yours, and the record of handlers passed in.
+    expect(check().tools.filter((t) => t.file.endsWith("openai.ts") && t.name === "*").map((t) => t.line)).toEqual([48, 58]);
     // The helpers that make a tool only build an object, as the AI SDK's tool() does.
     expect(check().functions.find((f) => f.name === "makeListTool")!.actual).toEqual(["fs.read"]);
   });
@@ -990,6 +1199,8 @@ export default class Anthropic {
       "genkit.ts gk_tool",
       "hosted.ts approved",
       "hosted.ts fromConfig",
+      "hosted.ts parsedConfig",
+      "hosted.ts spreadApproval",
       "langchain.ts NotesTool",
       "langchain.ts grep",
       "langchain.ts inv",
@@ -998,10 +1209,14 @@ export default class Anthropic {
       "llama.ts shell",
       "mcpv2.ts *",
       "mcpv2.ts run",
+      "openai.ts *",
+      "openai.ts *",
       "openai.ts list_files",
+      "openai.ts lookup",
       "openai.ts oa_shell",
       "openai.ts parsed",
       "openai.ts read_file",
+      "openai.ts shell",
       "options.ts *",
       "options.ts *",
       "options.ts lookup",

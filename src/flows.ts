@@ -223,10 +223,11 @@ export function opaqueUses(sourceFiles: readonly SourceFile[], adapters: Adapter
 
 /** A name as messages show it: the call it's the callee of (`post(...)`, `ns.post(...)`), else the name. */
 function siteText(name: Node): string {
+  // (An import's name is only ever the object of `a.b`, never the member: `x.post` names x's post.)
   let callee = name;
-  for (let parent = callee.getParent(); parent && Node.isPropertyAccessExpression(parent) && parent.getExpression() === callee; parent = callee.getParent()) callee = parent;
-  const call = callee.getParent();
-  return call && (Node.isCallExpression(call) || Node.isNewExpression(call)) && call.getExpression() === callee ? callText(call) : name.getText();
+  for (let parent = callee.getParentOrThrow(); Node.isPropertyAccessExpression(parent); parent = callee.getParentOrThrow()) callee = parent;
+  const call = callee.getParentOrThrow();
+  return (Node.isCallExpression(call) || Node.isNewExpression(call)) && call.getExpression() === callee ? callText(call) : name.getText();
 }
 
 /**
@@ -313,16 +314,16 @@ function writableArgument(parameter: ParameterDeclaration, depth: number): boole
   const body = parameter.getParent();
   return names.some((name) => {
     if (isPrimitive(name.getType())) return false;
-    const symbol = name.getSymbol()?.compilerSymbol;
-    if (!symbol) return true;
+    // (A parameter's name is always bound.)
+    const symbol = name.getSymbolOrThrow().compilerSymbol;
     return body.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => id !== name && referenceSymbol(id) === symbol && writesThrough(id, depth));
   });
 }
 
 /** The symbol of the variable an identifier refers to; for `{ order }` shorthand, the variable's. */
 function referenceSymbol(id: Node) {
-  const parent = id.getParent();
-  return (parent && Node.isShorthandPropertyAssignment(parent) ? parent.getValueSymbol() : id.getSymbol())?.compilerSymbol;
+  const parent = id.getParentOrThrow();
+  return (Node.isShorthandPropertyAssignment(parent) ? parent.getValueSymbol() : id.getSymbol())?.compilerSymbol;
 }
 
 /** Whether one use of an object could write to it. See the section comment. */
@@ -334,21 +335,20 @@ function writesThrough(reference: Node, depth: number): boolean {
     if (!member && !Node.isNonNullExpression(parent) && !Node.isParenthesizedExpression(parent)) break;
     chain = parent;
   }
-  const parent = chain.getParent()!;
-  if (isWrittenTo(chain)) return chain !== reference || !Node.isBinaryExpression(parent);
+  const parent = chain.getParentOrThrow();
+  // (Assigning to the parameter itself only changes the function's own copy.)
+  if (isWrittenTo(chain)) return chain !== reference;
   if (Node.isCallExpression(parent) && parent.getExpression() === chain) return callWrites(chain, parent, depth);
   // Its value used: harmless when it's a primitive, or only tested.
   return !isPrimitive(chain.getType()) && !onlyTested(chain, parent);
 }
 
-/** `p.x = v`, `p.x += v`, `delete p.x`, `p.x++`, and the like. (Assigning to the parameter itself only changes the function's copy.) */
+/**
+ * Assigned to: `p.x = v`, `p.x += v`, and the like. (`delete p.x` and `p.n++` can't put the data
+ * in: what they leave is used as any other value is.)
+ */
 function isWrittenTo(node: Node): boolean {
-  const parent = node.getParent();
-  if (!parent) return false;
-  if (Node.isDeleteExpression(parent)) return true;
-  if (Node.isPrefixUnaryExpression(parent) || Node.isPostfixUnaryExpression(parent)) {
-    return parent.getOperatorToken() === SyntaxKind.PlusPlusToken || parent.getOperatorToken() === SyntaxKind.MinusMinusToken;
-  }
+  const parent = node.getParentOrThrow();
   if (!Node.isBinaryExpression(parent) || parent.getLeft() !== node) return false;
   const operator = parent.getOperatorToken().getKind();
   return operator >= SyntaxKind.FirstAssignment && operator <= SyntaxKind.LastAssignment;
@@ -375,18 +375,28 @@ function isStandardLibrary(file: SourceFile | undefined): boolean {
   return file !== undefined && /[\\/]typescript[\\/]lib[\\/]lib\.[^\\/]*\.d\.ts$/.test(file.getFilePath());
 }
 
-/** Only tested, never kept: `if (order)`, `!order`, `order === other`, `typeof order`, `order && ...`. */
+/**
+ * Only tested, never kept: `if (order)`, `order === other`, `typeof order`, `!order` and
+ * the other unary operators (they give a primitive), and `ready && order` where that is
+ * itself only tested.
+ */
 function onlyTested(value: Node, parent: Node): boolean {
   if (Node.isIfStatement(parent) || Node.isWhileStatement(parent) || Node.isDoStatement(parent)) return parent.getExpression() === value;
   if (Node.isConditionalExpression(parent)) return parent.getCondition() === value;
-  if (Node.isTypeOfExpression(parent) || Node.isVoidExpression(parent)) return true;
-  if (Node.isPrefixUnaryExpression(parent)) return parent.getOperatorToken() === SyntaxKind.ExclamationToken;
+  if (Node.isTypeOfExpression(parent) || Node.isVoidExpression(parent) || Node.isPrefixUnaryExpression(parent)) return true;
   if (!Node.isBinaryExpression(parent)) return false;
   const operator = parent.getOperatorToken().getKind();
   if (COMPARISONS.has(operator)) return true;
   // `order && order.total`: the object itself is only the result when it's null or undefined.
-  return operator === SyntaxKind.AmpersandAmpersandToken && parent.getLeft() === value;
+  if (operator === SyntaxKind.AmpersandAmpersandToken && parent.getLeft() === value) return true;
+  // `ready && order`, `order || fallback`, `order ?? fallback` can be the object: harmless only as a test.
+  if (!LOGICAL.has(operator)) return false;
+  let outer: Node = parent;
+  while (Node.isParenthesizedExpression(outer.getParentOrThrow())) outer = outer.getParentOrThrow();
+  return onlyTested(outer, outer.getParentOrThrow());
 }
+
+const LOGICAL = new Set([SyntaxKind.AmpersandAmpersandToken, SyntaxKind.BarBarToken, SyntaxKind.QuestionQuestionToken]);
 
 const COMPARISONS = new Set([
   SyntaxKind.EqualsEqualsEqualsToken, SyntaxKind.ExclamationEqualsEqualsToken, SyntaxKind.EqualsEqualsToken,
