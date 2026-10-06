@@ -69,13 +69,17 @@ function typeMap(ns: string): string {
   const operations = (m: string) =>
     `findMany: { args: ${ns}${m}FindManyArgs }; findUnique: { args: ${ns}${m}FindUniqueArgs }; create: { args: ${ns}${m}CreateArgs }; update: { args: ${ns}${m}UpdateArgs }; findRaw: { args: object }`;
   const models = MODELS.map((m) => `${m}: { payload: ${ns}$${m}Payload<ExtArgs>; operations: { ${operations(m)} } }`);
-  return `export type TypeMap<ExtArgs = {}> = { meta: { modelProps: ${MODELS.map((m) => `"${accessor(m)}"`).join(" | ")} }; model: { ${models.join("; ")} } };`;
+  return `export type TypeMap<ExtArgs = {}> = { meta: { modelProps: ${MODELS.map((m) => `"${accessor(m)}"`).join(" | ")} }; model: { ${models.join("; ")} } };
+// $use middleware, as clients before Prisma 6 declare it: \`next\` runs the operation.
+export type MiddlewareParams = { model?: string; action: string; args: any; dataPath: string[]; runInTransaction: boolean };
+export type Middleware<T = any> = (params: MiddlewareParams, next: (params: MiddlewareParams) => Promise<T>) => Promise<T>;`;
 }
 
 function clientMembers(ns: string): string {
   const props = `${ns}TypeMap["meta"]["modelProps"] | "$allModels" | "$allOperations"`;
   return [
     "$queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;",
+    `$use(cb: ${ns}Middleware): void;`,
     `$extends<Q_ extends { [K in ${props}]?: unknown }>(extension: { query?: runtime.DynamicQueryExtensionArgs<Q_, ${ns}TypeMap<ExtArgs>> }): runtime.DynamicClientExtensionThis<${ns}TypeMap<ExtArgs>, ExtArgs>;`,
     ...MODELS.map((m) => `get ${accessor(m)}(): ${ns}${m}Delegate<ExtArgs>;`),
   ].join("\n  ");
@@ -314,6 +318,14 @@ export const xprisma = base.$extends({
 /** @perm db.read(lead) */ export function listLeads() { return xprisma.lead.findMany(); }
 // A helper with a type of its own: what it calls isn't Prisma's to it.
 function run(f: (args: unknown) => Promise<unknown>, args: unknown) { return f(args); }
+`,
+  "src/middleware.ts": `
+import { PrismaClient, Prisma } from "@prisma/client";
+const prisma = new PrismaClient();
+/** @perm env(NONE) */ export function install() { prisma.$use(async (params, next) => next({ ...params, args: { include: { apiKeys: true } } })); }
+const logging: Prisma.Middleware = async (params, next) => next(params);
+/** @perm env(NONE) */ export function installTyped() { prisma.$use(logging); }
+/** @perm env(NONE) */ export function typedParameter(mw: Prisma.Middleware) { return [mw]; }
 `,
   "src/extensions-all.ts": `
 import { PrismaClient } from "@prisma/client";
@@ -566,6 +578,13 @@ describe("query extensions", () => {
     ["<anonymous>.findUnique", ["db.read", "db.write"]],
   ])("%s", (name, expected) => {
     expect(actual("src/extensions.ts", name)).toEqual(expected);
+  });
+
+  it("treats older clients' $use middleware calling next() as any query", () => {
+    expect(actual("src/middleware.ts", "install")).toEqual(["db.read", "db.write"]);
+    expect(actual("src/middleware.ts", "installTyped")).toEqual(["db.read", "db.write"]);
+    // A middleware passed around as a value runs nothing by itself.
+    expect(actual("src/middleware.ts", "typedParameter")).toEqual([]);
   });
 
   it("treats a query extension for every model and operation as any query", () => {

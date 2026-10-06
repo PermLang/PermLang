@@ -38,11 +38,11 @@ const WRITES = new Set([
 // Raw queries can touch any table, and a "query" can still write (INSERT ... RETURNING).
 const RAW = /^\$(queryRaw|executeRaw|runCommandRaw)/;
 // The types that hand a query extension, or `$use` middleware, the function that runs the
-// intercepted operation: `query` (or `next`).
+// intercepted operation: `query` (or middleware's `next`). See isQueryRunner.
 const INTERCEPTED = new Set(["DynamicQueryExtensionCbArgs", "DynamicQueryExtensionArgs", "QueryOptionsCbArgs", "ModelQueryOptionsCbArgs", "Middleware"]);
 // Functions an extended client's types give, with no name of their own: an operation, and a
 // fluent API step, which only reads.
-const OPERATION_TYPES = new Set(["DynamicModelExtensionOperationFn", ...INTERCEPTED]);
+const OPERATION_TYPES = new Set(["DynamicModelExtensionOperationFn"]);
 const FLUENT_TYPES = new Set(["DynamicModelExtensionFluentApi"]);
 
 const raw: Capability[] = [{ name: "db.read", dynamic: true }, { name: "db.write", dynamic: true }];
@@ -94,7 +94,7 @@ function forModel(method: string, model: Model, args: Arguments): Capability[] {
  * Undefined for anything else.
  */
 function interceptedQuery(declaration: Node, call: CallLike | undefined): Capability[] | undefined {
-  if (!INTERCEPTED.has(containerName(declaration) ?? "") || declaration.getType().getCallSignatures().length === 0) return undefined;
+  if (!isQueryRunner(declaration)) return undefined;
   const holder = call && Node.isFunctionTypeNode(declaration) ? queryHolder(call) : undefined;
   const literal = (key: string) => {
     const type = holder?.getProperty(key)?.getTypeAtLocation(call!);
@@ -125,12 +125,24 @@ function queryHolder(call: CallLike): Type | undefined {
   return Node.isParameterDeclaration(owner) || Node.isVariableDeclaration(owner) ? owner.getType() : undefined;
 }
 
+/**
+ * The function that runs an intercepted operation, as Prisma's types declare it: `query` in
+ * a query extension's arguments, or middleware's `next`, as the function type itself or the
+ * member holding it. Not the extension or middleware callback, whose type is in the same place.
+ */
+function isQueryRunner(declaration: Node): boolean {
+  if (!INTERCEPTED.has(containerName(declaration) ?? "")) return false;
+  const holder = Node.isFunctionTypeNode(declaration) ? declaration.getParent() : declaration;
+  const name = Node.isPropertySignature(holder) || Node.isParameterDeclaration(holder) ? holder.getName() : undefined;
+  return (name === "query" || name === "next") && holder!.getType().getCallSignatures().length > 0;
+}
+
 /** A variable, parameter, or destructured name of the project's that holds a query extension's `query`. */
 function holdsInterceptedQuery(declaration: Node): boolean {
   if (!Node.isBindingElement(declaration) && !Node.isParameterDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return false;
   return declaration.getType().getCallSignatures().some((s) => {
     const d = s.getDeclaration();
-    return d !== undefined && INTERCEPTED.has(containerName(d) ?? "") && isPrismaClient(d);
+    return d !== undefined && isQueryRunner(d) && isPrismaClient(d);
   });
 }
 
