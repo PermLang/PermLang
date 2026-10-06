@@ -16,7 +16,7 @@ import { packageOf, type AdapterIndex } from "./adapters.js";
 import { isUrlSpecifier, loadOf, loadTarget, loadsData, referenceUsesRequire } from "./detect/modules.js";
 import { isPrismaClientJsFile } from "./detect/prisma.js";
 import { resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
-import { SQL_PACKAGES } from "./detect/sql.js";
+import { SQL_PACKAGES, isNodeSqlite } from "./detect/sql.js";
 import type { PackageFolders } from "./units.js";
 import { descendantsOfKind, forEachDescendant, lineAndColumn } from "./walk.js";
 
@@ -113,7 +113,8 @@ function calledPackage(node: CallLike, packages: PackageFolders, isPrismaClient:
     (Node.isNewExpression(node) ? newTargetDeclaration(node.getExpression()) : undefined);
   if (!declaration?.getSourceFile().isDeclarationFile() && !declaration?.getSourceFile().getFilePath().includes("/node_modules/")) return undefined;
   const installed = packageOf(declaration);
-  if (installed !== undefined) return { name: installed };
+  // Node's own SQLite client is detected (detect/sql.ts); the npm package called sqlite isn't.
+  if (installed !== undefined) return { name: isNodeSqlite(declaration) ? "node:sqlite" : installed };
   const local = packages.localPackage(declaration);
   // A client Prisma generated into the project is the Prisma detector's, as @prisma/client is.
   if (local === undefined || isPrismaClient(local.folder, declaration.getProject())) return undefined;

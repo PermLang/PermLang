@@ -11,7 +11,9 @@
 //     `(self as any).fetch(url)` is a fetch call, with its host, and
 //     `(process as any).env.KEY` reads env(KEY). Anything else is left alone:
 //     these objects are cast to `any` all the time for harmless reasons
-//     (`(window as any).dataLayer`, `const w = window as any`).
+//     (`(window as any).dataLayer`, `const w = window as any`). Database clients
+//     (a Prisma client or model, a Drizzle database, a SQL pool) are followed the
+//     same way: `(prisma as any).lead.deleteMany()` is a Prisma call.
 //   - A capability module: any value whose type is one (a namespace or default
 //     import, `import cp = require(...)`, the result of `await import(...)` or
 //     `process.getBuiltinModule(...)`, or a module of the project's own that
@@ -44,7 +46,7 @@ import {
 } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
-import { requiresCapabilityModule } from "./functions.js";
+import { isDatabaseObject, requiresCapabilityModule } from "./functions.js";
 import { argumentsOf, callText, containerName, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CapabilityUse } from "./shared.js";
 import { capabilitiesOf, constructorCapabilities } from "./web.js";
 import { forEachDescendant } from "../walk.js";
@@ -155,6 +157,8 @@ class CarrierCache {
 
   of(value: Node): Carrier | undefined {
     if (isGlobalObject(value)) return "global";
+    // A database client is followed like a global object: by the members read off a cast.
+    if ((Node.isIdentifier(value) || Node.isPropertyAccessExpression(value)) && isDatabaseObject(value.getType())) return "global";
     if (Node.isIdentifier(value) && this.importsCapabilityModule(value)) return "module";
     // Literals, `this`, and the like are never modules; only look at the type of a name or an expression that can hold one.
     const holds = Node.isIdentifier(value) || Node.isPropertyAccessExpression(value) || Node.isAwaitExpression(value) || Node.isCallExpression(value);

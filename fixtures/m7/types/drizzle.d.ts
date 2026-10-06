@@ -1,21 +1,47 @@
 // Minimal stand-in for drizzle-orm, shaped like its real typings (verified against
 // drizzle-orm's pg-core: PgDatabase, PgSelectBuilder, RelationalQueryBuilder, pgTable).
 declare module "drizzle-orm/pg-core" {
+  import type { SQL } from "drizzle-orm";
   export interface PgTable {
     readonly _: { name: string };
   }
-  export const pgTable: (name: string, columns: Record<string, unknown>, extra?: (t: Record<string, unknown>) => unknown[]) => PgTable;
+  export const pgTable: <C extends Record<string, unknown>>(name: string, columns: C, extra?: (t: Record<string, unknown>) => unknown[]) => PgTable & { [K in keyof C]: PgColumn };
   export function text(name?: string): PgColumnBuilder;
   // Schema definitions that take SQL: defaults, generated columns, checks, partial indexes.
   export class PgColumnBuilder {
     default(value: unknown): this;
     generatedAlwaysAs(as: unknown): this;
+    // Called when drizzle builds an insert (or update), which then holds what they return.
+    $defaultFn(fn: () => string | SQL): this;
+    $default: (fn: () => string | SQL) => this;
+    $onUpdateFn(fn: () => string | SQL): this;
+    $onUpdate: (fn: () => string | SQL) => this;
+  }
+  // A table's column keeps the SQL its definition was given.
+  export class PgColumn {
+    readonly name: string;
+    readonly default: string | SQL | undefined;
+    readonly defaultFn: (() => string | SQL) | undefined;
   }
   export class IndexBuilder {
     where(condition: unknown): this;
   }
   export function index(name: string): { on(...columns: unknown[]): IndexBuilder };
-  export function check(name: string, value: unknown): unknown;
+  export class CheckBuilder {
+    name: string;
+    value: SQL;
+  }
+  export function check(name: string, value: SQL): CheckBuilder;
+  export interface PgPolicyConfig {
+    using?: SQL;
+    withCheck?: SQL;
+  }
+  export class PgPolicy {
+    readonly name: string;
+    readonly using: PgPolicyConfig["using"];
+    readonly withCheck: PgPolicyConfig["withCheck"];
+  }
+  export function pgPolicy(name: string, config?: PgPolicyConfig): PgPolicy;
   export class PgSchema {
     table(name: string, columns: Record<string, unknown>): PgTable;
   }
@@ -67,12 +93,21 @@ declare module "drizzle-orm/node-postgres/migrator" {
 
 declare module "drizzle-orm" {
   export function eq(left: unknown, right: unknown): unknown;
+  // The pieces sql`...` is made of, which code can also put together itself.
+  export class StringChunk {
+    readonly value: string[];
+    constructor(value: string | readonly string[]);
+  }
   export class SQL {
+    readonly queryChunks: unknown[];
+    constructor(queryChunks: unknown[]);
     as(alias: string): this;
+    getSQL(): SQL;
   }
   export function sql(strings: TemplateStringsArray, ...values: unknown[]): SQL;
   export namespace sql {
     function raw(str: string): SQL;
     function identifier(value: string): SQL;
+    function fromList(list: unknown[]): SQL;
   }
 }
