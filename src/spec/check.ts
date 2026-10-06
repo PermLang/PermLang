@@ -10,6 +10,7 @@
 import path from "node:path";
 import { covers, formatCapability, type Capability } from "../capability.js";
 import type { Diagnostic, FunctionReport, Report } from "../check.js";
+import { printable } from "../report.js";
 import type { Spec } from "./parse.js";
 
 export interface SpecResult {
@@ -131,19 +132,23 @@ function normalize(file: string): string {
   return CASE_INSENSITIVE ? resolved.toLowerCase() : resolved;
 }
 
-/** The report text for `permlang spec`, in the shape of the concept overview's example. */
+/**
+ * The report text for `permlang spec`, in the shape of the concept overview's example. Names,
+ * paths, and capabilities come from the specs and the code, so each goes through printable(),
+ * like the check's report: none can start a line of its own.
+ */
 export function formatSpecResults(results: readonly SpecResult[], cwd = process.cwd()): string {
   const blocks = results.map((r) => {
-    const impl = r.spec.implements ? `${r.spec.implements.file}#${r.spec.implements.symbol}` : "(no implements:)";
+    const impl = r.spec.implements ? printable(`${r.spec.implements.file}#${r.spec.implements.symbol}`) : "(no implements:)";
     const lines = [
-      `perm ${r.spec.name}  ${impl}`,
+      `perm ${printable(r.spec.name)}  ${impl}`,
       `  perms     ${permsLine(r)}`,
       `  must      ${r.must.count} rule${r.must.count === 1 ? "" : "s"}, not verified yet (phase 2)`,
       `  examples  ${r.examples.count} example${r.examples.count === 1 ? "" : "s"}, not run yet (phase 2)`,
     ];
     for (const d of r.diagnostics) {
-      lines.push(`  ${path.relative(cwd, d.file).replaceAll("\\", "/")}:${d.line} ${d.severity} ${d.code}: ${d.message}`);
-      lines.push(`    -> ${d.fix}`);
+      lines.push(`  ${printable(path.relative(cwd, d.file).replaceAll("\\", "/"))}:${d.line} ${d.severity} ${d.code}: ${printable(d.message)}`);
+      lines.push(`    -> ${printable(d.fix)}`);
     }
     return lines.join("\n");
   });
@@ -155,7 +160,7 @@ export function formatSpecResults(results: readonly SpecResult[], cwd = process.
 function permsLine(r: SpecResult): string {
   if (r.status === "not found") return "implementation not found";
   if (r.status === "ambiguous") return "implementation is ambiguous: write its qualified name";
-  if (r.status === "perms exceeded") return `FAIL: reaches ${r.diagnostics.filter((d) => d.code === "SPEC003").map((d) => d.capability).join(", ")}`;
+  if (r.status === "perms exceeded") return `FAIL: reaches ${r.diagnostics.filter((d) => d.code === "SPEC003").map((d) => printable(d.capability)).join(", ")}`;
   if (r.status === "unchecked") return "unchecked: reaches code whose types can't be found";
   return "no access beyond the declared scope";
 }

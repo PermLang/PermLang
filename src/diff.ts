@@ -20,7 +20,8 @@ export const COMMENT_MARKER = "<!-- permlang-diff -->";
  * one pull request, one per package of a monorepo, each keep their own comment.
  */
 export function commentMarker(folder: string): string {
-  const f = folder.replaceAll("\\", "/").replace(/^\.\/?|\/$/g, "");
+  // Only "." itself, or a leading "./", means nothing: `.web` is a folder of its own, not `web`.
+  const f = folder.replaceAll("\\", "/").replace(/\/+$/, "").replace(/^\.(\/|$)/, "");
   if (f === "") return COMMENT_MARKER;
   // Encoded, so the folder's name can't end the HTML comment.
   return `<!-- permlang-diff: ${encodeURIComponent(f).replaceAll("%2F", "/").replaceAll("-", "%2D")} -->`;
@@ -32,6 +33,12 @@ export function commentMarker(folder: string): string {
  */
 export const COMMENT_LIMIT = 60_000;
 
+/** GitHub takes at most 1 MiB of job summary from a step, and shows an error instead of more. */
+export const SUMMARY_LIMIT = 1_000_000;
+
+/** The last line of the notice for a pull request with no lock file: see formatNoLock(). */
+export const NO_LOCK_STATUS = "<!-- permlang-status: no-lock -->";
+
 /** What the diff can't show by comparing locks alone. */
 export interface DiffNotes {
   /** Where the code and the working tree's lock differ, which the check fails on until `permlang lock` is run. */
@@ -41,6 +48,8 @@ export interface DiffNotes {
   lockFile?: string;
   /** The working tree has no lock, but the base commit has one. */
   lockDeleted?: boolean;
+  /** Lock files the base commit's workflows check with that this change no longer reads (from the repository root). */
+  lockMoved?: string[];
   /** The working tree's lock is in an older format: the check fails until `permlang lock` updates it. */
   lockOutdated?: boolean;
   /** The base commit has no lock, so everything is new. */
@@ -107,31 +116,32 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
   }
   const blocks: Block[] = [{ head: top }];
 
-  if (settings.length > 0) {
-    blocks.push({ head: ["**Check settings changed.** These change what PermLang checks, or how strictly:", ""], rows: settingRows(settings, via), tail: [""] });
-  }
-
   // One row per new capability: where it happens, then every function that can now reach it.
   // Propagation means one new call can add access to many callers; listing each separately buries it.
+  // First after the alerts, since it's what approving the change approves: no other section can
+  // push it out of a comment that's cut short.
   if (gaining.length > 0) {
     const rows: string[] = [];
     for (const [capability, functions] of byCapability(gaining)) {
       const origin = shortestPath(capability, functions, via);
-      const where = origin ? `${code(origin.fn.name)}<br><sub>${plain(clip(origin.path.join(" → ")))}</sub>` : "";
-      const named = functions.slice(0, MAX_NAMED).map((f) => `${code(f.name)}${f.status === "added" ? " (new)" : ""}`);
-      if (functions.length > MAX_NAMED) named.push(`and ${functions.length - MAX_NAMED} more`);
+      const where = origin ? `${code(origin.fn.name)}<br><sub>${plain(origin.path.join(" → "))}</sub>` : "";
+      const named = listed(functions.map((f) => `${code(f.name)}${f.status === "added" ? " (new)" : ""}`));
       // An AI model can trigger it: whoever controls the model's input can, too.
       const tools = [...new Set(notes.aiTools?.[capability] ?? [])];
-      const byModel = tools.length > 0 ? `<br><sub>⚠️ An AI model can trigger this, through ${tools.map((t) => code(t)).join(", ")}</sub>` : "";
-      rows.push(`| ${code(`+ ${capability}`)} | ${where} | ${named.join(", ")}${byModel} |`);
+      const byModel = tools.length > 0 ? `<br><sub>⚠️ An AI model can trigger this, through ${listed(tools.map((t) => code(t)))}</sub>` : "";
+      rows.push(`| ${code(`+ ${capability}`)} | ${where} | ${named}${byModel} |`);
     }
     blocks.push({ head: ["| New access | Where it happens | Now reachable from |", "| --- | --- | --- |"], rows, tail: [""] });
   }
 
+  if (settings.length > 0) {
+    blocks.push({ head: ["**Check settings changed.** These change what PermLang checks, or how strictly:", ""], rows: settingRows(settings, via), tail: [""] });
+  }
+
   if (diff.unsafeAdded.length > 0 || diff.unsafeChanged.length > 0) {
     const rows = [
-      ...diff.unsafeAdded.map((u) => `- ${code(u.key)}: ${plain(clip(u.reason))}`),
-      ...diff.unsafeChanged.map((u) => `- ${code(u.key)}: ${plain(clip(u.after))} <sub>(was: ${plain(clip(u.before))})</sub>`),
+      ...diff.unsafeAdded.map((u) => `- ${code(u.key)}: ${plain(u.reason)}`),
+      ...diff.unsafeChanged.map((u) => `- ${code(u.key)}: ${plain(u.after)} <sub>(was: ${plain(u.before)})</sub>`),
     ];
     blocks.push({ head: ["**New or changed <code>@perm-unsafe</code> overrides** (checks suppressed):", ""], rows, tail: [""] });
   }
@@ -139,7 +149,7 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
   if (preapproved.length > 0) {
     blocks.push({
       head: [`**Access ${lock} records, but the code doesn't reach.** A lock can't approve access in advance: the check fails until \`permlang lock\` removes it.`, ""],
-      rows: preapproved.map((p) => `- ${code(p.name)} (${plain(p.file)}): ${p.removed.map((c) => code(`- ${c}`)).join(", ")}`),
+      rows: preapproved.map((p) => `- ${code(p.name)} (${plain(p.file)}): ${listed(p.removed.map((c) => code(`- ${c}`)))}`),
       tail: [""],
     });
   }
@@ -153,7 +163,7 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
     blocks.push({
       head: ["<details><summary>Removed access</summary>", ""],
       rows: [
-        ...losing.map((f) => `- ${code(f.name)} (${plain(f.file)}): ${f.removed.map((c) => code(`- ${c}`)).join(", ")}`),
+        ...losing.map((f) => `- ${code(f.name)} (${plain(f.file)}): ${listed(f.removed.map((c) => code(`- ${c}`)))}`),
         ...diff.unsafeRemoved.map((u) => `- ${code(u.key)}: <code>@perm-unsafe</code> removed`),
       ],
       tail: ["", "</details>", ""],
@@ -173,7 +183,23 @@ export function formatDiffFailure(reason: string, marker = COMMENT_MARKER): stri
     marker,
     "### PermLang permission diff",
     "",
-    `> [!CAUTION]\n> **PermLang couldn't compute the permission diff** for the latest push, so an earlier version of this comment no longer applies. The job log has the details: ${plain(clip(reason, 2000))}`,
+    `> [!CAUTION]\n> **PermLang couldn't compute the permission diff** for the latest push, so an earlier version of this comment no longer applies. The job log has the details: ${plain(reason, 2000)}`,
+  ].join("\n");
+}
+
+/**
+ * The comment when there's no lock file in the pull request or at its base commit, so nothing to
+ * compare. The Action posts it only over its own earlier comment, which would otherwise go on
+ * showing a diff that no longer applies; its last line tells the Action which kind it is.
+ */
+export function formatNoLock(lockFile: string, marker = COMMENT_MARKER): string {
+  return [
+    marker,
+    "### PermLang permission diff",
+    "",
+    `There's no ${code(lockFile)} in this pull request or at its base commit, so there's no permission diff, and new access doesn't fail the check. Run \`permlang lock\` and commit ${code(lockFile)} to get one.`,
+    "",
+    NO_LOCK_STATUS,
   ].join("\n");
 }
 
@@ -182,12 +208,18 @@ function alerts(notes: DiffNotes, lock: string): string[] {
   const out: string[] = [];
   if (notes.analysisError) {
     out.push(
-      `> [!CAUTION]\n> **PermLang couldn't analyze the code**, so this shows only what the lock files record, not what the code does. The check can't pass until this is fixed: ${plain(clip(notes.analysisError, 2000))}`,
+      `> [!CAUTION]\n> **PermLang couldn't analyze the code**, so this shows only what the lock files record, not what the code does. The check can't pass until this is fixed: ${plain(notes.analysisError, 2000)}`,
     );
   }
   if (notes.lockDeleted) {
     out.push(
       `> [!CAUTION]\n> **This pull request deletes ${lock}**, which PermLang compares the code with. Without it, new access can't be told from old. The PermLang Action fails the check until it's restored, or regenerated with \`permlang lock\` and committed.`,
+    );
+  }
+  if (notes.lockMoved && notes.lockMoved.length > 0) {
+    const instead = notes.enforced === false ? "" : `, and reads ${lock} instead`;
+    out.push(
+      `> [!CAUTION]\n> **This pull request stops checking with ${listed(notes.lockMoved.map((l) => code(l)))}**, which the base commit's workflow checks with${instead}. A lock file the base doesn't check with can approve whatever the change adds, so the PermLang Action fails the check until the workflow checks with the base's lock file again.`,
     );
   }
   if (notes.lockOutdated) {
@@ -244,14 +276,17 @@ function dependencyHeading(deps: readonly DependencyChange[]): string {
 }
 
 /**
- * Joins the blocks, keeping the comment under `limit` UTF-8 bytes. Blocks come in order of
- * importance; when one doesn't fit, its remaining rows and every later block are left out,
- * and a note says how much.
+ * Joins the blocks, keeping the text under `limit` UTF-8 bytes. Blocks come in order of
+ * importance, and each takes what room is left. A row that doesn't fit is left out, but later,
+ * shorter ones still go in, so one long row can't take the place of all the others; a block is
+ * left out whole when its heading doesn't fit, or none of its rows do. A note says how many
+ * lines are left out, and where to see them.
  */
 function fit(blocks: readonly Block[], footer: readonly string[], limit: number): string {
   const size = (lines: readonly string[]) => lines.reduce((n, l) => n + Buffer.byteLength(l, "utf8") + 1, 0);
+  const summary = limit > COMMENT_LIMIT;
   const note = (n: number) => [
-    `> [!NOTE]\n> **Cut short** to fit GitHub's limit on comment length: ${plural(n, "more line")} ${n === 1 ? "isn't" : "aren't"} shown. The job summary has the full diff, and \`permlang diff\` prints it.`,
+    `> [!NOTE]\n> **Cut short** to fit GitHub's limit on ${summary ? "job summary size" : "comment length"}: ${plural(n, "more line")} ${n === 1 ? "isn't" : "aren't"} shown. ${summary ? "`permlang diff` prints the full diff." : "The job summary has the full diff, and `permlang diff` prints it."}`,
     "",
   ];
   const reserve = size(footer) + size(note(Number.MAX_SAFE_INTEGER));
@@ -261,22 +296,21 @@ function fit(blocks: readonly Block[], footer: readonly string[], limit: number)
   for (const block of blocks) {
     const rows = block.rows ?? [];
     const tail = block.tail ?? [];
-    if (dropped > 0 || used + size(block.head) + size(tail) + reserve > limit) {
+    let room = limit - reserve - used - size(block.head) - size(tail);
+    const kept: string[] = [];
+    for (const row of rows) {
+      if (size([row]) > room) continue;
+      kept.push(row);
+      room -= size([row]);
+    }
+    // A heading with none of its rows under it would say nothing.
+    if (room < 0 || (rows.length > 0 && kept.length === 0)) {
       dropped += block.head.length + rows.length;
       continue;
     }
-    out.push(...block.head);
-    used += size(block.head);
-    for (const [i, row] of rows.entries()) {
-      if (used + size([row]) + size(tail) + reserve > limit) {
-        dropped += rows.length - i;
-        break;
-      }
-      out.push(row);
-      used += size([row]);
-    }
-    out.push(...tail);
-    used += size(tail);
+    dropped += rows.length - kept.length;
+    out.push(...block.head, ...kept, ...tail);
+    used += size(block.head) + size(kept) + size(tail);
   }
   return [...out, ...(dropped > 0 ? note(dropped) : []), ...footer].join("\n");
 }
@@ -289,6 +323,10 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   if (notes.analysisError) out.push(`Couldn't analyze the code, so this shows only what the lock files record: ${printable(notes.analysisError)}`);
   if (notes.lockDeleted) {
     out.push(`This change deletes ${lock}, which PermLang compares the code with. With --require-lock (as the Action runs it), the check fails until it's restored or regenerated.`);
+  }
+  if (notes.lockMoved && notes.lockMoved.length > 0) {
+    const instead = notes.enforced === false ? "" : `, and reads ${lock} instead`;
+    out.push(`This change stops checking with ${notes.lockMoved.map(printable).join(", ")}, which the base commit's workflow checks with${instead}. With --base (as the Action runs it), the check fails until the workflow checks with the base's lock file again.`);
   }
   if (notes.lockOutdated) out.push(`${lock} was written by an older PermLang: the check fails until \`permlang lock\` updates it.`);
   else if (pendingChanges(notes)) {
@@ -324,7 +362,7 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   }
   if (out.length === header) {
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
-    out.push(complete ? "No permission changes." : "The base and the code reach the same access.");
+    out.push(complete ? "No permission changes." : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.");
   }
   const deps = notes.dependencies ?? [];
   if (deps.length > 0) {
@@ -384,9 +422,19 @@ function plural(n: number, word: string, many = `${word}s`): string {
   return `${n} ${n === 1 ? word : many}`;
 }
 
+/** At most this many characters of any one value from the code: a name, a path, a capability, a reason. */
+const CELL = 500;
+
 /** Long text from code (a reason, a call), shortened for the comment. */
-function clip(text: string, max = 500): string {
+function clip(text: string, max = CELL): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Items for one cell or line: at most MAX_NAMED, then how many more. */
+function listed(items: readonly string[]): string {
+  const shown = items.slice(0, MAX_NAMED);
+  if (items.length > MAX_NAMED) shown.push(`and ${items.length - MAX_NAMED} more`);
+  return shown.join(", ");
 }
 
 /**
@@ -394,10 +442,12 @@ function clip(text: string, max = 500): string {
  * both HTML and markdown. A capability like fs.read(/a` | |\n<!--) must not be able
  * to end a code span, split a table cell, or open an HTML comment that hides the
  * rows after it, because reviewers approve what the comment shows. Markdown inside
- * an HTML <code> tag still renders, so this applies there too.
+ * an HTML <code> tag still renders, so this applies there too. Line breaks become
+ * spaces, and other control characters and bidirectional overrides show as escapes,
+ * as in the text output: `\u202e` could make the text read differently than it is.
  */
 function html(value: string): string {
-  return value
+  return printable(value.replace(/[\r\n\u{2028}\u{2029}]+/gu, " "))
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -410,8 +460,7 @@ function html(value: string): string {
     .replaceAll("$", "&#36;")
     .replaceAll("[", "&#91;")
     .replaceAll("]", "&#93;")
-    .replaceAll("\\", "&#92;")
-    .replace(/[\r\n\u{2028}\u{2029}]+/gu, " ");
+    .replaceAll("\\", "&#92;");
 }
 
 /** A zero-width space: invisible, but it keeps GitHub from turning what follows into a link. */
@@ -424,9 +473,9 @@ const BREAK = "\u{200b}";
  * space after the character that starts each one stops it, and doesn't change what's shown.
  * (Inside <code>, GitHub does none of this except linking URLs, which show as written.)
  */
-function plain(value: string): string {
+function plain(value: string, max = CELL): string {
   return html(
-    value
+    clip(value, max)
       .replace(/[@#:]/g, `$&${BREAK}`)
       .replace(/\b(www|gh)([.-])/gi, `$1${BREAK}$2`)
       .replace(/\b[0-9a-f]{7,}\b/gi, (hex) => hex.replace(/(.{6})(?=.)/g, `$1${BREAK}`)),
@@ -434,5 +483,5 @@ function plain(value: string): string {
 }
 
 function code(value: string): string {
-  return `<code>${html(value)}</code>`;
+  return `<code>${html(clip(value))}</code>`;
 }

@@ -291,7 +291,8 @@ describe("errors exit 2, not 1 (O2, O3, O5)", () => {
     commit("base");
     const { code, out } = permlang("diff", "HEAD", "src", "--head", "--format=%H");
     expect(code).toBe(2);
-    expect(out).toMatch(/^Can't read permlang\.lock\.json at --format=%H/);
+    // Now stopped before git runs: an option's value can't look like an option.
+    expect(out).toMatch(/^--head needs a value, not the option "--format=%H"\./);
     expect(out).not.toContain("not valid JSON");
   });
 

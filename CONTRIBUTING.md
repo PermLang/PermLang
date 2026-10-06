@@ -65,6 +65,12 @@ organized.
    including any new known limit.
 6. **Open a pull request.** Every check must pass before it can merge.
 
+PermLang checks its own pull requests with the pull request's own copy of the
+Action (`uses: ./` in `.github/workflows/permlang.yml`), so a change to PermLang
+can change how its own check runs. Checking with the last release instead is a
+planned follow-up; until then, reviewers read changes to `src/` and `action.yml`
+with that in mind.
+
 ## Versions
 
 Before 1.0, a change that can make previously passing code fail (detecting

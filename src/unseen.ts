@@ -23,9 +23,12 @@ export function unseenFrom(start: Unit, edgesFrom: ReadonlyMap<Unit, readonly Ed
     for (const edge of edgesFrom.get(unit) ?? []) if (!via.has(edge.to)) via.set(edge.to, via.get(unit) ?? edge.to);
   }
   const reasons = new Set<string>();
+  // An anonymous function reached through its type (units.ts) runs part of the unit around it.
+  const anonymous = [...via.keys()].filter((u) => u.around !== undefined);
   const add = (node: Node, reason: string) => {
-    const unit = unitOf(enclosingUnitNode(node));
-    if (!unit || !via.has(unit)) return;
+    const around = unitOf(enclosingUnitNode(node));
+    const unit = around && via.has(around) ? around : anonymous.find((u) => u.around === around && u.node.getPos() <= node.getPos() && node.getEnd() <= u.node.getEnd());
+    if (!unit) return;
     const through = via.get(unit);
     reasons.add(through ? `${reason} (through ${through.name})` : reason);
   };

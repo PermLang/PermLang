@@ -8,12 +8,13 @@
 //   - a project file: its top-level code runs, and any of its exports can be called
 //     (call-graph edges, see graph.ts);
 //   - a package with no adapter: trusted, and listed like any call into it (PERM006);
-//   - JSON, an asset, or a package declared pure: nothing;
+//   - data (JSON, an asset; see loadsData), or a package declared pure: nothing;
 //   - anything else is unverifiable: a module whose functions carry capabilities
 //     (child_process, fs, a database client, a package an adapter maps), a URL, a
 //     computed specifier, or a file outside the project (JavaScript behind a .d.ts).
 
 import { isBuiltin } from "node:module";
+import path from "node:path";
 import { Node, SyntaxKind, ts, type CallExpression, type SourceFile } from "ts-morph";
 import { packageName, type AdapterIndex } from "../adapters.js";
 import { isRequire, requiresCapabilityModule } from "./functions.js";
@@ -74,7 +75,8 @@ export function loadTarget(load: Load, adapters: AdapterIndex): LoadTarget {
   const resolved = resolve(specifier, from, mode);
   const file = resolved && from.getProject().getSourceFile(resolved);
   if (file && !file.isDeclarationFile() && !file.getFilePath().split("/").includes("node_modules")) return { kind: "file", file };
-  if (isAsset(specifier) || resolved?.endsWith(".json")) return { kind: "none" };
+  const viaRequire = mode === "require" || importCallsUseRequire(from);
+  if (loadsData(specifier, from, viaRequire) || (!viaRequire && resolved?.endsWith(".json"))) return { kind: "none" };
   // A relative path that isn't a project file: JavaScript the checker doesn't analyze.
   if (specifier.startsWith(".") || specifier.startsWith("/")) return { kind: "unverifiable" };
 
@@ -85,18 +87,93 @@ export function loadTarget(load: Load, adapters: AdapterIndex): LoadTarget {
   return { kind: "package", name };
 }
 
-function resolve(specifier: string, from: SourceFile, mode: "require" | "import"): string | undefined {
+function resolve(specifier: string, from: SourceFile, mode: "require" | "import", options: ts.CompilerOptions = {}): string | undefined {
   const project = from.getProject();
   const resolutionMode = mode === "require" ? ts.ModuleKind.CommonJS : ts.ModuleKind.ESNext;
-  return ts.resolveModuleName(specifier, from.getFilePath(), project.getCompilerOptions(), project.getModuleResolutionHost(), undefined, undefined, resolutionMode)
+  const compilerOptions = { ...project.getCompilerOptions(), ...options };
+  return ts.resolveModuleName(specifier, from.getFilePath(), compilerOptions, project.getModuleResolutionHost(), undefined, undefined, resolutionMode)
     .resolvedModule?.resolvedFileName;
+}
+
+// --- data and code -----------------------------------------------------------
+
+/**
+ * Whether loading `specifier` loads data rather than code. A bundler, or Node's ES module
+ * loader, loads a stylesheet, an image, or JSON as what it is (Node won't load an unknown
+ * extension at all). Node's require() runs any file but a .json one as JavaScript, and
+ * adds `.js` to a path that doesn't exist: `require("./theme.css")` runs ./theme.css, or
+ * ./theme.css.js. So through require(), only a .json file that exists is data.
+ */
+export function loadsData(specifier: string, from: SourceFile, viaRequire: boolean): boolean {
+  if (!viaRequire) return isAsset(specifier);
+  // Node picks the loader by the exact extension (`./data.JSON` runs as JavaScript), and
+  // a query string is part of the file name.
+  if (!specifier.endsWith(".json")) return false;
+  if (specifier.startsWith(".") || path.isAbsolute(specifier)) {
+    return from.getProject().getFileSystem().fileExistsSync(path.resolve(from.getDirectoryPath(), specifier));
+  }
+  // A package's file: TypeScript finds it when it's told it may resolve JSON.
+  return resolve(specifier, from, "require", { resolveJsonModule: true })?.endsWith(".json") === true;
+}
+
+/**
+ * Whether a module reference loads through require(): `import x = require()` always does,
+ * and an `import`, `export ... from`, or `import()` does in a file TypeScript compiles to
+ * CommonJS.
+ */
+export function referenceUsesRequire(reference: Node): boolean {
+  if (Node.isImportEqualsDeclaration(reference)) return true;
+  if (Node.isCallExpression(reference)) return importCallsUseRequire(reference.getSourceFile());
+  return emitsCommonJs(reference.getSourceFile());
+}
+
+// TypeScript's module kinds that emit ES modules: imports stay imports.
+const ES_MODULE_KINDS = new Set([ts.ModuleKind.ES2015, ts.ModuleKind.ES2020, ts.ModuleKind.ES2022, ts.ModuleKind.ESNext, ts.ModuleKind.Preserve]);
+const commonJs = new WeakMap<SourceFile, boolean>();
+
+/**
+ * Whether TypeScript compiles a file's imports into require() calls: "module" is CommonJS
+ * (or AMD, UMD, or unset with an old target), or the file is Node's CommonJS: a .cts file,
+ * or, under Node16 and later, one in a package that isn't `"type": "module"`.
+ */
+function emitsCommonJs(file: SourceFile): boolean {
+  let known = commonJs.get(file);
+  if (known === undefined) {
+    const project = file.getProject();
+    const options = project.getCompilerOptions();
+    const name = file.getFilePath();
+    const kind = moduleKind(options);
+    if (/\.c[jt]s$/.test(name)) known = true;
+    else if (/\.m[jt]s$/.test(name)) known = false;
+    else if (isNodeModuleKind(kind)) known = ts.getImpliedNodeFormatForFile(name, undefined, project.getModuleResolutionHost(), options) !== ts.ModuleKind.ESNext;
+    else known = !ES_MODULE_KINDS.has(kind);
+    commonJs.set(file, known);
+  }
+  return known;
+}
+
+/** Whether TypeScript compiles `import(x)` in this file into require(x). Node16 and later keep it, even in CommonJS. */
+function importCallsUseRequire(file: SourceFile): boolean {
+  const kind = moduleKind(file.getProject().getCompilerOptions());
+  return emitsCommonJs(file) && !isNodeModuleKind(kind) && kind !== ts.ModuleKind.Preserve;
+}
+
+/** "module" as TypeScript defaults it: CommonJS, unless the target is ES2015 or later. */
+function moduleKind(options: ts.CompilerOptions): ts.ModuleKind {
+  if (options.module !== undefined) return options.module;
+  return (options.target ?? ts.ScriptTarget.ES5) >= ts.ScriptTarget.ES2015 ? ts.ModuleKind.ES2015 : ts.ModuleKind.CommonJS;
+}
+
+function isNodeModuleKind(kind: ts.ModuleKind): boolean {
+  return kind >= ts.ModuleKind.Node16 && kind <= ts.ModuleKind.NodeNext;
 }
 
 // Non-code imports that bundlers handle; TypeScript doesn't resolve them without declarations.
 const ASSET = /\.(css|scss|sass|less|styl|svg|png|jpe?g|gif|webp|avif|ico|json|md|mdx|txt|wasm|html)$/i;
 
 /**
- * A stylesheet, image, or other file a bundler loads, judged by the path alone: a query
+ * A stylesheet, image, or other file a bundler loads, judged by the path alone (enough
+ * only for an ES import; see loadsData): a query
  * or fragment (`./styles.css?inline`) doesn't change what's loaded, so `./evil.js?x=.css`
  * is still a script. A URL is never an asset: `data:text/javascript,...//.css` is code.
  */

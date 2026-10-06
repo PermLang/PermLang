@@ -66,7 +66,7 @@ perm process_refund  src/refunds.ts#processRefund
 
 | Code | Meaning |
 | --- | --- |
-| SPEC001 | The spec file is invalid. |
+| SPEC001 | The spec file is invalid. `permlang spec` then exits 2, like any other error in what it was given; 1 means permission errors only. |
 | SPEC002 | The `implements:` function wasn't found among the checked files, or its name matches more than one function. |
 | SPEC003 | The implementation reaches something `perms:` doesn't allow. The check fails. |
 | SPEC004 | `perms:` allows something the implementation never uses (a warning, to keep specs minimal). |

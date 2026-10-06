@@ -50,12 +50,21 @@ describe("output for GitHub", () => {
   /** How the Actions runner decodes a workflow command's values. */
   const unescape = (s: string) => s.replace(/%(25|0D|0A|3A|2C)/g, (_, hex: string) => String.fromCharCode(Number.parseInt(hex, 16)));
 
+  // Code text is shown as the text report shows it: with escapes for line breaks, control
+  // characters, and bidirectional overrides, apart from PermLang's own break before a reason.
+  const shown = (message: string) => {
+    const own = /\n[ \t]*(?=but |which )/.exec(message);
+    return own ? `${printable(message.slice(0, own.index))}\n${printable(message.slice(own.index + own[0].length))}` : printable(message);
+  };
+  const unprintable = new RegExp("[\\u0000-\\u0009\\u000b-\\u001f\\u007f-\\u009f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069]");
+
   it("writes one workflow command per diagnostic, which decodes back to exactly its text", () => {
     fc.assert(
       fc.property(fc.array(item, { maxLength: 5 }), (items) => {
         const out = formatAnnotations(report(items.map((i) => i.d)), root);
-        // A raw line break would let code text start a command of its own.
-        expect(out).not.toContain("\r");
+        // A raw line break would let code text start a command of its own, and an escape
+        // sequence or bidirectional override would reach the log as it is.
+        expect(out).not.toMatch(unprintable);
         const lines = out === "" ? [] : out.split("\n");
         expect(lines).toHaveLength(items.length);
         const ordered = [...items.filter((i) => i.d.severity === "error"), ...items.filter((i) => i.d.severity === "warning")];
@@ -65,9 +74,8 @@ describe("output for GitHub", () => {
           expect(m).not.toBeNull();
           const [, severity, f, l, c, title, message] = m!;
           expect([severity, unescape(f!), Number(l), Number(c)]).toEqual([d.severity, file, d.line, d.column]);
-          expect(unescape(title!)).toBe(`PermLang ${d.code}${d.capability ? `: ${d.capability}` : ""}`);
-          const lines = d.message.split("\n").map((s) => s.trim());
-          expect(unescape(message!)).toBe(lines.join("\n") + (d.fix ? `\n-> ${d.fix}` : ""));
+          expect(unescape(title!)).toBe(`PermLang ${d.code}${d.capability ? `: ${printable(d.capability)}` : ""}`);
+          expect(unescape(message!)).toBe(shown(d.message) + (d.fix ? `\n-> ${printable(d.fix)}` : ""));
         });
       }),
     );

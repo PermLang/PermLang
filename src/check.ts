@@ -23,6 +23,7 @@ import { forEachDescendant, lineAndColumn } from "./walk.js";
 import { collectEdges, holderOf, pathTo, propagate, type Edge, type GraphContext, type Reach } from "./graph.js";
 import {
   annotationComments,
+  createAnonymousUnit,
   createDeclaredUnit,
   createUnit,
   declaredCapabilities,
@@ -30,8 +31,9 @@ import {
   exportedDeclarations,
   isAnnotated,
   isInNodeModules,
+  isInside,
   isUnitNode,
-  ownDeclarationFiles,
+  PackageFolders,
   readModuleAnnotation,
   unitNodeForDeclaration,
   type Unit,
@@ -204,10 +206,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   clearResolutionCache();
   const loaded = loadAdapters(options.adapters ?? []);
   if (loaded.errors.length > 0) throw new AdapterError(loaded.errors);
-  const adapters = new AdapterIndex(loaded.adapters);
+  const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
+  // Folders with their own package.json: the project's own, and packages in its folders.
+  const packages = new PackageFolders(sourceFiles);
+  const adapters = new AdapterIndex(loaded.adapters, (declaration) => packages.localPackage(declaration)?.name);
   const strictness = options.strictness ?? "development";
 
-  const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
   const units = new Map<Node, Unit>();
   const diagnostics: Diagnostic[] = [];
 
@@ -235,15 +239,24 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   //    (Importing it isn't reported: there would be no way to accept that import.)
   const exported = groupBy([...units.values()].filter((u) => u.exported), (u) => u.node.getSourceFile());
   const declared = new Map<Node, Unit>();
-  const isOwnDeclarationFile = ownDeclarationFiles(sourceFiles);
   const declaredUnit = (node: Node): Unit | undefined => {
-    if (Node.isSourceFile(node) || !node.getSourceFile().isDeclarationFile() || !isOwnDeclarationFile(node.getSourceFile())) return undefined;
+    if (Node.isSourceFile(node) || !node.getSourceFile().isDeclarationFile() || !packages.isOwn(node.getSourceFile())) return undefined;
     if (unitNodeForDeclaration(node) !== node) return undefined; // not a value the project declares (an ambient package, a type)
     if (!declared.has(node)) declared.set(node, createDeclaredUnit(node));
     return declared.get(node);
   };
+  //    An anonymous function that a call reaches through its type (a function kept in a Map,
+  //    say) gets a unit too: the part of the unit around it that's inside it.
+  const anonymous = new Map<Node, Unit>();
+  const anonymousUnit = (node: Node): Unit | undefined => {
+    if (!Node.isArrowFunction(node) && !Node.isFunctionExpression(node)) return undefined;
+    const around = units.get(enclosingUnitNode(node));
+    if (!around) return undefined;
+    if (!anonymous.has(node)) anonymous.set(node, createAnonymousUnit(node, around));
+    return anonymous.get(node);
+  };
   const context: GraphContext = {
-    unitOf: (node: Node) => units.get(node) ?? declaredUnit(node),
+    unitOf: (node: Node) => units.get(node) ?? declaredUnit(node) ?? anonymousUnit(node),
     // Every analyzed file has one: its top-level code.
     exportedUnits: (file) => exported.get(file)!,
     hierarchy: new Hierarchy(sourceFiles),
@@ -255,7 +268,13 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     if (reason !== undefined) unanalyzable(sf, reason);
     return found;
   });
-  const reach = propagate([...units.values(), ...declared.values()], edges);
+  // An anonymous function's calls are those of the unit around it made inside it.
+  const aroundEdges = groupBy(edges, (e) => e.from);
+  for (const unit of anonymous.values()) {
+    const inside = isInside(unit.node);
+    for (const edge of aroundEdges.get(unit.around!) ?? []) if (inside(edge)) edges.push({ ...edge, from: unit });
+  }
+  const reach = propagate([...units.values(), ...declared.values(), ...anonymous.values()], edges);
   const edgesFrom = groupBy(edges, (e) => e.from);
 
   // 3. Compare declared with actual.
@@ -276,11 +295,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   unsafe.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
   // Packages with no adapter: listed always; a diagnostic unless trusted.
-  const unmappedUses = unmappedPackages(sourceFiles, adapters);
+  const unmappedUses = unmappedPackages(sourceFiles, adapters, packages);
   const policy = options.unmapped ?? "warn";
   if (policy !== "trust") {
     for (const u of unmappedUses) {
       const unit = units.get(enclosingUnitNode(u.node))!;
+      const counts = `${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}`;
       diagnostics.push({
         severity: policy === "error" ? "error" : "warning",
         code: "PERM006",
@@ -290,8 +310,15 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         function: unit.name,
         capability: u.package,
         call: "",
-        message: `${unit.name} calls into ${u.package} (${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}), which has no adapter, so what it touches isn't checked.`,
-        fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see docs/reference.md).`,
+        ...(u.folder === undefined
+          ? {
+              message: `${unit.name} calls into ${u.package} (${counts}), which has no adapter, so what it touches isn't checked.`,
+              fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see docs/reference.md).`,
+            }
+          : {
+              message: `${unit.name} calls into ${u.package} (${counts}), the package in ${relativeFolder(u.file, u.folder)}, which has no adapter, so what its JavaScript touches isn't checked.`,
+              fix: `add an adapter manifest for ${u.package} to "adapters" in permlang.config.json, or declare it pure with "default": [] (see docs/reference.md). Built-in adapters don't cover a folder in the repository.`,
+            }),
       });
     }
   }
@@ -311,9 +338,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         capability: u.specifier,
         call: "",
         message: `imports ${u.specifier}, whose types can't be found, so nothing called from it is checked.`,
-        fix: /^node:|^(fs|child_process|http|https|net|path|os|crypto)$/.test(u.specifier)
-          ? "install @types/node."
-          : `install its types (the package itself, or @types/${u.specifier.replace(/^@/, "").replace("/", "__")}).`,
+        fix: unresolvedFix(u.specifier),
       });
     }
   }
@@ -557,9 +582,11 @@ function unverifiable(unit: Unit, site: Use | Edge, verb: string, path: string[]
 
 /**
  * How to resolve unverifiable code, naming something that can carry @perm-unsafe: never a
- * file's top-level code (a @module comment can't), and never a .d.ts declaration.
+ * file's top-level code (a @module comment can't), a .d.ts declaration, or an anonymous function.
  */
-function unverifiableFix(unit: Unit, holder: Unit): string {
+function unverifiableFix(unit: Unit, reached: Unit): string {
+  // An anonymous function's code is the unit around it's, which takes the annotation.
+  const holder = reached.around ?? reached;
   if (unanalyzed.has(holder)) return "simplify the file so PermLang can analyze it (split up its most deeply nested code, if that's the reason).";
   if (holder.declarationOnly) {
     const js = path.basename(holder.file).replace(/.d.([cm]?)ts$/, ".$1js");
@@ -604,6 +631,23 @@ function annotationFix(unit: Unit, key: string): string {
     return named ? `add /** @perm ${key} */ above class ${named}.` : `add a constructor to the class, with /** @perm ${key} */.`;
   }
   return `add /** @perm ${key} */ to ${unit.name}.`;
+}
+
+/** A folder as an import from `file` would name it: `./gen`, `../lib/client`. */
+function relativeFolder(file: string, folder: string): string {
+  const relative = path.relative(path.dirname(file), folder).replaceAll("\\", "/");
+  return relative.startsWith("../") || relative === ".." ? relative : `./${relative}`;
+}
+
+/** How to give an import whose types can't be found its types. */
+function unresolvedFix(specifier: string): string {
+  if (/^node:|^(fs|child_process|http|https|net|path|os|crypto)$/.test(specifier)) return "install @types/node.";
+  // A file of the project's: missing, or JavaScript with no types. Where imports compile to
+  // require(), a stylesheet or image is one too (see detect/modules.ts).
+  if (specifier.startsWith(".") || path.isAbsolute(specifier)) {
+    return "make sure the file exists and has types (a .ts file, or a .d.ts next to it). Where imports compile to require(), anything but a .json file that exists runs as JavaScript.";
+  }
+  return `install its types (the package itself, or @types/${specifier.replace(/^@/, "").replace("/", "__")}).`;
 }
 
 /** An @perm or @perm-unsafe tag that no function or file takes, so nothing checks it. */

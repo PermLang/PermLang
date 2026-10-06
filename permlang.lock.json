@@ -87,6 +87,31 @@
       "fs.read(tsconfig.json)",
       "fs.write"
     ],
+    "src/init-workflow.ts#defaultBranch": [
+      "exec"
+    ],
+    "src/init-workflow.ts#gitRoot": [
+      "exec",
+      "fs.read"
+    ],
+    "src/init-workflow.ts#installSteps": [
+      "fs.read"
+    ],
+    "src/init-workflow.ts#isOwn": [
+      "exec",
+      "fs.read"
+    ],
+    "src/init-workflow.ts#read": [
+      "fs.read"
+    ],
+    "src/init-workflow.ts#workflowFile": [
+      "exec",
+      "fs.read"
+    ],
+    "src/init-workflow.ts#workflowTarget": [
+      "exec",
+      "fs.read"
+    ],
     "src/load.ts#add": [
       "fs.read"
     ],
@@ -99,6 +124,35 @@
     "src/load.ts#projectOfTsConfig": [
       "fs.read"
     ],
+    "src/lock-moves.ts#atBase": [
+      "exec"
+    ],
+    "src/lock-moves.ts#gitText": [
+      "exec"
+    ],
+    "src/lock-moves.ts#here": [
+      "fs.read"
+    ],
+    "src/lock-moves.ts#isPermLang": [
+      "exec",
+      "fs.read"
+    ],
+    "src/lock-moves.ts#locksRead": [
+      "exec",
+      "fs.read"
+    ],
+    "src/lock-moves.ts#movedLocks": [
+      "exec",
+      "fs.read"
+    ],
+    "src/lock-moves.ts#permLangSteps": [
+      "exec",
+      "fs.read"
+    ],
+    "src/lock-moves.ts#repositoryRoot": [
+      "exec",
+      "fs.read"
+    ],
     "src/main.ts#analyze": [
       "fs.read",
       "fs.read(permlang.config.json)",
@@ -106,13 +160,11 @@
     ],
     "src/main.ts#check": [
       "env(GITHUB_WORKSPACE)",
+      "exec",
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)",
       "fs.write"
-    ],
-    "src/main.ts#defaultBranch": [
-      "exec"
     ],
     "src/main.ts#dependencyAdapters": [
       "fs.read",
@@ -130,14 +182,11 @@
       "fs.read",
       "fs.read(package.json)",
       "fs.read(permlang.config.json)",
-      "fs.read(tsconfig.json)"
+      "fs.read(tsconfig.json)",
+      "fs.write"
     ],
-    "src/main.ts#diffAt": [
-      "exec",
-      "fs.read",
-      "fs.read(package.json)",
-      "fs.read(permlang.config.json)",
-      "fs.read(tsconfig.json)"
+    "src/main.ts#diffMarker": [
+      "env(GITHUB_WORKSPACE)"
     ],
     "src/main.ts#expand": [
       "fs.read"
@@ -151,19 +200,12 @@
     "src/main.ts#git": [
       "exec"
     ],
-    "src/main.ts#gitRoot": [
-      "exec",
-      "fs.read"
-    ],
     "src/main.ts#init": [
       "exec",
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)",
       "fs.write"
-    ],
-    "src/main.ts#installSteps": [
-      "fs.read"
     ],
     "src/main.ts#installed": [
       "fs.read"
@@ -201,14 +243,6 @@
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
-    ],
-    "src/main.ts#workflowFile": [
-      "exec",
-      "fs.read"
-    ],
-    "src/main.ts#workflowTarget": [
-      "exec",
-      "fs.read"
     ],
     "src/main.ts#writeText": [
       "fs.write"

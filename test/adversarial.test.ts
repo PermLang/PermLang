@@ -241,6 +241,13 @@ const caught: Record<string, string> = {
   i35_project_this: "import * as cp from \"node:child_process\";\nfunction run(this: unknown) { return (this as any).execSync(\"id\"); }\nexport function t() { return run.call(cp); }",
   i36_cast_function_this: "import * as cp from \"node:child_process\";\ndeclare const handler: (this: unknown) => void;\nexport function t() { return (handler as any).call(cp); }",
   j06_library_this: "import * as fs from \"node:fs\";\nexport function t() { return fs.readFileSync.bind(fs); }",
+  // Engine re-verification (0.4): require() runs a file that only looks like an asset as JavaScript,
+  // or adds `.js` when it doesn't exist (./theme.css.js). Only a .json file that exists is data.
+  rve01_require_stylesheet: "export function t() { return require(\"./rve01-theme.css\"); }",
+  rve02_require_missing_json: "export function t() { return require(\"./rve02-data.json\"); }",
+  // A call through a callable interface, or a collection of functions, runs what's written against it.
+  rve03_callable_interface: "import { execSync } from \"node:child_process\";\ninterface Runner03 { (cmd: string): void }\nconst shell03: Runner03 = (cmd) => { execSync(cmd); };\nexport function t(run: Runner03, c: string) { return run(c); }",
+  rve04_map_of_functions: "import { execSync } from \"node:child_process\";\nconst ops04 = new Map<string, (arg: string) => unknown>();\nfunction register04() { ops04.set(\"run\", (arg) => execSync(arg)); }\nexport function t(op: string, arg: string) { return ops04.get(op)!(arg); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -264,7 +271,8 @@ const silent: Record<string, string> = {
   // Engine review (0.4): loading modules that touch nothing.
   en_fp01_require_pure: "export function t() { const p = require(\"path\"); return p.join(\"a\", \"b\"); }",
   en_fp02_import_const_pure: "const spec = \"node:path\";\nexport async function t() { return (await import(spec)).join(\"a\", \"b\"); }",
-  en_fp03_stylesheet: "import \"./missing-styles.css\";\nimport \"./missing-styles.css?inline\";\nexport const x = 1;",
+  // (en_fp03, a stylesheet import, moved to modules.test.ts: this project compiles imports to
+  // require(), which would run ./missing-styles.css.js. A bundler's project doesn't.)
   en_fp04_node_url: "export function t() { return new URL(\"data:text/plain,hello\").href; }",
   // A class with a same-named member that can't stand in for the interface isn't an implementation.
   // (All cases share one project, so these use member names no other case has.)
@@ -310,10 +318,18 @@ const silent: Record<string, string> = {
   fp25_reflect_get_reads: "export function t(k: string) { return [Reflect.get(globalThis, \"__APP__\"), Reflect.get(window, k)]; }",
   fp26_module_constant: "import * as fs from \"node:fs\";\nexport function t() { return fs.constants.F_OK; }",
   fp27_then_any_harmless: "export function t() { return Promise.resolve(1).then((n: any) => n + 1); }",
+  // Engine re-verification (0.4): a call through a callable type runs what's written against it,
+  // not every function that fits; and a callback runs as part of the code that passes it.
+  rve_fp01_fits_callable: "import { execSync } from \"node:child_process\";\ntype Runner06 = (cmd: string) => void;\nfunction shell06(cmd: string) { execSync(cmd); }\nexport function t(run: Runner06, c: string) { return run(c); }",
+  rve_fp02_callback_parameter: "import { execSync } from \"node:child_process\";\nfunction apply07(run: (c: string) => unknown, c: string) { return run(c); }\nfunction loud07() { return apply07((c) => execSync(c), \"x\"); }\nexport function t() { return apply07((c) => c.length, \"y\"); }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
   c10_global_alias_any: { why: "a global stored as any, then a capability called through it (left silent: `const w = window as any` is common and harmless)", code: "export async function t(u: string) { const w = window as any; return w.fetch(u); }" },
+  rve05_collection_filled_through_parameter: {
+    why: "a function put in a collection through a parameter (written against the parameter's type, not the collection's) isn't linked to calls through the collection",
+    code: "import { execSync } from \"node:child_process\";\nconst jobs05 = new Map<string, () => void>();\nfunction add05(job: () => void) { jobs05.set(\"x\", job); }\n/** @perm exec */\nexport function init() { add05(() => { execSync(\"ls\"); }); }\nexport function t() { jobs05.get(\"x\")!(); }",
+  },
 };
 
 const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
