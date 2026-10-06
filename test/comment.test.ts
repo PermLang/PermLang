@@ -83,10 +83,10 @@ describe("the comment, cut to fit", () => {
 describe("text from the code in the comment", () => {
   // U+202E, BEL, ESC and NUL reached the comment raw (gate verifier, D).
   it("shows control and bidirectional characters as escapes", () => {
-    const evil = "net(a‮exe.b\u0007\u001b[31m\u0000x)";
-    const head: LockFile = { permlang: 2, functions: { "src/a.ts#f": [evil] }, unsafe: { "src/a.ts#f": "why‮\u0007" } };
+    const evil = "net(a\u202eexe.b\u0007\u001b[31m\u0000x)";
+    const head: LockFile = { permlang: 2, functions: { "src/a.ts#f": [evil] }, unsafe: { "src/a.ts#f": "why\u202e\u0007" } };
     const md = formatDiffMarkdown(diffLocks(empty, head), { "src/a.ts#f": { [evil]: ["f", "run(\u001b)"] } });
-    expect(md).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/);
+    expect(md).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
     expect(md).toContain("&#92;u202e");
   });
 });

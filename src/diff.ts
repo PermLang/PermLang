@@ -444,7 +444,7 @@ function listed(items: readonly string[]): string {
  * rows after it, because reviewers approve what the comment shows. Markdown inside
  * an HTML <code> tag still renders, so this applies there too. Line breaks become
  * spaces, and other control characters and bidirectional overrides show as escapes,
- * as in the text output: `‮` could make the text read differently than it is.
+ * as in the text output: `\u202e` could make the text read differently than it is.
  */
 function html(value: string): string {
   return printable(value.replace(/[\r\n\u{2028}\u{2029}]+/gu, " "))
