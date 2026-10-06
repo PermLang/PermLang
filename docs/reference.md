@@ -701,6 +701,13 @@ is what runs:
   context is `ci.secret(all)`: `secrets[matrix.name]`, `secrets[format(...)]`,
   `secrets.*`, `toJSON(secrets)`, or `secrets` by itself.
 - **A byte-order mark** at the start of a file is ignored, as GitHub and npm do.
+- **Line breaks YAML parsers disagree on.** The Actions runner parses YAML with a
+  library that, like YAML 1.1, also ends a line at the invisible characters U+0085,
+  U+2028 and U+2029, so after `# note<U+2028>` it can read a key that other parsers
+  take as part of the comment. A workflow or Action containing any of them is
+  unverifiable. The rest of it is still read, and since the entry carries the file's
+  hash, any edit to the file changes the lock. In an expression, U+0085 separates
+  words, as it does to the runner.
 
 ### Workspaces
 

