@@ -125,11 +125,24 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     written, whether it's a whole statement or stands for an expression in a query
     (`` .where(sql`EXISTS (SELECT 1 FROM secrets)`) ``, a select field, `.set()`,
     `.orderBy()`): a table substituted into it (`${secrets}`) is named by its
-    definition, and other substitutions are values. `sql.raw("...")` is read the
-    same way, and `sql.raw(text)` with text PermLang can't read could touch any
-    table, as can a fragment calling a function it doesn't know. SQL in a schema
-    definition (a column default or generated column, a check, an index condition,
-    a view, a policy) runs inside the database, so it isn't counted.
+    definition, and other substitutions are values. `sql.raw("...")` and
+    `new StringChunk("...")` are read the same way. With text PermLang can't read,
+    they could touch any table, as can a fragment calling a function it doesn't
+    know, SQL put together from pieces (`new SQL([...])`, `sql.fromList([...])`),
+    and an object of the project's own with a `getSQL()` method, substituted into
+    a fragment or passed to a query: drizzle pastes in whatever SQL that returns.
+    SQL that a schema definition holds for the database (a column default or
+    generated column, a check, an index condition, a view, a policy) reaches it
+    through migrations, not a query, so it isn't counted where it's written. Read
+    back out of the schema object (`check(...).value`, `pgPolicy(...).using`,
+    `leads.score.default`, or destructured), it could go into a query, so it could
+    touch any table. A column's `$defaultFn` and `$onUpdateFn` (and `$default`,
+    `$onUpdate`) run when drizzle builds a statement, which then holds the SQL they
+    return: every insert into the table is charged with the defaults' SQL and the
+    update functions', and every update with the update functions'. For an insert
+    or update into a table PermLang can't find, or whose columns it can't all see
+    (spread from something other than a `const` or a project function that returns
+    them), that SQL could read any table: bare `db.read`.
   - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
     `postgres`, `@neondatabase/serverless`, `@vercel/postgres`). When the query
     is literal text, its tables are read out of it: `SELECT ... FROM leads JOIN
@@ -448,6 +461,9 @@ Other gaps, not yet in fixtures:
 - A Drizzle `` sql`...` `` fragment's tables are charged to the code where the
   fragment is written. One kept in a shared constant counts toward its module's
   top-level code (and so toward every importer), not toward each query that uses it.
+- Drizzle schema SQL read back by a computed key or by listing a schema object's
+  members (`Object.values(check(...))`) isn't seen as SQL; read by name, or
+  destructured, it is.
 - Prisma relations are read from the payload types that Prisma 5 and later
   generate. With an older client, any `include`, `select`, or nested argument that
   could name a relation needs bare `db.read` (and `db.write` in `data`), as does
