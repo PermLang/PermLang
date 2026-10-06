@@ -151,7 +151,10 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   doesn't hide it.
 - **Escape hatch.** `@perm-unsafe reason:"..."` suppresses one function's
   own checks. Every use is listed in the report. Callers still have to cover
-  what the function reaches.
+  what the function reaches. It accepts the function's unverifiable code for
+  annotations only: an AI tool that calls it still reaches that code
+  (`PERM008`), and so does a function that hands it a secret a flow rule
+  protects (`PERM009`). A reviewed `eval` still runs whatever it's given.
 - **Adversarial coverage.** Tricks that try to hide access are caught:
   - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
     `paths.forEach(unlinkSync)`, `{ fetch }`. `send.call(thisArg, url)` and
@@ -193,7 +196,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   [loading modules](#loading-modules)), calls into the project's own JavaScript
   through a hand-written `.d.ts`, and a file PermLang couldn't analyze (code
   nested thousands of levels deep, say). The only way to accept it is
-  `@perm-unsafe`, which also stops it from failing the function's callers.
+  `@perm-unsafe`, which also stops it from failing the function's callers'
+  annotations. It doesn't hide it from AI tools or flow rules (see the escape
+  hatch above).
 - **Project configuration (PERM005).** GitHub workflows, Actions, and
   `package.json` scripts are recorded in the lock like code: token permissions,
   secrets, Actions and whether they're pinned, install hooks. See
@@ -519,7 +524,9 @@ doesn't allow, is a `PERM009` error. "Somewhere" is:
 
 - a host `to` doesn't list, or a host that can't be determined (`fetch(url)`);
 - a command (`exec`), or code that can't be verified (`eval`, say): either one
-  could send it anywhere, so no rule can allow it.
+  could send it anywhere, so no rule can allow it. That includes code in a
+  function marked `@perm-unsafe`: the tag accepts it for annotations, not for
+  where data goes.
 
 It's an error at every strictness level, sketch included: a rule is something you
 asked for.
@@ -621,6 +628,10 @@ What counts as unverifiable, and what reaches nothing:
   `editor: new RemoteEditor()`), or a computer factory typed only with the
   library's interface, is unverifiable: the framework calls its methods, and
   their code can't be seen.
+- Unverifiable code in a function marked `@perm-unsafe` still counts. The tag
+  accepts that code for the function's annotations and its callers', but a
+  model's input still reaches it: a tool that hands a template to a reviewed
+  `eval` reaches `unverifiable`.
 - A tool without a handler here counts as unverifiable too, unless its type says
   it runs at the model provider: the AI SDK hands its calls back to your app, a
   provider tool like `bash_20250124()` runs them in whatever sandbox the call is

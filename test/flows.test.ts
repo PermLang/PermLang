@@ -28,6 +28,7 @@ describe("data-flow rules", () => {
       "error viaClient:84 net(evil.example)",
       "error viaExec:89 exec",
       "error viaEval:94 unverifiable",
+      "error viaUnsafe:138 unverifiable",
     ]);
   });
 
@@ -55,6 +56,11 @@ describe("data-flow rules", () => {
     );
     expect(message("viaExec").fix).toBe("keep env(STRIPE_KEY) away from that call: no rule can allow it, since a command could send it anywhere.");
     expect(message("viaEval").message).toContain("runs code that can't be verified, through eval(");
+    // Found in re-verification: @perm-unsafe accepts code for annotations only. A secret handed
+    // to a function marked with it still reaches its eval.
+    expect(message("viaUnsafe").message).toBe(
+      "viaUnsafe reads env(STRIPE_KEY) and runs code that can't be verified, through render → eval(template), which could send it anywhere: the flow rule for env(STRIPE_KEY) allows only net(api.stripe.com).",
+    );
     const nowhere = { from: stripeRule.from, to: [] };
     expect(flows({ flows: [nowhere] }).find((d) => d.function === "viaExec")!.message).toContain("the flow rule for env(STRIPE_KEY) doesn't let it go anywhere.");
   });
@@ -78,7 +84,7 @@ describe("data-flow rules", () => {
 
   // Found in review: sketch, which init sets up, turned these into warnings, so a broken rule passed.
   it("fails at every strictness level, sketch included", () => {
-    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(10).fill("error"));
+    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(11).fill("error"));
   });
 
   it("checks nothing without rules", () => {

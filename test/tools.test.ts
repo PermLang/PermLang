@@ -213,6 +213,15 @@ const first: any = second;
 const second: any = first;
 export const looped = tool({ name: "looped", description: "Loops", execute: first });
 export const loopedDefinition = tool(first);`,
+  // Found in re-verification: @perm-unsafe accepts code for annotations only. A model's input
+  // still reaches the eval and require behind it.
+  vouched: `import { tool } from "@openai/agents";
+/** @perm-unsafe reason:"template compiler, trusted templates only" */
+function render(t: string): unknown { return eval(t); }
+/** @perm-unsafe reason:"plugin loader" */
+function loadPlugin(p: string): unknown { return require(p); }
+export const templateTool = tool({ name: "tpl", description: "Render a template", execute: async ({ t }: { t: string }) => String(render(t)) });
+export const pluginTool = tool({ name: "plugin", description: "Load a plugin", execute: async ({ p }: { p: string }) => String(loadPlugin(p)) });`,
   // The schema is compared by symbol, so renaming the import doesn't hide the handler.
   renamedSchema: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema as CallTool, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -266,11 +275,13 @@ describe("tools given to AI models", () => {
       "@openai/agents looped",
       "@openai/agents loopedDefinition",
       "@openai/agents made",
+      "@openai/agents plugin",
       "@openai/agents raw",
       "@openai/agents reassignable",
       "@openai/agents run",
       "@openai/agents spread",
       "@openai/agents tool",
+      "@openai/agents tpl",
       "@openai/agents untyped",
       "ai deleteUser",
       "ai tool",
@@ -318,6 +329,13 @@ describe("tools given to AI models", () => {
       loaded: "unverifiable",
       disguised: "unverifiable",
     });
+  });
+
+  it("follows a handler into code marked @perm-unsafe", () => {
+    expect(tool(run(), "tpl").reaches).toEqual(["unverifiable"]);
+    expect(tool(run(), "plugin").reaches).toEqual(["unverifiable"]);
+    // The functions that register them aren't failed for it: @perm-unsafe still vouches for that.
+    expect(run({ strictness: "development" }).diagnostics.filter((d) => d.file.endsWith("vouched.ts") && d.code === "PERM004")).toEqual([]);
   });
 
   it("doesn't loop on constants that refer to each other", () => {
@@ -386,6 +404,8 @@ describe("tools given to AI models", () => {
       "warning unfollowable.ts:8 declared",
       "warning unfollowable.ts:9 reassignable",
       "warning vercel.ts:4 deleteUser",
+      "warning vouched.ts:6 tpl",
+      "warning vouched.ts:7 plugin",
     ]);
     const shell = warnings.find((d) => d.capability === "shell")!;
     expect(shell.message).toBe("tool shell (@langchain/core) can be called by an AI model, and reaches exec.");
@@ -410,11 +430,11 @@ describe("tools given to AI models", () => {
     expect(run({ strictness: "development", tools: "error" }).diagnostics.filter((d) => d.code === "PERM008").every((d) => d.severity === "error")).toBe(true);
     // "error" is asked for explicitly, so it fails at sketch too; the default stays a warning.
     const atSketch = (tools?: "error") => run({ strictness: "sketch", ...(tools ? { tools } : {}) }).diagnostics.filter((d) => d.code === "PERM008").map((d) => d.severity);
-    expect(atSketch("error")).toEqual(Array(29).fill("error"));
-    expect(atSketch()).toEqual(Array(29).fill("warning"));
+    expect(atSketch("error")).toEqual(Array(31).fill("error"));
+    expect(atSketch()).toEqual(Array(31).fill("warning"));
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
-    expect(run({ tools: "trust" }).tools).toHaveLength(33);
+    expect(run({ tools: "trust" }).tools).toHaveLength(35);
   });
 
   it("counts an MCP client's connection as network access, and a server talking to its client as none", () => {

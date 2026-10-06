@@ -255,8 +255,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     if (reason !== undefined) unanalyzable(sf, reason);
     return found;
   });
-  const reach = propagate([...units.values(), ...declared.values()], edges);
+  const all = [...units.values(), ...declared.values()];
+  const reach = propagate(all, edges);
   const edgesFrom = groupBy(edges, (e) => e.from);
+  // @perm-unsafe accepts a function's unverifiable code for annotations only. What a model's
+  // input can trigger, or where a protected secret can go, still includes it.
+  const unvouched = all.some((u) => u.own?.unsafe) ? propagate(all, edges, { vouched: false }) : reach;
 
   // 3. Compare declared with actual.
   const functions: FunctionReport[] = [];
@@ -328,7 +332,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
       if (registered.has(t.site)) continue;
       registered.add(t.site);
       const registrar = units.get(enclosingUnitNode(t.site))!;
-      const reaches = [...handlerReach(t, { units, reach, edgesFrom })].sort();
+      const reaches = [...handlerReach(t, { units, reach: unvouched, edgesFrom })].sort();
       const file = t.site.getSourceFile();
       const { line, column } = file.getLineAndColumnAtPos(t.site.getStart());
       tools.push({ name: t.name, framework: t.framework, file: file.getFilePath(), line, function: registrar.name, reaches });
@@ -350,7 +354,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   }
 
   // Data-flow rules: a function that reads protected data and can send it elsewhere.
-  if (options.flows && options.flows.length > 0) diagnostics.push(...flowDiagnostics(units.values(), edges, reach, options.flows));
+  if (options.flows && options.flows.length > 0) diagnostics.push(...flowDiagnostics(units.values(), edges, unvouched, options.flows));
 
   // Sketch relaxes the annotation rules only. What the configuration asks for explicitly (flow
   // rules, and "error" for unmapped packages or AI tools) fails at every level.
