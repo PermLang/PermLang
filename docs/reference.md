@@ -103,7 +103,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `.bind`, whose arguments can't be read. An extended client's (`$extends`)
     operations name their model only where they're called on one
     (`client.lead.findMany(...)`); reached any other way, they could be any
-    operation of any model. A query extension's `query`
+    operation of any model. So could a model chosen at run time, with a key that
+    isn't one literal (`prisma[model].findMany()`, `(prisma as any)[name]`): bare
+    `db.read` and `db.write` where it's chosen. A query extension's `query`
     (`$extends({ query: { lead: { findMany({ args, query }) {...} } } })`) runs the
     operation it intercepts: `query({ ...args, include: { owner: true } })` there is
     checked like `prisma.lead.findMany(...)` with those arguments, in the
@@ -337,15 +339,19 @@ and as "known misses" in the adversarial suite
 the harmless code that must stay silent. Each miss's test fails once it's fixed,
 so the list can't go stale.
 
-- Values typed `any`: nothing called on them can be resolved. Where a value
-  with known capabilities becomes `any`, the escape itself is checked:
+- Values typed `any`: nothing called on them can be resolved. Where a global
+  object, a capability module, or a database client becomes `any`, the escape
+  itself is checked:
   - A member read off a cast is looked up on the original type and reported as
     the access it is: `(globalThis as any).fetch(url)`,
     `(childProcess as any)["exec"](cmd)`, `(process as any).env.KEY`,
     `(globalThis.process as any).env.KEY`, and down a chain of members
     (`(window as any).navigator.sendBeacon(url)`) or into a constructor
     (`new (globalThis as any).WebSocket(url)`). Casts to `Record<string, any>`
-    and through `unknown` count too.
+    and through `unknown` count too. Database clients are followed this way too:
+    a Prisma client or one of its models (`(prisma as any).lead.deleteMany()`),
+    a Drizzle database, or a SQL client's pool or connection
+    (`(pool as any).query(sql)`).
   - A capability module is any value whose type is one: a namespace or default
     import, `import cp = require(...)`, the result of `await import(...)` or
     `process.getBuiltinModule(...)`, or a module of the project's own that
@@ -361,9 +367,11 @@ so the list can't go stale.
   - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
     and `(require as any)(...)` are still `require`.
 
-  Two things stay unchecked. A global object stored as `any`
-  (`const w = window as any; w.fetch(url)`) isn't followed: that cast is common
-  and almost always harmless, so it isn't reported. And a value that was `any`
+  Two things stay unchecked. A global object or database client stored as `any`
+  (`const w = window as any; w.fetch(url)`, `const p: any = prisma`), passed on
+  as `any` or `unknown`, or (other than a Prisma client's model, above) read with a
+  computed key isn't followed: those are common and almost always harmless (a client handed to
+  a framework's container, say), so they aren't reported. And a value that was `any`
   from the start, such as an untyped parameter, has nothing to trace; that
   includes a module handed through a promise or a collection to a named
   function whose parameter is `any` (`Promise.resolve(cp).then(handle)`, with

@@ -36,3 +36,11 @@ export async function filledIn(value: string) {
   await myp.query("SELECT 1 /* ? */ FROM leads", [value]); // expect: error PERM001 db.read expect: error PERM001 db.write
   await myp.execute("SELECT '?' FROM leads", [value]);
 }
+
+// A client cast to `any`: members read straight off the cast are looked up on its own type.
+/** @perm db.read(leads) */
+export async function cast(register: (value: unknown) => void) {
+  await (pool as any).query("DELETE FROM secrets"); // expect: error PERM001 db.write(secrets)
+  await (myp as unknown as { query(sql: string): Promise<unknown> }).query("SELECT * FROM secrets"); // expect: error PERM001 db.read(secrets)
+  register(pool);
+}

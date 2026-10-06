@@ -277,6 +277,19 @@ const ext = prisma.$extends({});
 /** @perm env(NONE) */ export function extendedValue() { return [{}].map(ext.lead.findMany); }
 /** @perm env(NONE) */ export function extendedCall() { return ext.lead.create.call(ext.lead, {}); }
 /** @perm env(NONE) */ export function extendedAlias() { const find = ext.lead.findMany; return find({ include: { owner: true } }); }
+// A member read straight off a cast is looked up on the client's own type.
+/** @perm env(NONE) */ export function castClient() { return (prisma as any).lead.delete({ where: { owner: { email: "x" } } }); }
+/** @perm env(NONE) */ export function castModel() { return (prisma.apiKey as any).delete({ where: { id: 1 } }); }
+/** @perm env(NONE) */ export function castThroughUnknown() { return (prisma as unknown as { user: { create(a: object): unknown } }).user.create({ data: {} }); }
+// Stored or passed on as \`any\`, a client isn't followed, like a global object.
+/** @perm env(NONE) */ export function castStored(register: (value: any) => void) { const p: any = prisma; register(p); return p.lead.delete({}); }
+// A model chosen at run time could be any model, whatever is called on it.
+/** @perm env(NONE) */ export function modelByName(model: string) { return (prisma as any)[model].delete({}); }
+/** @perm env(NONE) */ export function modelByUnion(model: "lead" | "user") { return prisma[model].findMany(); }
+/** @perm env(NONE) */ export function modelByRecord(model: string) { return (prisma as unknown as Record<string, { delete(a: object): unknown }>)[model]!.delete({}); }
+/** @perm env(NONE) */ export function extendedByName(model: "lead" | "user") { return ext[model].findMany(); }
+/** @perm env(NONE) */ export function modelByLiteral(model: "lead") { return [prisma["lead"].findMany(), prisma[model].findMany()]; }
+/** @perm env(NONE) */ export function otherComputed(filters: Record<string, string>, key: string) { return [filters[key], prisma.lead.findMany()]; }
 `,
   // Query extensions: a callback's \`query\` runs the operation it intercepts, with the arguments it's given.
   "src/extensions.ts": `
@@ -514,6 +527,17 @@ describe("related tables", () => {
     ["extendedValue", ["db.read", "db.write"]],
     ["extendedCall", ["db.read", "db.write"]],
     ["extendedAlias", ["db.read", "db.write"]],
+    ["castClient", ["db.read(user)", "db.write(lead)"]],
+    ["castModel", ["db.write(apiKey)"]],
+    ["castThroughUnknown", ["db.write(user)"]],
+    ["castStored", []],
+    ["modelByName", ["db.read", "db.write"]],
+    // These delegates share findMany's signature, so TypeScript resolves it to the first.
+    ["modelByUnion", ["db.read", "db.read(lead)", "db.write"]],
+    ["modelByRecord", ["db.read", "db.write"]],
+    ["extendedByName", ["db.read", "db.write"]],
+    ["modelByLiteral", ["db.read(lead)"]],
+    ["otherComputed", ["db.read(lead)"]],
     ["extendedOther", ["db.read", "db.write"]],
     ["extendedThen", ["db.read(lead)"]],
     ["extendedAfterList", ["db.read(lead)", "db.read(user)"]],

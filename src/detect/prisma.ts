@@ -20,11 +20,12 @@
 // the client it generates into node_modules/.prisma/client, and a client generated
 // into a custom `output` folder, which Prisma marks (isGeneratedClient).
 
-import { Node, type ImportDeclaration, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, type ImportDeclaration, type SourceFile, type Type } from "ts-morph";
 import { packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
+import { descendantsOfKind } from "../walk.js";
 import { accessor, argumentAccess, modelNamed, relationAccess, scoped, type Arguments, type Model } from "./prisma-args.js";
-import { argumentsOf, containerName, unwrapExpression, type CallLike } from "./shared.js";
+import { argumentsOf, containerName, literalString, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 
 const READS = new Set([
   "findUnique", "findUniqueOrThrow", "findFirst", "findFirstOrThrow", "findMany",
@@ -150,8 +151,41 @@ function isIndirect(call: CallLike): boolean {
   return name === "call" || name === "apply" || name === "bind";
 }
 
+/**
+ * A model chosen at run time, `prisma[model].findMany()` or `(prisma as any)[name]`: what's
+ * called on it could be any operation of any model, and TypeScript resolves it to no one
+ * declaration, so it's charged here. A literal key is an ordinary member (`prisma["lead"]`),
+ * and a computed key called directly (`prisma[method]()`) is a computed call (computed.ts).
+ */
+export function computedModels(sourceFile: SourceFile): { node: Node; uses: CapabilityUse[] }[] {
+  const found: { node: Node; uses: CapabilityUse[] }[] = [];
+  for (const access of descendantsOfKind(sourceFile, SyntaxKind.ElementAccessExpression)) {
+    const key = access.getArgumentExpression();
+    // A key with one literal value, by value or by type (`model: "lead"`), names one member.
+    if (!key || literalString(key) !== undefined || (key.getType().isStringLiteral() && unwrapExpression(key) === key)) continue;
+    const parent = access.getParent();
+    if (Node.isCallExpression(parent) && parent.getExpression() === access) continue;
+    if (!holdsModels(unwrapExpression(access.getExpression()).getType(), access)) continue;
+    const text = access.getText().replace(/\s+/g, " ");
+    found.push({ node: access, uses: raw.map((capability) => ({ capability, call: text.length > 70 ? `${text.slice(0, 67)}...` : text, verb: "uses" })) });
+  }
+  return found;
+}
+
+/** A Prisma client: an object whose members include models (a delegate, or an extended client's model). */
+function holdsModels(type: Type, at: Node): boolean {
+  if (type.isAny() || type.isUnknown()) return false;
+  return type.getNonNullableType().getProperties().some((p) => {
+    const member = p.getTypeAtLocation(at);
+    return [member, ...(member.isIntersection() ? member.getIntersectionTypes() : [])].some((t) => {
+      const named = t.getAliasSymbol() ?? t.getSymbol();
+      return named !== undefined && /(Delegate|DynamicModelExtensionThis)$/.test(named.getName()) && named.getDeclarations().some((d) => isPrismaClient(d));
+    });
+  });
+}
+
 /** Whether a declaration belongs to a Prisma client. Prisma's API is all types, so code with a body never does. */
-function isPrismaClient(declaration: Node): boolean {
+export function isPrismaClient(declaration: Node): boolean {
   if (Node.isArrowFunction(declaration) || Node.isFunctionExpression(declaration)) return false;
   if (Node.isBodyable(declaration) && declaration.hasBody()) return false;
   const pkg = packageOf(declaration);
