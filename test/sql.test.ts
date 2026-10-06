@@ -5,6 +5,7 @@
 // needs bare db.read and db.write. A wrong "safe" answer is a silent pass.
 
 import { describe, expect, it } from "vitest";
+import { isStatement } from "../src/detect/drizzle.js";
 import { sqlTables } from "../src/detect/sql-tables.js";
 
 describe("sqlTables: understood statements", () => {
@@ -161,5 +162,31 @@ describe("sqlTables: anything else is unknown", () => {
       expect(sqlTables(`SELECT ${"(".repeat(depth)}1${")".repeat(depth)} FROM leads`)).toBeUndefined();
       expect(sqlTables(`SELECT * FROM leads WHERE id IN ${"(SELECT id FROM leads WHERE id IN ".repeat(depth)}(1)${")".repeat(depth)}`)).toBeUndefined();
     }
+  });
+});
+
+describe("Drizzle fragments: a whole statement, or an expression", () => {
+  it.each([
+    ["SELECT 1", true],
+    ["  with x as (select 1) select * from x", true],
+    ["-- note\nDELETE FROM a", true],
+    ["/* a */ /* b */\n-- c\nINSERT INTO a VALUES (1)", true],
+    ["/**/UPDATE a SET b = 1", true],
+    ["lower(name)", false],
+    ["-- only a comment", false],
+    ["/* never closed SELECT", false],
+    ["/*/ SELECT */ x", false],
+    ["selection", false],
+  ])("%j is a statement: %s", (text, expected) => {
+    expect(isStatement(text)).toBe(expected);
+  });
+
+  // Code scanning found the old regular expression could backtrack exponentially on this shape,
+  // and PermLang reads code from pull requests: it must stay linear.
+  it("reads a fragment built to make a regular expression backtrack, quickly", () => {
+    const start = performance.now();
+    expect(isStatement(`/*${"*//*".repeat(100_000)}`)).toBe(false);
+    expect(isStatement(`${"-- x\n".repeat(100_000)}SELECT 1`)).toBe(true);
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 });

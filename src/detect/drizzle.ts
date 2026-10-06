@@ -201,13 +201,35 @@ function fragmentText(template: TemplateLiteral): string {
   return parts.join("");
 }
 
-// A fragment that is a whole statement, after any comments; anything else stands for an expression.
-const STATEMENT = /^\s*(?:(?:--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)\s*)*(SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|VALUES|TABLE)\b/i;
+const STATEMENT_START = /^(?:SELECT|INSERT|UPDATE|DELETE|REPLACE|WITH|VALUES|TABLE)\b/i;
+
+/**
+ * Whether a fragment is a whole statement, after any comments; anything else stands for an
+ * expression. A loop rather than one regular expression, whose repeated comment group could
+ * backtrack exponentially on text built for it: this reads code from pull requests.
+ */
+export function isStatement(text: string): boolean {
+  let i = 0;
+  for (;;) {
+    while (i < text.length && /\s/.test(text[i]!)) i++;
+    if (text.startsWith("--", i)) {
+      const end = text.indexOf("\n", i);
+      if (end === -1) return false;
+      i = end + 1;
+    } else if (text.startsWith("/*", i)) {
+      const end = text.indexOf("*/", i + 2);
+      if (end === -1) return false;
+      i = end + 2;
+    } else {
+      return STATEMENT_START.test(text.slice(i));
+    }
+  }
+}
 
 function fromFragment(text: string | undefined): Capability[] {
   if (text === undefined) return unknownSql;
   // An expression is read as a select list, so a subquery or FROM in it still counts.
-  const tables = sqlTables(STATEMENT.test(text) ? text : `SELECT ${text}`);
+  const tables = sqlTables(isStatement(text) ? text : `SELECT ${text}`);
   if (!tables) return unknownSql;
   return [
     ...tables.read.map((t): Capability => ({ name: "db.read", arg: t })),
