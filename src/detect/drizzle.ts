@@ -22,8 +22,7 @@ const RAW = new Set(["execute", "run", "all", "get", "values"]);
 const JOIN = /^(from|(left|right|inner|full|cross)Join(Lateral)?)$/;
 
 export function drizzleCapabilities(declaration: Node, call: CallLike | undefined): Capability[] {
-  const pkg = packageOf(declaration);
-  if (pkg === undefined || packageName(pkg) !== "drizzle-orm") return [];
+  if (!inDrizzle(declaration)) return [];
   const sql = fragment(declaration, call);
   if (sql) return sql;
   // A value with a getSQL() method of the project's own is pasted into the query as
@@ -51,6 +50,12 @@ export function drizzleCapabilities(declaration: Node, call: CallLike | undefine
   // Migrations run arbitrary DDL and DML from files.
   if (method === "migrate") return [{ name: "db.read", dynamic: true }, { name: "db.write", dynamic: true }];
   return [];
+}
+
+/** Whether a declaration is drizzle-orm's own. */
+function inDrizzle(declaration: Node): boolean {
+  const pkg = packageOf(declaration);
+  return pkg !== undefined && packageName(pkg) === "drizzle-orm";
 }
 
 const TABLE_FUNCTIONS = new Set(["pgTable", "mysqlTable", "sqliteTable", "singlestoreTable", "gelTable"]);
@@ -122,17 +127,16 @@ const UPDATE_DEFAULTS = new Set(["$onUpdateFn", "$onUpdate"]);
  * from what a function of the project's returns. A table PermLang can't find, or columns
  * it can't see, could put SQL that reads any table into the statement.
  */
-function runtimeDefaults(arg: Node | undefined, names: ReadonlySet<string>): Capability[] {
+function runtimeDefaults(arg: Node | undefined, names: ReadonlySet<string | undefined>): Capability[] {
+  // A table drizzle made (pgTable(...), a schema's or a table creator's), whatever its name.
   const definition = definitionCall(arg);
   const made = definition && resolvedDeclaration(definition);
-  const sources = made && packageName(packageOf(made) ?? "") === "drizzle-orm" ? columnSources(definition!) : undefined;
+  const sources = made && inDrizzle(made) ? columnSources(definition!) : undefined;
   if (!sources) return [{ name: "db.read", dynamic: true }];
   return sources.flatMap((source) =>
     source.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {
       const declaration = resolvedDeclaration(call);
-      const pkg = declaration && packageOf(declaration);
-      if (!pkg || packageName(pkg) !== "drizzle-orm" || !names.has(memberName(declaration!) ?? "")) return [];
-      return returnedSql(call.getArguments()[0]);
+      return declaration && inDrizzle(declaration) && names.has(memberName(declaration)) ? returnedSql(call.getArguments()[0]) : [];
     }),
   );
 }
@@ -192,16 +196,13 @@ function returnedSql(fn: Node | undefined): Capability[] {
     return f.getType().getCallSignatures().some((s) => couldBeSql(s.getReturnType())) ? unknownSql : [];
   }
   const body = f.getBody();
-  const returned = Node.isBlock(body)
-    ? body.getDescendantsOfKind(SyntaxKind.ReturnStatement).filter((r) => r.getFirstAncestor((a) => Node.isFunctionLikeDeclaration(a) || Node.isArrowFunction(a)) === f).map((r) => r.getExpression())
-    : [body];
+  const returned = Node.isBlock(body) ? ownReturns(body, f) : [body];
   return returned.flatMap((value) => {
     if (!value) return [];
     const inner = unwrapExpression(value);
     if (Node.isTaggedTemplateExpression(inner) || Node.isCallExpression(inner)) {
       const declaration = resolvedDeclaration(inner);
-      const pkg = declaration && packageOf(declaration);
-      const read = pkg && packageName(pkg) === "drizzle-orm" ? sqlPiece(declaration!, inner) : undefined;
+      const read = declaration && inDrizzle(declaration) ? sqlPiece(declaration, inner) : undefined;
       if (read) return read;
     }
     return couldBeSql(inner.getType()) ? unknownSql : [];
@@ -425,12 +426,15 @@ function fromFragment(text: string | undefined): Capability[] {
 
 /** Whether a fragment is passed to a schema definition: `.default(sql`now()`)`, `check(...)`, ... */
 function inSchemaDefinition(node: Node): boolean {
-  // Look through what can carry a fragment into a call: (...), `as`, arrays, objects, arrow functions.
+  // Look through what can carry a fragment into a call: (...), `as`, arrays, objects, and a
+  // function that returns it, from an arrow's body or a `return` in its block.
   let child = node;
   let parent = node.getParentOrThrow();
-  while (carries(parent, child)) {
-    child = parent;
-    parent = parent.getParentOrThrow();
+  for (;;) {
+    const fn = Node.isReturnStatement(parent) ? returningFunction(parent) : undefined;
+    if (fn) [child, parent] = [fn, fn.getParentOrThrow()];
+    else if (carries(parent, child)) [child, parent] = [parent, parent.getParentOrThrow()];
+    else break;
   }
   if (!Node.isCallExpression(parent) || !parent.getArguments().includes(child)) return false;
   const declaration = resolvedDeclaration(parent);
@@ -477,7 +481,7 @@ export function schemaSqlReads(sourceFile: SourceFile): { node: Node; uses: Capa
 /** A drizzle property, not a method, whose type holds SQL: `SQL`, a union with it, or a function returning it. */
 function holdsSchemaSql(property: MorphSymbol, at: Node): boolean {
   const declarations = property.getDeclarations();
-  if (!declarations.some((d) => (Node.isPropertyDeclaration(d) || Node.isPropertySignature(d)) && packageName(packageOf(d) ?? "") === "drizzle-orm")) return false;
+  if (!declarations.some((d) => (Node.isPropertyDeclaration(d) || Node.isPropertySignature(d)) && inDrizzle(d))) return false;
   return mentionsSql(property.getTypeAtLocation(at));
 }
 
@@ -487,13 +491,19 @@ function mentionsSql(type: Type, depth = 0): boolean {
   if (type.isArray()) return mentionsSql(type.getArrayElementTypeOrThrow(), depth + 1);
   if (type.getCallSignatures().some((s) => mentionsSql(s.getReturnType(), depth + 1))) return true;
   const symbol = type.getSymbol();
-  return symbol?.getName() === "SQL" && symbol.getDeclarations().some((d) => packageName(packageOf(d) ?? "") === "drizzle-orm");
+  return symbol?.getName() === "SQL" && symbol.getDeclarations().some(inDrizzle);
 }
 
 /** The target of an assignment, which writes the property rather than reading it. */
 function isAssigned(access: Node): boolean {
   const parent = access.getParent();
   return Node.isBinaryExpression(parent) && parent.getLeft() === access && parent.getOperatorToken().getKind() === SyntaxKind.EqualsToken;
+}
+
+/** The arrow function or function expression a `return` returns from; undefined for a named function or a method. */
+function returningFunction(statement: Node): Node | undefined {
+  const fn = statement.getFirstAncestor((a) => Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a) || Node.isArrowFunction(a) || Node.isMethodDeclaration(a));
+  return Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) ? fn : undefined;
 }
 
 function carries(parent: Node, child: Node): boolean {
