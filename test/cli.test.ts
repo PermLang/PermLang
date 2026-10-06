@@ -248,6 +248,53 @@ describe("usage errors", () => {
   });
 });
 
+// The Action passes its `args` to check and to diff. Options either command ignored let a workflow
+// change what the comment compares (`--head`), or print help and pass (`-h`), without the check
+// failing (found by the second verification, B; and `check --format json`, `lock --sarif`).
+describe("options a command doesn't take", () => {
+  it.each([
+    [["check", "my lib", "-h"], /^-h goes on its own: `permlang check --help`\./],
+    [["check", "--help", "my lib"], /^--help goes on its own/],
+    [["check", "my lib", "--format", "json"], /^check takes --json, not --format: `permlang check --json`\./],
+    [["spec", "--format", "json"], /^spec takes --json, not --format/],
+    [["check", "my lib", "--head", "HEAD~1"], /^check doesn't take --head: it's an option of diff\./],
+    [["check", "my lib", "--summary", "x.md"], /^check doesn't take --summary: it's an option of diff\./],
+    [["lock", "my lib", "--sarif", "x.sarif"], /^lock doesn't take --sarif: it's an option of check\./],
+    [["lock", "my lib", "--no-lock"], /^lock doesn't take --no-lock: it's an option of check and diff\./],
+    [["init", "my lib", "--json"], /^init doesn't take --json: it's an option of check, diff and spec\./],
+    [["check", "my lib", "--workflow"], /^check doesn't take --workflow: it's an option of init\./],
+    [["diff", "HEAD", "--base", "HEAD"], /^diff takes the base commit as its first argument, not --base/],
+    [["diff", "HEAD", "--spec", "a.perm"], /^diff doesn't take --spec: it's an option of spec\./],
+    // A value that's another option would hide it: `--format --lock newdir`.
+    [["check", "my lib", "--lock", "--no-lock"], /^--lock needs a value, not the option "--no-lock"\./],
+    [["diff", "HEAD", "--format", "--lock", "x"], /^--format needs a value, not the option "--lock"\./],
+    [["check", "my lib", "--frob"], /^Unknown option "--frob"/],
+    [["frob", "--help"], /^Unknown command "frob"/],
+  ])("exits 2 on %j", (args, message) => {
+    const { code, out } = permlang(...args);
+    expect(code).toBe(2);
+    expect(out).toMatch(message);
+  });
+
+  it("lets diff take check's options, so the Action can pass it the same arguments", () => {
+    permlang("lock", "my lib");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    const { code, out } = permlang("diff", "HEAD", "my lib", "--require-lock", "--github-annotations", "--sarif", "unused.sarif", "--format", "markdown");
+    expect(code).toBe(0);
+    expect(out).toContain("No permission changes.");
+    // --json is diff's --format json, and an explicit --format wins (the Action adds one after its args).
+    expect(JSON.parse(permlang("diff", "HEAD", "my lib", "--json").out)).toMatchObject({ base: "HEAD", functions: [] });
+    expect(permlang("diff", "HEAD", "my lib", "--json", "--format", "markdown").out).toMatch(/^<!-- permlang-diff -->/);
+  });
+
+  it("still prints a comment when diff's arguments are wrong, to replace the Action's earlier one", () => {
+    const { code, out } = permlang("diff", "HEAD", "--workflow", "--format", "markdown");
+    expect(code).toBe(2);
+    expect(out).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n\n> \[!CAUTION\]\n> \*\*PermLang couldn't compute the permission diff\*\*.*diff doesn't take --workflow/);
+  });
+});
+
 describe("configuration errors", () => {
   it("exits 2 on a config file that isn't an object", () => {
     writeFileSync(path.join(dir, "permlang.config.json"), "null\n");
