@@ -77,8 +77,8 @@ export function loadTarget(load: Load, adapters: AdapterIndex): LoadTarget {
   if (file && !file.isDeclarationFile() && !file.getFilePath().split("/").includes("node_modules")) return { kind: "file", file };
   const viaRequire = mode === "require" || importCallsUseRequire(from);
   if (loadsData(specifier, from, viaRequire) || (!viaRequire && resolved?.endsWith(".json"))) return { kind: "none" };
-  // A relative path that isn't a project file: JavaScript the checker doesn't analyze.
-  if (specifier.startsWith(".") || specifier.startsWith("/")) return { kind: "unverifiable" };
+  // A path that isn't a project file: JavaScript the checker doesn't analyze.
+  if (isPath(specifier)) return { kind: "unverifiable" };
 
   const name = packageName(specifier);
   if (adapters.isPure(name)) return { kind: "none" };
@@ -109,11 +109,17 @@ export function loadsData(specifier: string, from: SourceFile, viaRequire: boole
   // Node picks the loader by the exact extension (`./data.JSON` runs as JavaScript), and
   // a query string is part of the file name.
   if (!specifier.endsWith(".json")) return false;
-  if (specifier.startsWith(".") || path.isAbsolute(specifier)) {
-    return from.getProject().getFileSystem().fileExistsSync(path.resolve(from.getDirectoryPath(), specifier));
-  }
+  if (isPath(specifier)) return from.getProject().getFileSystem().fileExistsSync(path.resolve(from.getDirectoryPath(), specifier));
   // A package's file: TypeScript finds it when it's told it may resolve JSON.
   return resolve(specifier, from, "require", { resolveJsonModule: true })?.endsWith(".json") === true;
+}
+
+/**
+ * A path rather than a package name: relative, or absolute on any system (`/opt/x.js`,
+ * `C:/x.js`), since where the code runs may not be where it's checked.
+ */
+function isPath(specifier: string): boolean {
+  return specifier.startsWith(".") || path.posix.isAbsolute(specifier) || path.win32.isAbsolute(specifier);
 }
 
 /**

@@ -3,7 +3,7 @@
 // so every such package is listed in the report and, by default, warned about.
 // Packages known to touch nothing are declared pure in adapters/pure.json.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,13 +89,16 @@ describe("imports whose types can't be found", () => {
 // command with no diagnostic at all.
 describe("folders with their own package.json", () => {
   const temporary: string[] = [];
+  const insidePackage = (dir: string): boolean => existsSync(path.join(dir, "package.json")) || (path.dirname(dir) !== dir && insidePackage(path.dirname(dir)));
   afterAll(() => {
     for (const d of temporary) removeTemporary(d);
   });
 
+  /** A project in `<base>/app`; files may be outside it (`../outside/lib.d.ts`). */
   function project(files: Record<string, string>, options: CheckOptions = {}) {
-    const root = mkdtempSync(path.join(tmpdir(), "permlang-unmapped-"));
-    temporary.push(root);
+    const base = mkdtempSync(path.join(tmpdir(), "permlang-unmapped-"));
+    temporary.push(base);
+    const root = path.join(base, "app");
     const tsconfig = { compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext", strict: true, types: [] }, include: ["src"] };
     const all = { "package.json": JSON.stringify({ name: "app", type: "module" }), "tsconfig.json": JSON.stringify(tsconfig), ...files };
     for (const [file, text] of Object.entries(all)) {
@@ -139,6 +142,43 @@ describe("folders with their own package.json", () => {
 
   it("are named by their folder when package.json has no name", () => {
     expect(project(folder(undefined)).unmapped.map((u) => u.package)).toEqual(["./src/gen"]);
+    // Nor when it has no usable name, or can't be read.
+    for (const text of ["null", '"gen"', "[1]", '{ "name": 5 }', '{ "name": "  " }', "{ not json"]) {
+      expect(project({ ...folder(undefined), "src/gen/package.json": text }).unmapped.map((u) => u.package), text).toEqual(["./src/gen"]);
+    }
+  });
+
+  it("are named by their whole path outside the project's own packages", () => {
+    const report = project({
+      "../outside/package.json": JSON.stringify({ main: "lib.js" }),
+      "../outside/lib.d.ts": "export declare function run(cmd: string): void;\n",
+      "src/a.ts": 'import { run } from "../../outside/lib.js";\nexport function t(c: string) { return run(c); }\n',
+    });
+    const [outside] = report.unmapped.map((u) => u.package);
+    expect(outside).toMatch(/\/outside$/);
+    expect(path.isAbsolute(outside!)).toBe(true);
+  });
+
+  // A .d.ts outside every package.json is named by its own folder. (Skipped where the
+  // system's temporary folder is inside a package.)
+  it.skipIf(insidePackage(tmpdir()))("are named by their folder when no package.json holds them", () => {
+    const report = project({
+      "../loose/lib.d.ts": "export declare function run(cmd: string): void;\n",
+      "src/a.ts": 'import { run } from "../../loose/lib.js";\nexport function t(c: string) { return run(c); }\n',
+    });
+    const [loose] = report.unmapped.map((u) => u.package);
+    expect(loose).toMatch(/\/loose$/);
+    expect(path.isAbsolute(loose!)).toBe(true);
+  });
+
+  it("are named in the message by where they are from the code that calls them", () => {
+    const message = (report: ReturnType<typeof project>) => warnings(report)[0]?.message;
+    const gen = { "src/gen/package.json": JSON.stringify({ name: "acme-client" }), "src/gen/db.d.ts": folder("acme-client")["src/gen/db.d.ts"] };
+    const deeper = project({ ...gen, "src/deep/b.ts": 'import { Client } from "../gen/db.js";\nexport const shared = new Client();\n' });
+    expect(message(deeper)).toMatch(/, the package in \.\.\/gen, /);
+    // Code in a package of its own, inside the folder it calls into.
+    const inside = project({ ...gen, "src/gen/app/package.json": JSON.stringify({ name: "inner" }), "src/gen/app/b.ts": 'import { Client } from "../db.js";\nexport const shared = new Client();\n' });
+    expect(message(inside)).toMatch(/, the package in \.\., /);
   });
 
   it("can be covered by a team's adapter for that name, but not by a built-in one", () => {

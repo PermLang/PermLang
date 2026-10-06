@@ -45,4 +45,10 @@ describe("the entry of code PermLang can't check", () => {
     expect(uncheckedWhat("unchecked.import(x)")).toBe("an import with no types");
     expect(uncheckedWhat("unchecked.package(x)")).toBe("a package with no adapter");
   });
+
+  // A pull request can write anything in the lock, and an entry only the lock has is named in an error.
+  it("reads an entry a hand-edited lock cut short without losing its last character", () => {
+    expect(uncheckedCode("unchecked.import(src/x.cjs")).toEqual({ kind: "import", target: "src/x.cjs" });
+    expect(uncheckedCode("unchecked.package(leftpad2")).toEqual({ kind: "package", target: "leftpad2" });
+  });
 });

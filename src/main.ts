@@ -155,12 +155,13 @@ function init(args: Args): number {
     const report = analyze({ ...args, strictness: undefined });
     const lock = buildLock(report, path.dirname(lockFile));
     writeFileSync(lockFile, serializeLock(lock));
-    // Configuration entries (the settings, workflows, package.json scripts) aren't functions.
+    // Configuration entries (the settings, workflows, package.json scripts) aren't functions. There's
+    // always at least one: the settings the lock was written with.
     const keys = Object.keys(lock.functions);
     const reaching = keys.filter((k) => !isConfigKey(k)).length;
     const config = keys.length - reaching;
-    const entries = config > 0 ? `, and ${plural(config, "configuration entry", "configuration entries")} ${config === 1 ? "records" : "record"} the settings and project files` : "";
-    done.push(`Wrote ${lockName}: ${plural(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${plural(report.files, "file")}${entries}.`);
+    const entries = `${plural(config, "configuration entry", "configuration entries")} ${config === 1 ? "records" : "record"} the settings and project files`;
+    done.push(`Wrote ${lockName}: ${plural(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${plural(report.files, "file")}, and ${entries}.`);
     unmapped = report.unmapped.length;
   }
 
@@ -338,11 +339,12 @@ function diff(args: Args): number {
     headLock = found;
   } else {
     const diskLock = existsSync(lockName) ? parseLock(readText(lockName), lockName) : undefined;
-    if (!diskLock && !baseLock) throw new NoLockError(lockName);
-    // A change can leave the base's lock behind by checking with another one, which the check fails.
+    // A change can leave the base's lock behind by checking with another one, or with none, which
+    // the check fails. Then there's a diff to show even when neither commit has this lock file.
     notes.lockMoved = movedLocks(base, args.noLock ? undefined : lockName);
+    if (!diskLock && !baseLock && notes.lockMoved.length === 0) throw new NoLockError(lockName);
     // A pull request that deletes the lock turns the comparison off: the comment must say so.
-    notes.lockDeleted = diskLock === undefined;
+    notes.lockDeleted = diskLock === undefined && baseLock !== undefined;
     notes.lockOutdated = diskLock?.permlang === 1;
     headLock = diskLock ?? { permlang: LOCK_VERSION, functions: {}, unsafe: {} };
     // The working tree is the truth: diff the base against what the code reaches now, not only

@@ -223,7 +223,7 @@ function tsconfigEntry(file: string, root: string): FunctionReport {
   // Compiled code imports its helpers from tslib.
   if (o.importHelpers) option("importHelpers", "true");
   // What every JSX element calls.
-  if (o.jsx !== undefined) option("jsx", JSX[o.jsx] ?? String(o.jsx));
+  if (o.jsx !== undefined) option("jsx", JSX[o.jsx]);
   for (const key of ["jsxFactory", "jsxFragmentFactory", "jsxImportSource", "reactNamespace"] as const) if (o[key]) option(key, o[key]);
   return entry.report();
 }
@@ -253,17 +253,26 @@ function computedOption(options: ts.CompilerOptions, key: (typeof COMPUTED)[numb
 
 /** An option's value as a word: an enum's name (`ESNext`, `Bundler`), or `true`/`false`. */
 function optionValue(key: (typeof COMPUTED)[number], value: unknown): string {
-  if (typeof value !== "number") return String(value);
-  // ESNext and Latest are the same target; the enum's own reverse lookup gives the latter.
-  if (key === "target") return value === ts.ScriptTarget.ESNext ? "ESNext" : ts.ScriptTarget[value]!;
-  if (key === "module") return ts.ModuleKind[value]!;
-  if (key === "moduleResolution") return ts.ModuleResolutionKind[value]!;
-  if (key === "moduleDetection") return ts.ModuleDetectionKind[value]!;
-  return String(value);
+  const names = ENUM_NAMES[key];
+  // The options named there are numbers; the others are true or false.
+  return names ? names[value as number]! : String(value);
 }
 
-/** "jsx" as tsconfig.json spells it. */
-const JSX: Partial<Record<ts.JsxEmit, string>> = {
+/** The names of the values of the options in COMPUTED that are enums, from TypeScript's own enums. */
+const ENUM_NAMES: Partial<Record<(typeof COMPUTED)[number], Record<number, string>>> = {
+  // ESNext and Latest are the same target; the enum's own reverse lookup gives the latter.
+  target: { ...ts.ScriptTarget, [ts.ScriptTarget.ESNext]: "ESNext" },
+  module: ts.ModuleKind,
+  moduleResolution: ts.ModuleResolutionKind,
+  moduleDetection: ts.ModuleDetectionKind,
+};
+
+/**
+ * "jsx" as tsconfig.json spells it. Every value is listed (tsconfig.json can't set None), so a
+ * TypeScript release that adds one fails PermLang's own typecheck until it's added here.
+ */
+const JSX: Record<ts.JsxEmit, string> = {
+  [ts.JsxEmit.None]: "none",
   [ts.JsxEmit.Preserve]: "preserve",
   [ts.JsxEmit.React]: "react",
   [ts.JsxEmit.ReactNative]: "react-native",
