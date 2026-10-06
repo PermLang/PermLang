@@ -43,6 +43,7 @@ import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { requiresCapabilityModule } from "./functions.js";
 import { argumentsOf, callText, containerName, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CapabilityUse } from "./shared.js";
 import { capabilitiesOf, constructorCapabilities } from "./web.js";
+import { forEachDescendant } from "../walk.js";
 
 export interface EscapeUse {
   node: Node;
@@ -65,7 +66,7 @@ type Carrier = "global" | "module";
 export function anyEscapes(sourceFile: SourceFile, adapters: AdapterIndex): EscapeUse[] {
   const out: EscapeUse[] = [];
   const carriers = new CarrierCache(adapters);
-  sourceFile.forEachDescendant((node) => {
+  forEachDescendant(sourceFile, (node) => {
     if (Node.isAsExpression(node) || Node.isTypeAssertion(node)) {
       // In `x as unknown as T`, the outer cast is the one that matters.
       if (Node.isAsExpression(outerOf(node).getParent()) || Node.isTypeAssertion(outerOf(node).getParent())) return;

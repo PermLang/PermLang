@@ -52,10 +52,11 @@ Look at four things:
   team adapter file, listed under `"adapters"` in `permlang.config.json`, does
   either.
 - **Unverifiable code** (PERM004): `eval`, `new Function`, computed calls on
-  `fs` or `globalThis`, `require` of a computed path. It's reported on the
-  exported function that reaches it, and the lock records every use. Rewrite
-  it, or mark the function `@perm-unsafe reason:"..."`. Every override is
-  listed in every report.
+  `fs` or `globalThis`, `require` of a computed path or of `child_process`,
+  `data:` imports, calls into your own JavaScript through a hand-written `.d.ts`.
+  It's reported on the exported function that reaches it, and the lock records
+  every use. Rewrite it, or mark the function `@perm-unsafe reason:"..."`. Every
+  override is listed in every report.
 - **Tools an AI model can call** (if you use MCP, the Vercel AI SDK, OpenAI
   Agents, or LangChain). The report lists each tool and what it can reach. A
   tool that can run commands, write data, or send to any address gets a warning
@@ -101,10 +102,13 @@ A whole file can share one declaration:
  */
 ```
 
+(or, on one line, `/** @module @perm net(api.stripe.com) */`).
+
 Then raise `"strictness"` in `permlang.config.json`:
 
 - `development`: annotated functions can't exceed their `@perm`, and exported
-  functions must declare what they reach.
+  functions and entry points (route tables, plugin hooks, tool definitions) must
+  declare what they reach.
 - `production`: every function must be covered, private helpers included.
 
 Set `"unmapped": "error"` to require every package to be mapped or declared pure,

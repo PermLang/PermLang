@@ -16,6 +16,7 @@ import type { AdapterIndex } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { callText, resolveAlias, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
 import { capabilitiesOf, constructorCapabilities, type Reach } from "./web.js";
+import { descendantsOfKind } from "../walk.js";
 
 export interface ValueUse {
   node: Node;
@@ -24,7 +25,7 @@ export interface ValueUse {
 
 export function valueUses(sourceFile: SourceFile, adapters: AdapterIndex): ValueUse[] {
   const out: ValueUse[] = [];
-  for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+  for (const id of descendantsOfKind(sourceFile, SyntaxKind.Identifier)) {
     const site = referenceExpression(id);
     if (!site || isExempt(site)) continue;
     const type = site.getType();
