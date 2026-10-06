@@ -19,7 +19,7 @@
 // set by a call, such as what createRequire returns) is judged by its type: the
 // functions its call signatures declare.
 
-import { Node, SyntaxKind, type BindingElement, type CallExpression, type Identifier, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
+import { Node, SyntaxKind, type BindingElement, type CallExpression, type Identifier, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import { packageOf, type AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { admitsString, callText, containerName, isReflectApply, literalString, resolveAlias, resolvedDeclaration, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
@@ -46,7 +46,8 @@ export function valueUses(sourceFile: SourceFile, adapters: AdapterIndex): Value
     if (!symbol) continue;
     const invoked = invocation(site);
     const use = invoked ?? { args: [], reach: valueReach(site) };
-    const capabilities = heldCapabilities(symbol, adapters, use) ?? (constructs ? constructorCapabilities(type, adapters) : []);
+    const capabilities =
+      heldCapabilities(symbol, adapters, use) ?? (constructs ? constructorCapabilities(type, adapters) : signatureCapabilities(symbol, type, adapters, use));
     if (capabilities.length === 0) continue;
     const node = invoked?.call ?? site;
     const call = invoked ? callText(invoked.call) : `${site.getText().replace(/\s+/g, " ")} as a value`;
@@ -82,6 +83,20 @@ function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, use: Use,
     if (capabilities && capabilities.length > 0) return capabilities;
   }
   return undefined;
+}
+
+/**
+ * A member of a mapped type, such as an extended Prisma client's operations, has no
+ * declaration of its own: what it is comes from its type's call signatures.
+ */
+function signatureCapabilities(symbol: MorphSymbol, type: Type, adapters: AdapterIndex, use: Use): Capability[] {
+  if (resolveAlias(symbol).getDeclarations().length > 0) return [];
+  for (const signature of type.getCallSignatures()) {
+    const declaration = signature.compilerSignature.declaration && signature.getDeclaration();
+    const capabilities = declaration ? capabilitiesOf(declaration, use.args, adapters, use.reach) : [];
+    if (capabilities.length > 0) return capabilities;
+  }
+  return [];
 }
 
 /**

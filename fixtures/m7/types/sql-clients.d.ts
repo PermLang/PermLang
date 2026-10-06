@@ -19,6 +19,12 @@ declare module "mysql2/promise" {
     query(sql: string, values?: unknown[]): Promise<unknown>;
     query(options: { sql: string; values?: unknown[] }): Promise<unknown>;
     execute(sql: string, values?: unknown[]): Promise<unknown>;
+    prepare(sql: string): Promise<PreparedStatementInfo>;
+  }
+  // A prepared statement runs the SQL prepare() was given, with its values bound.
+  export interface PreparedStatementInfo {
+    close(): Promise<void>;
+    execute(parameters: unknown): Promise<unknown>;
   }
   export function createPool(uri: string): Pool;
 }

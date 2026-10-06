@@ -355,6 +355,66 @@ describe("SQL table reader", () => {
     );
   });
 
+  // Placeholders and names glued to the text around them, which the dialects split into
+  // tokens differently: MySQL and SQLite read `?FROM` as `?` and FROM, and SQLite reads
+  // `:a('x)` as one variable and `[']` as one name. Each shape reads secrets in at least one.
+  const glued = fc.oneof(
+    fc
+      .tuple(
+        fc.constantFrom("?", "?1", "?12", "$1", ":1"),
+        fc.constantFrom<(p: string) => string>(
+          (p) => `SELECT name, ${p}FROM secrets`,
+          (p) => `INSERT INTO leads (name) SELECT ${p}FROM secrets`,
+          (p) => `SELECT * FROM leads WHERE id IN (SELECT ${p}FROM secrets)`,
+        ),
+      )
+      .map(([p, at]) => at(p)),
+    fc
+      .tuple(fc.constantFrom(":a", "@a", "$1", ":1", ":a::b", ":a::", "$1::1lower", "$1::numeric"), fc.constantFrom("'", '"', "`", "["))
+      .map(([v, q]) => `SELECT ${v}(${q}x) FROM secrets --${q === "[" ? "]" : q})`),
+    fc.constantFrom("'", '"', "`", "--", "/*", "/* */ '").map((q) => `SELECT [${q}] FROM secrets -- ${q}] FROM leads`),
+  );
+
+  it("never names fewer tables than a query reads, whatever a placeholder or name is glued to", () => {
+    fc.assert(
+      fc.property(glued, (sql) => {
+        const tables = sqlTables(sql);
+        if (tables) expect(tables.read, sql).toContain("secrets");
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  // mysql2's query() pastes each value, escaped, at a `?` (older versions at every one, in
+  // strings and comments too). A value can't add a table the reader didn't name.
+  it("never names fewer tables than a query reads once the client pastes values in", () => {
+    const holder = fc.constantFrom("?", "'?'", "`?`", '"?"', "'a ? b'", "/* ? */ 1", "1 -- ?\n", "'?', ?", "lower('?')");
+    const statement = fc.constantFrom<(h: string) => string>(
+      (h) => `SELECT ${h} FROM leads`,
+      (h) => `SELECT * FROM leads WHERE id = 1 AND ${h} = 1`,
+      (h) => `UPDATE leads SET a = ${h} WHERE id = 1`,
+      (h) => `INSERT INTO leads (a) VALUES (${h})`,
+    );
+    const text = fc.oneof(
+      fc.tuple(statement, holder).map(([at, h]) => at(h)),
+      fc.string({
+        unit: fc.constantFrom("SELECT ", "a ", "FROM leads ", "WHERE x = ", "?", "'", "`", '"', "/* ", " */", "-- ", "\n", ", ", "(", ")"),
+        maxLength: 14,
+      }),
+    );
+    // Each escapes to itself in quotes: sqlstring changes only quotes, backslashes, and control characters.
+    const hostile = fc.constantFrom("x FROM secrets -- ", "x` FROM secrets -- ", "*/ , (SELECT 1 FROM secrets) /*", ") , (SELECT 1 FROM secrets) -- ");
+    fc.assert(
+      fc.property(text, hostile, (sql, value) => {
+        const tables = sqlTables(sql, { formatted: true });
+        if (!tables) return;
+        const sent = sqlTables(sql.replace(/\?+/g, (m) => (m.length === 1 ? `'${value}'` : m)));
+        if (sent) for (const t of sent.read) expect(tables.read, sql).toContain(t);
+      }),
+      { numRuns: 3000 },
+    );
+  });
+
   it("gives up on nesting of any depth instead of overflowing the stack", () => {
     fc.assert(
       fc.property(fc.integer({ min: 0, max: 20_000 }), fc.constantFrom("(", "(SELECT 1 FROM t WHERE x IN ", "lower(", "tags[("), (depth, open) => {
