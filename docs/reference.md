@@ -418,9 +418,10 @@ so the list can't go stale.
 
   Two things stay unchecked. A global object or database client stored as `any`
   (`const w = window as any; w.fetch(url)`, `const p: any = prisma`), passed on
-  as `any` or `unknown`, or (other than a Prisma client's model, above) read with a
-  computed key isn't followed: those are common and almost always harmless (a client handed to
-  a framework's container, say), so they aren't reported. And a value that was `any`
+  as `any` or `unknown`, or read with a computed key isn't followed: those are
+  common and almost always harmless (a client handed to a framework's container,
+  say), so they aren't reported. (A Prisma model picked with a computed key is
+  reported, as described under Prisma above.) And a value that was `any`
   from the start, such as an untyped parameter, has nothing to trace; that
   includes a module handed through a promise or a collection to a named
   function whose parameter is `any` (`Promise.resolve(cp).then(handle)`, with
