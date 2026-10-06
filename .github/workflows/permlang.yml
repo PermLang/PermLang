@@ -2,6 +2,11 @@ name: PermLang
 
 # PermLang checks its own source with its own GitHub Action, comments the
 # permission diff on pull requests, and uploads its findings to code scanning.
+#
+# `uses: ./` runs the pull request's own copy of PermLang, so a pull request that
+# changes PermLang can change how its own check runs. Checking with the last
+# release instead is a planned follow-up (G13); until then, review changes to
+# src/ and action.yml with that in mind.
 
 on:
   pull_request:

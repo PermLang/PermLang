@@ -9,7 +9,7 @@ const RULES: Record<Diagnostic["code"], string> = {
   PERM002: "An @perm annotation is invalid.",
   PERM003: "A function that must declare its permissions has no @perm.",
   PERM004: "Code whose effects can't be determined statically.",
-  PERM005: "The code reaches something permlang.lock.json doesn't record, or no longer reaches something it does.",
+  PERM005: "The code and permlang.lock.json differ (new access, or access the code no longer has), or the lock file is missing, or isn't the one the base commit checks with.",
   PERM006: "A call into a package with no adapter: what it touches isn't checked.",
   PERM007: "An import whose types can't be found: nothing called from it is checked.",
   PERM008: "A tool an AI model can call reaches something dangerous, such as running commands or writing data.",

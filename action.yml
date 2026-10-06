@@ -7,7 +7,7 @@ branding:
 
 inputs:
   args:
-    description: Arguments for `permlang check`, such as source paths or `--project tsconfig.json`. The lock file records them, so changing them needs `permlang lock` with the same arguments.
+    description: Arguments for `permlang check`, such as source paths or `--project tsconfig.json`, split on spaces. The lock file records them, so changing them needs `permlang lock` with the same arguments. An option `check` doesn't take is an error.
     required: false
     default: ""
   strictness:
