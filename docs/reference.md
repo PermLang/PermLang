@@ -294,7 +294,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   (`table[name]()`), loading a module whose result can't be checked (see
   [loading modules](#loading-modules)), calls into the project's own JavaScript
   through a hand-written `.d.ts`, and a file PermLang couldn't analyze (code
-  nested thousands of levels deep, say). The only way to accept it is
+  nested thousands of levels deep, say), whether it's imported or one of its
+  functions is called. The only way to accept it is
   `@perm-unsafe`, which also stops it from failing the function's callers'
   annotations. It doesn't hide it from AI tools or flow rules (see the escape
   hatch above).
