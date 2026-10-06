@@ -159,13 +159,22 @@ const COLLECTIONS_AND_DECLARATIONS = new Set([
   SyntaxKind.RestType, SyntaxKind.OptionalType, SyntaxKind.IndexSignature,
 ]);
 
-/** The declarations of the call signatures of an expression's contextual type: what it's written against. */
+/**
+ * The declarations of the call signatures of an expression's contextual type: what it's
+ * written against. These are found for the whole project when one call needs them, so an
+ * expression TypeScript fails on (nested too deeply, say) is left out, as a call it fails to
+ * resolve is (shared.ts), rather than failing the file whose call needed them.
+ */
 function contextualSignatures(expression: Node): Node[] {
-  const type = Node.isExpression(expression) ? expression.getContextualType()?.getNonNullableType() : undefined;
-  if (!type) return [];
-  const parts = type.isUnion() ? type.getUnionTypes() : [type];
-  // (A signature TypeScript puts together, for a union say, has no declaration.)
-  return parts.flatMap((t) => t.getCallSignatures().flatMap((s): Node[] => (s.compilerSignature.getDeclaration() ? [s.getDeclaration()] : [])));
+  try {
+    const type = Node.isExpression(expression) ? expression.getContextualType()?.getNonNullableType() : undefined;
+    if (!type) return [];
+    const parts = type.isUnion() ? type.getUnionTypes() : [type];
+    // (A signature TypeScript puts together, for a union say, has no declaration.)
+    return parts.flatMap((t) => t.getCallSignatures().flatMap((s): Node[] => (s.compilerSignature.getDeclaration() ? [s.getDeclaration()] : [])));
+  } catch {
+    return [];
+  }
 }
 
 /**
