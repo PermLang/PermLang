@@ -224,6 +224,101 @@ describe("SQL table reader", () => {
       }),
     );
   });
+
+  // A subquery that reads `secrets`, wrapped in shapes that each still run it in at
+  // least one of Postgres, MySQL, MariaDB, or SQLite. Whatever the reader answers
+  // must include it: a definite answer without it is a silent pass.
+  const secret = fc.constantFrom(
+    "(SELECT max(id) FROM secrets)",
+    '(SELECT id FROM "secrets")',
+    "(SELECT id FROM `secrets`)",
+    "(SELECT id FROM [secrets])",
+    "(SELECT 1 FROM leads JOIN secrets ON 1 = 1)",
+    "(SELECT a FROM leads, secrets)",
+    "(SELECT x FROM (SELECT x FROM secrets) s)",
+  );
+  const wrapper = fc.constantFrom<(s: string) => string>(
+    (s) => `(${s})`,
+    (s) => `lower(${s})`,
+    (s) => `coalesce(${s}, 0)`,
+    (s) => `CAST(${s} AS int)`,
+    (s) => `ROW(${s})`,
+    (s) => `"f"(${s})`, // a quoted function name
+    (s) => `evil.lower(${s})`, // a schema-qualified one
+    (s) => `pg_catalog.count(${s})`,
+    (s) => `tags[${s}]`, // a Postgres array subscript
+    (s) => `ARRAY[1, ${s}]`,
+    (s) => `1--1 OR ${s}`, // MySQL: 1 minus -1, then the subquery
+    (s) => `1 # ${s}`, // Postgres: an operator; MySQL: a comment
+    (s) => `/*! ${s} */`, // MySQL runs it
+    (s) => `/*M! ${s} */`, // MariaDB runs it
+    (s) => `('a\\', ${s}, 'b')`, // Postgres: three values; MySQL: one string
+    (s) => `CASE WHEN ${s} > 0 THEN 1 ELSE 0 END`,
+    (s) => `EXISTS ${s}`,
+    (s) => `x IN (1, ${s})`,
+    (s) => `${s} IS DISTINCT FROM 1`,
+    (s) => `1 IS DISTINCT FROM ${s}`,
+    (s) => `EXTRACT(YEAR FROM ${s})`,
+    (s) => `SUBSTRING(x FROM ${s})`,
+    (s) => `'a' || ${s}`,
+    (s) => `/* note */ ${s} -- note\n`,
+    (s) => `1 -- note\r${s}`, // Postgres ends the comment at \r
+    (s) => `E'\\'' || ${s}`,
+    (s) => `$$x$$ || ${s}`,
+    (s) => `count(*) OVER (ORDER BY ${s})`,
+    (s) => `count(*) FILTER (WHERE ${s} > 0)`,
+    (s) => `x = ANY(${s})`,
+    (s) => `NOT ${s}`,
+    (s) => `${s} BETWEEN 1 AND 2`,
+    (s) => `${s}::int`,
+    (s) => `IF(${s}, 1, 2)`,
+    (s) => `CASE ${s} WHEN 1 THEN 2 END`,
+    (s) => `(SELECT ${s})`,
+    (s) => `(SELECT 1 WHERE ${s} > 0)`,
+    (s) => `[f](${s})`,
+    (s) => `"s"."f"(${s})`,
+    (s) => `x[1][${s}]`,
+  );
+  const expressionIn = fc.constantFrom<(e: string) => string>(
+    (e) => `SELECT ${e} FROM leads`,
+    (e) => `SELECT * FROM leads WHERE id = ${e}`,
+    (e) => `SELECT * FROM leads l JOIN teams t ON t.id = ${e}`,
+    (e) => `SELECT * FROM leads GROUP BY a HAVING ${e} > 1 ORDER BY ${e}`,
+    (e) => `SELECT * FROM leads LIMIT ${e}`,
+    (e) => `UPDATE leads SET x = ${e} WHERE id = 1`,
+    (e) => `DELETE FROM leads WHERE x = ${e}`,
+    (e) => `INSERT INTO leads (a) VALUES (${e})`,
+    (e) => `INSERT INTO leads (a) VALUES (1) ON CONFLICT (a) DO UPDATE SET a = ${e}`,
+  );
+  const sourceOf = fc.constantFrom<(s: string) => string>(
+    (s) => `INSERT INTO leads ${s}`,
+    (s) => `INSERT INTO leads (a) ${s}`,
+    (s) => `INSERT INTO leads ${s.slice(1, -1)}`,
+  );
+  const hiding = fc.oneof(
+    fc.tuple(expressionIn, fc.array(wrapper, { maxLength: 3 }), secret).map(([at, wraps, s]) => at(wraps.reduce<string>((e, w) => w(e), s))),
+    fc.tuple(sourceOf, secret).map(([at, s]) => at(s)),
+  );
+
+  it("never names fewer tables than a query reads, however the subquery is hidden", () => {
+    fc.assert(
+      fc.property(hiding, (sql) => {
+        const tables = sqlTables(sql);
+        if (tables) expect(tables.read, sql).toContain("secrets");
+      }),
+      { numRuns: 3000 },
+    );
+  });
+
+  it("gives up on nesting of any depth instead of overflowing the stack", () => {
+    fc.assert(
+      fc.property(fc.integer({ min: 0, max: 20_000 }), fc.constantFrom("(", "(SELECT 1 FROM t WHERE x IN ", "lower(", "tags[("), (depth, open) => {
+        const close = open.endsWith("[(") ? ")]" : ")";
+        expect(() => sqlTables(`SELECT ${open.repeat(depth)}1${close.repeat(depth)} FROM leads`)).not.toThrow();
+      }),
+      { numRuns: 50 },
+    );
+  });
 });
 
 // --- The lock file ------------------------------------------------------------------
