@@ -309,7 +309,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   const policy = options.unmapped ?? "warn";
   if (policy !== "trust") {
     for (const u of unmappedUses) {
-      const unit = units.get(enclosingUnitNode(u.node))!;
+      // In a file that couldn't be analyzed, only its top-level code has a unit.
+      const unit = units.get(enclosingUnitNode(u.node)) ?? units.get(u.node.getSourceFile())!;
       const counts = `${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}`;
       diagnostics.push({
         severity: policy === "error" ? "error" : "warning",
