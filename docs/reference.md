@@ -1547,6 +1547,12 @@ pull request can make the check lenient instead: there's no grace period. In the
 pull request that updates the lock, the comment lists the settings as new, since
 the old lock didn't record them.
 
+Run it with PermLang 0.4. A project that installed PermLang with
+`npm install --save-dev permlang` has `"permlang": "^0.3.x"` in its
+`package.json`, which never installs 0.4, and 0.3 writes the old format again.
+Update it first (`npm install --save-dev permlang@^0.4.0`). 0.3 can't read a
+0.4 lock either: it stops with `unsupported lock file version 2`.
+
 The updated lock can record more than the old one. 0.4 reports access that 0.3
 missed, and records more: the settings, which files were checked, and the code
 PermLang can't check (see [what the lock records](#what-the-lock-records)). For

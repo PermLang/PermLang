@@ -128,9 +128,10 @@ walks through the rest in about ten minutes.
 > all welcome as [issues](https://github.com/PermLang/PermLang/issues). See the
 > [changelog](CHANGELOG.md) for what each release changes.
 >
-> **Upgrading from 0.3?** The check fails with one error until you run
-> `npx permlang lock` (with the same paths as your check), review the updated
-> inventory, and commit it ([details](docs/reference.md#upgrading-from-03-or-earlier)).
+> **Upgrading from 0.3?** The check fails with one error until you update
+> PermLang (`npm install --save-dev permlang@^0.4.0`), run `npx permlang lock`
+> with the same paths as your check, review the updated inventory, and commit it
+> ([details](docs/reference.md#upgrading-from-03-or-earlier)).
 
 ## What it can't see (yet)
 
