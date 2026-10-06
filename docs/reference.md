@@ -890,7 +890,9 @@ Stripe's calls go to `api.stripe.com`, except file uploads and quote PDFs
 (`files.stripe.com`), OAuth (`connect.stripe.com`), meter event streams
 (`meter-events.stripe.com`), and `rawRequest` (any of the four); a client created
 with a `host` in its config also needs that host. `tar` extraction writes files
-(tar 7's typings give every command one shape, so listing counts as a write too).
+(tar 7's typings give every command one shape, so listing counts as a write too),
+and so does calling one of the functions a tar 7 command dispatches to directly
+(`tar.x.syncFile(...)`, `asyncFile`, `syncNoFile`, `asyncNoFile`).
 Some otherwise pure libraries have a few functions that aren't: cheerio's
 `fromURL`, rxjs's `ajax`, `fromFetch`, and `webSocket`, and react-dom's resource
 hints (`preload`, `preconnect`, ...) reach the network; react-dom's `preinit` and

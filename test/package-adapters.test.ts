@@ -46,7 +46,14 @@ export type { StripeConfig };`,
 
   // tar 7.5: the commands are consts typed TarCommand, whose call signatures are in a type alias.
   "tar/index.d.ts": `
-export type TarCommand<A, S> = { (): A; (opt: { file?: string; cwd?: string }, entries?: string[]): A } & { (opt: { sync: true }): S };
+export type TarCommand<A, S> = { (): A; (opt: { file?: string; cwd?: string }, entries?: string[]): A } & { (opt: { sync: true }): S } & {
+  // Each command also exposes the four functions it dispatches to.
+  syncFile: (opt: { file: string; cwd?: string }, entries: string[]) => void;
+  asyncFile: (opt: { file: string; cwd?: string }, entries: string[], cb?: (er?: Error) => unknown) => Promise<void>;
+  syncNoFile: (opt: { cwd?: string }, entries: string[]) => S;
+  asyncNoFile: (opt: { cwd?: string }, entries: string[]) => A;
+  validate?: (opt: object, entries?: string[]) => void;
+};
 declare class Unpack { constructor(opt?: { cwd?: string }); }
 declare class UnpackSync extends Unpack {}
 declare class Pack { constructor(opt?: { cwd?: string }); add(path: string): this; }
@@ -171,6 +178,11 @@ import * as tar from "tar";
 /** @perm env(NONE) */ export function list(f: string) { return tar.t({ file: f }); }
 /** @perm env(NONE) */ export function unpack() { return [new tar.Unpack({ cwd: "/" }), new tar.UnpackSync({ cwd: "/" })]; }
 /** @perm env(NONE) */ export function pack() { return [new tar.Pack({ cwd: "/" }), new tar.PackSync({ cwd: "/" }), new tar.WriteEntry("a")]; }
+/** @perm env(NONE) */ export function syncFile(f: string) { return tar.x.syncFile({ file: f, cwd: "/" }, []); }
+/** @perm env(NONE) */ export function asyncFile(f: string) { return tar.r.asyncFile({ file: f }, ["/etc/passwd"]); }
+/** @perm env(NONE) */ export function syncNoFile() { return tar.x.syncNoFile({ cwd: "/" }, []); }
+/** @perm env(NONE) */ export function asyncNoFile() { return tar.c.asyncNoFile({ cwd: "/" }, ["/etc"]); }
+/** @perm env(NONE) */ export function check(f: string) { return tar.x.validate?.({ file: f }); }
 `,
   "cheerio.ts": `
 import { fromURL, load } from "cheerio";
@@ -306,6 +318,13 @@ describe("tar", () => {
     ["list", ["fs.read", "fs.write"]],
     ["unpack", ["fs.write"]],
     ["pack", ["fs.read"]],
+    // The functions each command dispatches to, called directly: these extract or write too.
+    ["syncFile", ["fs.read", "fs.write"]],
+    ["asyncFile", ["fs.read", "fs.write"]],
+    ["syncNoFile", ["fs.read", "fs.write"]],
+    ["asyncNoFile", ["fs.read", "fs.write"]],
+    // Checking the options touches nothing.
+    ["check", []],
   ])("tar 7: %s", (name, expected) => {
     expect(actual("tar.ts", name)).toEqual(expected);
   });
