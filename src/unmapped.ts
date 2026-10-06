@@ -6,7 +6,7 @@
 
 import { Node, SyntaxKind, type NoSubstitutionTemplateLiteral, type SourceFile, type StringLiteral } from "ts-morph";
 import { packageOf, type AdapterIndex } from "./adapters.js";
-import { isAsset, isUrlSpecifier, loadOf, loadTarget } from "./detect/modules.js";
+import { isUrlSpecifier, loadOf, loadTarget, loadsData, referenceUsesRequire } from "./detect/modules.js";
 import { resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
 import { SQL_PACKAGES } from "./detect/sql.js";
 import { descendantsOfKind, forEachDescendant, lineAndColumn } from "./walk.js";
@@ -96,15 +96,16 @@ export interface UnresolvedImport {
 /**
  * Imports whose types can't be found (a missing @types package, say). Nothing
  * called from them can be resolved, so without this their calls would pass
- * silently. First import of each specifier, in file order. Assets bundlers handle
- * are left out, and so are URL specifiers, which are unverifiable (detect/modules.ts).
+ * silently. First import of each specifier, in file order. Data is left out (an asset
+ * a bundler handles, or JSON: see loadsData), and so are URL specifiers, which are
+ * unverifiable (detect/modules.ts).
  */
 export function unresolvedImports(sourceFiles: readonly SourceFile[]): UnresolvedImport[] {
   const found = new Map<string, UnresolvedImport>();
   for (const sourceFile of sourceFiles) {
     for (const { specifierNode, node } of moduleReferences(sourceFile)) {
       const specifier = specifierNode.getLiteralValue();
-      if (isAsset(specifier) || isUrlSpecifier(specifier)) continue;
+      if (isUrlSpecifier(specifier) || loadsData(specifier, sourceFile, referenceUsesRequire(node))) continue;
       if (HANDLED.has(bareName(specifier)) || found.has(specifier) || resolves(specifierNode, node)) continue;
       found.set(specifier, { specifier, file: sourceFile.getFilePath(), line: lineAndColumn(sourceFile, node.getStart()).line, node });
     }

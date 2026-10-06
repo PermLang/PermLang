@@ -311,9 +311,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         capability: u.specifier,
         call: "",
         message: `imports ${u.specifier}, whose types can't be found, so nothing called from it is checked.`,
-        fix: /^node:|^(fs|child_process|http|https|net|path|os|crypto)$/.test(u.specifier)
-          ? "install @types/node."
-          : `install its types (the package itself, or @types/${u.specifier.replace(/^@/, "").replace("/", "__")}).`,
+        fix: unresolvedFix(u.specifier),
       });
     }
   }
@@ -604,6 +602,17 @@ function annotationFix(unit: Unit, key: string): string {
     return named ? `add /** @perm ${key} */ above class ${named}.` : `add a constructor to the class, with /** @perm ${key} */.`;
   }
   return `add /** @perm ${key} */ to ${unit.name}.`;
+}
+
+/** How to give an import whose types can't be found its types. */
+function unresolvedFix(specifier: string): string {
+  if (/^node:|^(fs|child_process|http|https|net|path|os|crypto)$/.test(specifier)) return "install @types/node.";
+  // A file of the project's: missing, or JavaScript with no types. Where imports compile to
+  // require(), a stylesheet or image is one too (see detect/modules.ts).
+  if (specifier.startsWith(".") || path.isAbsolute(specifier)) {
+    return "make sure the file exists and has types (a .ts file, or a .d.ts next to it). Where imports compile to require(), anything but a .json file that exists runs as JavaScript.";
+  }
+  return `install its types (the package itself, or @types/${specifier.replace(/^@/, "").replace("/", "__")}).`;
 }
 
 /** An @perm or @perm-unsafe tag that no function or file takes, so nothing checks it. */

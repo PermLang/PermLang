@@ -281,12 +281,36 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 | a file in the project | its top-level code runs, and any of its exports can be called: the caller reaches all of them |
 | a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
 | a package with no adapter | listed and warned about (PERM006), like an import of it |
-| a package declared pure, JSON, or another asset | nothing |
+| a package declared pure, or data (see below) | nothing |
 | a specifier that can't be traced, or a file outside the project | unverifiable |
 
 `data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
 every form of import: the code isn't a file in the project. A query or fragment
 doesn't make a script an asset (`./evil.js?x=.css` is still `./evil.js`).
+
+Which files are data depends on what loads them:
+
+- **An ES import** (`import`, `export ... from`, or `import()`, in a file
+  TypeScript emits as an ES module): a stylesheet, an image, JSON, or another
+  asset is data. A bundler loads it as what it is, and Node's ES module loader
+  doesn't run it.
+- **`require()`**, `import x = require()`, and imports in a file TypeScript
+  compiles to CommonJS: only a `.json` file that exists is data. Node runs any
+  other file as JavaScript, and adds `.js` to a path that doesn't exist, so
+  `require("./theme.css")` runs `./theme.css`, or `./theme.css.js`, and
+  `require("./data.json")` runs `./data.json.js` when there's no `./data.json`.
+  Such a `require()` is unverifiable (PERM004), and such an import is one whose
+  types can't be found (PERM007). The extension must be exactly `.json`:
+  `./data.JSON` runs as JavaScript too.
+
+A file is compiled to CommonJS when `"module"` is `commonjs` (or AMD, UMD, or
+unset with a target before ES2015), when it's a `.cts` file, or, with `node16`
+or later, when its `package.json` doesn't say `"type": "module"`. There,
+`import()` stays an ES import. When the check is given paths instead of a
+tsconfig.json, files are read with bundler settings (ES modules), so in a
+project compiled to CommonJS, check with `--project tsconfig.json` to have its
+imports of asset-looking files reported. A `require()` is held to the CommonJS
+rule either way.
 
 ### Known limits
 
@@ -380,6 +404,13 @@ Other gaps, not yet in fixtures:
   generated Prisma client) are trusted like a package with no adapter.
 - `require()` of a package an adapter maps is unverifiable, rather than reaching
   the capabilities the adapter lists; use `import` to have its calls checked.
+- Checked by paths rather than a tsconfig.json, every file is read as an ES
+  module, as a bundler would load it. So in a project compiled to CommonJS, an
+  `import "./theme.css"`, which runs `./theme.css.js` when `./theme.css` doesn't
+  exist, isn't reported; check it with `--project tsconfig.json`. (PermLang
+  can't tell from the files alone: many bundled projects have no
+  `"type": "module"` either.) A `.cts` file, and `require()`, are held to
+  CommonJS's rules either way ([loading modules](#loading-modules)).
 - A file loaded with `require()` or a traced `import()` reaches every export of
   that file, used or not.
 - Interfaces are matched structurally, so a class or object literal that merely

@@ -241,6 +241,10 @@ const caught: Record<string, string> = {
   i35_project_this: "import * as cp from \"node:child_process\";\nfunction run(this: unknown) { return (this as any).execSync(\"id\"); }\nexport function t() { return run.call(cp); }",
   i36_cast_function_this: "import * as cp from \"node:child_process\";\ndeclare const handler: (this: unknown) => void;\nexport function t() { return (handler as any).call(cp); }",
   j06_library_this: "import * as fs from \"node:fs\";\nexport function t() { return fs.readFileSync.bind(fs); }",
+  // Engine re-verification (0.4): require() runs a file that only looks like an asset as JavaScript,
+  // or adds `.js` when it doesn't exist (./theme.css.js). Only a .json file that exists is data.
+  rve01_require_stylesheet: "export function t() { return require(\"./rve01-theme.css\"); }",
+  rve02_require_missing_json: "export function t() { return require(\"./rve02-data.json\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -264,7 +268,8 @@ const silent: Record<string, string> = {
   // Engine review (0.4): loading modules that touch nothing.
   en_fp01_require_pure: "export function t() { const p = require(\"path\"); return p.join(\"a\", \"b\"); }",
   en_fp02_import_const_pure: "const spec = \"node:path\";\nexport async function t() { return (await import(spec)).join(\"a\", \"b\"); }",
-  en_fp03_stylesheet: "import \"./missing-styles.css\";\nimport \"./missing-styles.css?inline\";\nexport const x = 1;",
+  // (en_fp03, a stylesheet import, moved to modules.test.ts: this project compiles imports to
+  // require(), which would run ./missing-styles.css.js. A bundler's project doesn't.)
   en_fp04_node_url: "export function t() { return new URL(\"data:text/plain,hello\").href; }",
   // A class with a same-named member that can't stand in for the interface isn't an implementation.
   // (All cases share one project, so these use member names no other case has.)
