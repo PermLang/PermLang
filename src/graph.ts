@@ -54,8 +54,15 @@ export interface GraphContext {
 
 export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] {
   const edges: Edge[] = [];
+  // A call through an interface can have thousands of implementations: find its unit once.
+  const enclosing = new Map<Node, Node>();
+  const unitAround = (node: Node) => {
+    let found = enclosing.get(node);
+    if (!found) enclosing.set(node, (found = enclosingUnitNode(node)));
+    return found;
+  };
   const add = (fromNode: Node, target: Node | undefined, site: Node, text: string) => {
-    const from = ctx.unitOf(enclosingUnitNode(fromNode));
+    const from = ctx.unitOf(unitAround(fromNode));
     const to = target && ctx.unitOf(target);
     if (!from || !to) return;
     const { line, column } = lineAndColumn(sourceFile, site.getStart());

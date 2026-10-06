@@ -452,7 +452,12 @@ Other gaps, not yet in fixtures:
   that file, used or not.
 - Interfaces are matched structurally, so a class or object literal that merely
   fits an interface counts as an implementation of it, even if it's never used
-  as one.
+  as one. Matching compares every interface a call goes through with every
+  class and object literal that has a member of that name, once per interface
+  and member, and each such call is linked to every match. That's quick for
+  real code, but grows with the product of the two: a thousand interfaces of
+  one shape, a thousand classes that fit all of them, and a call through each
+  interface take about ten seconds to check.
 - A file that TypeScript itself can't parse (code nested thousands of levels
   deep) is unverifiable when the project's file list includes it. One reached
   only through imports from outside that list still stops the check.

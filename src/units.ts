@@ -174,8 +174,12 @@ export function unitNodeForDeclaration(d: Node): Node | undefined {
   return undefined;
 }
 
+const inNodeModules = new WeakMap<SourceFile, boolean>();
+
 export function isInNodeModules(sf: SourceFile): boolean {
-  return sf.getFilePath().split("/").includes("node_modules");
+  let known = inNodeModules.get(sf);
+  if (known === undefined) inNodeModules.set(sf, (known = sf.getFilePath().split("/").includes("node_modules")));
+  return known;
 }
 
 // --- JavaScript declared in the project's own .d.ts files -------------------
