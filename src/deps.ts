@@ -143,9 +143,10 @@ const OVERRIDE_SECTIONS: readonly OverrideSection[] = ["overrides", "resolutions
  */
 function overrides(pkg: PackageJson, section: OverrideSection): [string, string][] {
   const field = section === "pnpm.overrides" ? (isObject(pkg.pnpm) ? pkg.pnpm.overrides : undefined) : pkg[section];
+  // `path` is the entry's name so far: the field's own keys start it.
   const flatten = (value: unknown, path: string): [string, string][] => {
     if (!isObject(value)) return [[path, typeof value === "string" ? value : JSON.stringify(value)]];
-    return Object.entries(value).flatMap(([key, inner]) => flatten(inner, key === "." && path ? path : path ? `${path} > ${key}` : key));
+    return Object.entries(value).flatMap(([key, inner]) => flatten(inner, key === "." ? path : `${path} > ${key}`));
   };
   return isObject(field) ? Object.entries(field).flatMap(([key, value]) => flatten(value, key)) : [];
 }
