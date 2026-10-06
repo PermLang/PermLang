@@ -105,8 +105,8 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
     // Only a complete diff, of code that matches its lock, can say that nothing changed.
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
     // Dependencies don't change what the lock records, but they can change what the code runs.
-    const deps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
-    top.push(complete ? `No permission changes.${deps}` : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.", "");
+    const changedDeps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
+    top.push(complete ? `No permission changes.${changedDeps}` : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.", "");
   } else {
     const counts = [
       gaining.length > 0 ? `**${plural(gaining.length, "function")} ${gaining.length === 1 ? "gains" : "gain"} access**` : "",
@@ -369,8 +369,8 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   }
   if (out.length === header) {
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
-    const deps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
-    out.push(complete ? `No permission changes.${deps}` : "The base and the code reach the same access.");
+    const changedDeps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
+    out.push(complete ? `No permission changes.${changedDeps}` : "The base and the code reach the same access.");
   }
   const deps = notes.dependencies ?? [];
   if (deps.length > 0) {

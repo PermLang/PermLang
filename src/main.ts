@@ -641,9 +641,9 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
 
 /**
  * Packages the change adds to ./package.json, installs from another source, or overrides, for
- * review. A package.json that's missing or isn't a JSON object means no dependency section, and adapters
- * that can't be loaded (which fails the analysis, and the comment says so) are left out. The
- * commits were read already, so a failure to read them here is an error.
+ * review. A package.json that's missing or isn't a JSON object means no dependency section, and
+ * adapters that can't be loaded (which fails the analysis, and the comment says so) are left out.
+ * The commits were read already, so a failure to read them here is an error.
  */
 function dependencyChanges(base: string, args: Args): DependencyChange[] {
   const head = parsePackage(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
