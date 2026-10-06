@@ -11,7 +11,9 @@
 //     `(self as any).fetch(url)` is a fetch call, with its host, and
 //     `(process as any).env.KEY` reads env(KEY). Anything else is left alone:
 //     these objects are cast to `any` all the time for harmless reasons
-//     (`(window as any).dataLayer`, `const w = window as any`).
+//     (`(window as any).dataLayer`, `const w = window as any`). Database clients
+//     (a Prisma client or model, a Drizzle database, a SQL pool) are followed the
+//     same way: `(prisma as any).lead.deleteMany()` is a Prisma call.
 //   - A capability module: any value whose type is one (a namespace or default
 //     import, `import cp = require(...)`, the result of `await import(...)` or
 //     `process.getBuiltinModule(...)`, or a module of the project's own that
