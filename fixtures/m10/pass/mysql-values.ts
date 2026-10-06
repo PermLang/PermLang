@@ -19,6 +19,8 @@ export async function plain(id: string | number, when: Date, ids: readonly (stri
   await myp.query("INSERT INTO leads SET ?", [row]);
   await myp.query({ sql: "SELECT * FROM leads WHERE id = ?", values: [id] });
   await myp.query("SELECT * FROM leads WHERE note = '10:30' AND id = :id", { id });
+  // With no values, nothing is pasted into the text.
+  await myp.query("SELECT * FROM leads WHERE note = 'why?'");
 }
 
 /** @perm db.read(leads) */

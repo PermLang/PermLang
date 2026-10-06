@@ -145,7 +145,8 @@ function mysqlQuery(args: readonly Node[]): Capability[] {
   const [first, second] = args;
   const values = [second, first && optionValues(first)].filter((v): v is Node => v !== undefined && !isCallback(v));
   if (!values.every(isPlainValue)) return unknown;
-  return fromSql(queryText(first), { formatted: true });
+  // Without values, nothing is pasted in.
+  return fromSql(queryText(first), { formatted: values.length > 0 });
 }
 
 /** `values` in a `{ sql, values }` options object; a spread or computed key could set it. */

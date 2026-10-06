@@ -164,29 +164,31 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     placeholder, such as `@setval(...)`, which Postgres reads as the operator `@` and
     a call), a parenthesized list after an `INSERT` table that isn't a list of
     columns, a quoted name it can't report as written (`"audit.log"`), and SQL nested
-    more than 64 levels deep. A `?` placeholder is read as MySQL and SQLite read it,
-    on its own (SQLite's `?12` takes digits too), so in `?FROM secrets` the word after
-    it is the keyword `FROM`. So can SQL built with string concatenation or a
+    more than 64 levels deep. So can SQL built with string concatenation or a
     template passed to `query()`; a config object (`{ text }`, `{ sql }`) with a
     spread, a computed key, or the SQL named twice, any of which can replace the
     text; and a tag called as a function with an array made to look like a
-    template's strings. mysql2's `query()` fills in values itself, by pasting each
-    one into the text: a value with a `toSqlString()` method (what `mysql.raw()`
-    returns) is pasted in as SQL. So each value must be one mysql2 escapes as data,
-    as written or by its type: a string, number, boolean, `null`, date, or buffer, or
-    an array, a record (`Record<string, string>`), or an object literal of those. Any
-    other value could have that method, whatever its declared type lists: one typed
-    as an interface or object type, `object`, `unknown`, `any`, or a generic, or cast
-    to a plain type where it's passed. A placeholder inside a string, quoted name, or
-    comment counts too, since older mysql2 versions fill those in and a value pasted
-    there can end the string. (`execute()` and prepared statements bind values on the
-    server, so neither applies to them.) These need bare `db.read`
-    and `db.write`. Neon's query function called with SQL text (before 1.0) is read
-    like `query()`. So does any client method PermLang doesn't know, so new APIs
-    can't pass silently; postgres.js's query modifiers (`.values()`, `.cursor()`,
-    `.describe()`, ...), mysql2's `.promise()`, and a mysql2 prepared statement's
-    `execute()` touch nothing beyond the query they belong to. Schema-qualified
-    names are declared as written (`db.read(public.users)`).
+    template's strings. These need bare `db.read` and `db.write`. So does a mysql2
+    `query()` given a value mysql2 might not escape as data: `query()` fills in
+    values itself, by pasting each one into the text, and pastes a value's
+    `toSqlString()` (what `mysql.raw()` returns) in as SQL. A value is read as
+    written or by its type, and only a string, number, boolean, `null`, date, or
+    buffer, or an array, a record (`Record<string, string>`), or an object literal
+    of those, is sure to be data: one typed as an interface or object type,
+    `object`, `unknown`, `any`, or a generic could have that method, whatever its
+    type lists, and so could one cast to a plain type where it's passed. So does a
+    `query()` with values and a placeholder inside a string, quoted name, or
+    comment, since older mysql2 versions fill those in too and a value pasted there
+    can end the string. (`execute()` and prepared statements bind values on the
+    server, so neither rule applies to them.) Neon's query function called with SQL
+    text (before 1.0) is read like `query()`. Any client method PermLang doesn't
+    know needs bare `db.read` and `db.write` too, so new APIs can't pass silently;
+    postgres.js's query modifiers (`.values()`, `.cursor()`, `.describe()`, ...),
+    mysql2's `.promise()`, and a prepared statement's methods (mysql2's and
+    `node:sqlite`'s) touch nothing beyond the query they belong to. A `?`
+    placeholder is read as MySQL and SQLite read it, on its own (SQLite's `?12`
+    takes digits too), so in `?FROM secrets` the word after it is the keyword
+    `FROM`. Schema-qualified names are declared as written (`db.read(public.users)`).
 - **Adapter manifests.** JSON files mapping a library's functions to
   capabilities, including app-level ones such as `payments.refund`. Built-in
   adapters in [`adapters/`](../adapters) cover HTTP clients, Stripe, email, Redis,
