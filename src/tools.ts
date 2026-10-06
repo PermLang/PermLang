@@ -11,9 +11,11 @@ import {
   type CallExpression,
   type ClassDeclaration,
   type ClassExpression,
+  type ElementAccessExpression,
   type NewExpression,
   type ObjectLiteralElementLike,
   type ObjectLiteralExpression,
+  type PropertyAccessExpression,
   type SourceFile,
   type Type,
   type VariableDeclaration,
@@ -285,13 +287,9 @@ function collectedTools(call: CallExpression | NewExpression, name: string | und
 
 /** The type of option `key` in the parameter at `index` of the signature a call resolves to, if it has one. */
 function declaredOption(call: CallExpression | NewExpression, index: number, key: string): Type | undefined {
-  try {
-    const parameter = call.getProject().getTypeChecker().getResolvedSignature(call)?.getParameters()[index];
-    return parameter?.getTypeAtLocation(call).getProperty(key)?.getTypeAtLocation(call);
-  } catch {
-    // A pull request's code may not compile; then nothing says what the parameter takes.
-    return undefined;
-  }
+  // (registrationsAt resolved this call already, through resolvedDeclaration, so it resolves.)
+  const parameter = call.getProject().getTypeChecker().getResolvedSignature(call)?.getParameters()[index];
+  return parameter?.getTypeAtLocation(call).getProperty(key)?.getTypeAtLocation(call);
 }
 
 /**
@@ -385,26 +383,24 @@ const CHANGING = new Set(["Object.assign", "Object.defineProperty", "Object.defi
  */
 function laterEntries(constant: VariableDeclaration, depth: number, root: Node): Listing {
   const out: Listing = { entries: [], unlisted: [] };
-  const name = constant.getNameNode();
-  if (!Node.isIdentifier(name)) return out;
-  for (const reference of name.findReferencesAsNodes()) {
-    const parent = reference.getParent();
+  for (const reference of constant.findReferencesAsNodes()) {
+    const parent = reference.getParentOrThrow();
     if (Node.isCallExpression(parent) && parent.getArguments()[0] === reference && CHANGING.has(unwrapExpression(parent.getExpression()).getText())) {
       out.unlisted.push(parent);
       continue;
     }
     // The members it reaches: `tools.shell`, `tools["shell"].execute`.
-    let top: Node = reference;
+    let top: PropertyAccessExpression | ElementAccessExpression | undefined;
     let members = 0;
-    for (let p = top.getParent(); p && (Node.isPropertyAccessExpression(p) || Node.isElementAccessExpression(p)) && p.getExpression() === top; p = top.getParent()) {
+    for (let p = parent; (Node.isPropertyAccessExpression(p) || Node.isElementAccessExpression(p)) && p.getExpression() === (top ?? reference); p = p.getParentOrThrow()) {
       top = p;
       members++;
     }
-    if (members === 0) continue;
-    const use = top.getParent()!;
+    if (!top) continue;
+    const use = top.getParentOrThrow();
     if (Node.isBinaryExpression(use) && use.getLeft() === top && isAssignment(use)) {
       // `tools.shell = {...}` adds an entry; `tools.shell.execute = run` changes one.
-      const key = Node.isPropertyAccessExpression(top) ? top.getName() : Node.isElementAccessExpression(top) ? literalString(top.getArgumentExpression()) : undefined;
+      const key = Node.isPropertyAccessExpression(top) ? top.getName() : literalString(top.getArgumentExpression());
       if (members === 1 && use.getOperatorToken().getKind() === SyntaxKind.EqualsToken) out.entries.push({ site: use, key, value: use.getRight() });
       else out.unlisted.push(use);
     } else if (Node.isCallExpression(use) && use.getExpression() === top && Node.isPropertyAccessExpression(top)) {
@@ -473,8 +469,8 @@ function madeByFramework(value: Node, depth: number): boolean {
 /** What a call to a function of your own can return, or undefined when it isn't one. */
 function firstPartyReturns(call: CallExpression | NewExpression): Node[] | undefined {
   if (Node.isNewExpression(call)) return undefined;
-  const declaration = resolvedDeclaration(call);
-  const fn = declaration && (Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : declaration);
+  // The declaration of the signature called: a function, arrow function, or method.
+  const fn = resolvedDeclaration(call);
   if (!fn || isThirdParty(fn) || !(Node.isFunctionDeclaration(fn) || Node.isArrowFunction(fn) || Node.isFunctionExpression(fn) || Node.isMethodDeclaration(fn))) return undefined;
   const body = fn.getBody();
   if (!body) return undefined;
@@ -508,9 +504,9 @@ function isTool(type: Type, at: Node, unknownCould: boolean): boolean {
   });
 }
 
+/** A union's or an intersection's members. */
 function parts(type: Type): Type[] {
-  if (type.isUnion()) return type.getUnionTypes();
-  return type.isIntersection() ? type.getIntersectionTypes() : [type];
+  return type.isUnion() ? type.getUnionTypes() : type.getIntersectionTypes();
 }
 
 /** Whether a collection of this type (a list, or a record) could hold a tool a framework runs. */
@@ -520,8 +516,8 @@ function holdsTools(type: Type, at: Node, unknownCould = true, depth = 0): boole
   if (type.isUnion() || type.isIntersection()) return parts(type).some((t) => holdsTools(t, at, false, depth));
   if (isTool(type, at, false)) return true;
   const element = type.getArrayElementType() ?? type.getNumberIndexType() ?? type.getStringIndexType();
+  // (A tuple's elements are its number index type.)
   if (element) return holdsTools(element, at, false, depth + 1);
-  if (type.isTuple()) return type.getTupleElements().some((t) => holdsTools(t, at, false, depth + 1));
   // A record of tools: `{ shell: {...}, weather }`.
   return type.isObject() && type.getProperties().some((p) => isTool(p.getTypeAtLocation(at), at, false));
 }
