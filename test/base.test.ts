@@ -11,6 +11,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { locksRead, permLangSteps } from "../src/lock-moves.js";
 import { runCli } from "./run-cli.js";
+import { removeTemporary } from "./temporary.js";
 
 let dir: string;
 
@@ -52,7 +53,7 @@ beforeEach(() => {
   git("config", "core.autocrlf", "false");
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTemporary(dir));
 
 describe("permlang check --base", () => {
   it("requires the lock the base commit has, and passes when nothing moved", () => {

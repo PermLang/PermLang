@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { runCli } from "./run-cli.js";
+import { removeTemporary } from "./temporary.js";
 
 let dir: string;
 
@@ -24,7 +25,7 @@ beforeEach(() => {
   writeFileSync(path.join(dir, "src", "app.ts"), `export async function ping() {\n  return fetch("https://api.example.com/");\n}\n`);
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTemporary(dir));
 
 describe("permlang init", () => {
   it("writes a sketch config and a lock, and the check then passes", () => {

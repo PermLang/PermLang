@@ -3,12 +3,13 @@
 // adapter entry applies, so the stand-ins keep the real names and shapes (classes,
 // interfaces, call signatures). Each notes the version it was verified against.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadAdapters } from "../src/adapters.js";
 import { checkTsConfig, type Report } from "../src/check.js";
+import { removeTemporary } from "./temporary.js";
 
 // --- stand-ins for the packages, under node_modules ---------------------------------
 
@@ -275,7 +276,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  for (const root of roots) rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  for (const root of roots) removeTemporary(root);
 });
 
 /** What a function reaches, sorted. */

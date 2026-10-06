@@ -2,6 +2,26 @@
 
 All notable changes to PermLang.
 
+## 0.4.1 (2026-10-06)
+
+Nothing that passed with 0.4.0 fails with 0.4.1.
+
+### Fixed
+
+- **The pull-request comment said "Check settings changed" twice** when the
+  check's settings were the only change, as on the first pull request after
+  upgrading a lock from 0.3, and "New code PermLang can't check" twice when
+  that was the only change. It now says each once.
+
+### Project
+
+- **PermLang's own pull requests are also checked by its last release**, pinned
+  to its commit, which a pull request can't change. Before, they were checked
+  only by their own copy of PermLang, so a pull request could change how its
+  own new access was judged. See [CONTRIBUTING.md](CONTRIBUTING.md).
+- Tests clean up their temporary folders in a way that tolerates Windows
+  holding a folder open for a moment, which occasionally failed a test run.
+
 ## 0.4.0 (2026-10-06)
 
 This release fixes the problems a full code review of 0.3 found, and the ones a

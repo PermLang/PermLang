@@ -10,6 +10,26 @@ import { diffLocks, type LockFile } from "../src/lock.js";
 const lock = (functions: Record<string, string[]>): LockFile => ({ permlang: 2, functions, unsafe: {} });
 const empty = lock({});
 
+// The summary line names each kind of change. When it would only name the one section right
+// below it, as for a lock upgraded from format 1 (only settings are new), it said it twice.
+describe("the comment's summary line", () => {
+  const settings = lock({ "permlang.config.json#<permlang.config.json>": ["permlang.files(src)", "permlang.strictness(development)"] });
+  const unchecked = lock({ "permlang.config.json#<unchecked>": ["unchecked.package(leftpad2)"] });
+
+  it("is left out when it would only repeat the one section's heading", () => {
+    for (const head of [settings, unchecked]) {
+      const md = formatDiffMarkdown(diffLocks(empty, head), {});
+      expect(md.match(/Check settings changed|New code PermLang can't check/g)).toHaveLength(1);
+    }
+  });
+
+  it("stays when it says more than the heading below it", () => {
+    const both = lock({ ...settings.functions, "src/a.ts#run": ["exec"] });
+    const md = formatDiffMarkdown(diffLocks(empty, both), {});
+    expect(md).toContain("**1 function gains access** · **Check settings changed**");
+  });
+});
+
 describe("the comment, cut to fit", () => {
   // 400 long flow rules took the whole comment, and the new exec was left out (gate verifier, A(a)).
   it("puts the new-access table before the settings changes", () => {

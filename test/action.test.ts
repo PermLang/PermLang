@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { removeTemporary } from "./temporary.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const action = parse(readFileSync(path.join(repo, "action.yml"), "utf8")) as { runs: { steps: { name: string; run?: string; with?: Record<string, string> }[] } };
@@ -44,7 +45,7 @@ beforeEach(() => {
   chmodSync(path.join(temp, "node"), 0o755);
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTemporary(dir));
 
 function git(...args: string[]): string {
   return execFileSync("git", args, { cwd: work, encoding: "utf8" }).trim();

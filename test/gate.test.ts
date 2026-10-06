@@ -669,7 +669,7 @@ describe("new code PermLang can't check is recorded in the lock", () => {
     expect(check.out).toContain("src/more.ts:4:1 error PERM005: PermLang can't check leftpad2: it has no adapter, and permlang.lock.json doesn't record it.");
 
     const md = permlang("diff", "HEAD", "src", "--format", "markdown").out;
-    expect(md).toContain("**New code PermLang can't check**");
+    expect(md).toContain("**New code PermLang can't check.**");
     expect(md).toContain("- <code>+ src/telemetry.cjs</code>: an import with no types, in src/more.ts:\u{200b}1");
     expect(md).toContain("- <code>+ leftpad2</code>: a package with no adapter, called in src/more.ts:\u{200b}4");
     expect(md).not.toContain("No permission changes");

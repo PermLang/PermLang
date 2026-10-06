@@ -2,12 +2,13 @@
 // function to belong to, and the file as a whole is unverifiable instead. The failure is
 // simulated, as in isolation.test.ts.
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { checkFiles } from "../src/check.js";
+import { removeTemporary } from "./temporary.js";
 
 vi.mock("../src/detect/index.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../src/detect/index.js")>();
@@ -21,7 +22,7 @@ vi.mock("../src/detect/index.js", async (importOriginal) => {
 });
 
 const dir = mkdtempSync(path.join(tmpdir(), "permlang-flows-isolation-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTemporary(dir));
 
 describe("a flow rule and a file that can't be analyzed", () => {
   it("counts the file as code that can't be verified, where it's imported", () => {

@@ -2,11 +2,12 @@
 // project is still checked. The failures are simulated: real ones (code nested too deeply
 // for a recursive pass) are in engine.test.ts.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { checkFiles } from "../src/check.js";
+import { removeTemporary } from "./temporary.js";
 
 vi.mock("../src/detect/index.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("../src/detect/index.js")>();
@@ -32,7 +33,7 @@ vi.mock("../src/graph.js", async (importOriginal) => {
 });
 
 const dir = mkdtempSync(path.join(tmpdir(), "permlang-isolation-"));
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTemporary(dir));
 
 describe("a file that can't be analyzed", () => {
   it("is unverifiable, and the others are checked as usual", () => {
