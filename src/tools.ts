@@ -21,7 +21,6 @@ import {
 import { packageOf } from "./adapters.js";
 import { UNVERIFIABLE, formatCapability } from "./capability.js";
 import { literalString, resolveAlias, resolvedDeclaration, unwrapExpression } from "./detect/shared.js";
-import { READS_ONLY } from "./flows.js";
 import type { Edge, Reach } from "./graph.js";
 import { constructorUnitNode, enclosingUnitNode, isInNodeModules, unitNodeForDeclaration, unitNodesForSymbol, type Unit } from "./units.js";
 import { forEachDescendant } from "./walk.js";
@@ -286,9 +285,13 @@ function collectedTools(call: CallExpression | NewExpression, name: string | und
 
 /** The type of option `key` in the parameter at `index` of the signature a call resolves to, if it has one. */
 function declaredOption(call: CallExpression | NewExpression, index: number, key: string): Type | undefined {
-  const parameter = call.getProject().getTypeChecker().getResolvedSignature(call)?.getParameters()[index];
-  const type = parameter?.getTypeAtLocation(call);
-  return type?.getProperty(key)?.getTypeAtLocation(call);
+  try {
+    const parameter = call.getProject().getTypeChecker().getResolvedSignature(call)?.getParameters()[index];
+    return parameter?.getTypeAtLocation(call).getProperty(key)?.getTypeAtLocation(call);
+  } catch {
+    // A pull request's code may not compile; then nothing says what the parameter takes.
+    return undefined;
+  }
 }
 
 /**
@@ -369,14 +372,16 @@ function listing(collection: Node, depth: number, root = collection): Listing {
 
 /** Methods that add to a list, whose arguments are entries. */
 const ADDING = new Set(["push", "unshift"]);
+/** Methods that can put something in a list without saying what. */
+const INSERTING = new Set(["splice", "fill", "copyWithin"]);
 /** Functions that change their first argument in ways that can't be read. */
 const CHANGING = new Set(["Object.assign", "Object.defineProperty", "Object.defineProperties", "Reflect.set", "Reflect.defineProperty"]);
 
 /**
  * What's added to a constant's record or list after it's created: `tools.shell = {...}`,
- * `tools["shell"] = ...`, `list.push(...)`. Other changes (`Object.assign(tools, more)`, a
- * computed key, `splice`) can't be listed. A function the constant is passed to could change
- * it too; that isn't followed.
+ * `tools[name] = ...`, `list.push(...)`. Other changes (`Object.assign(tools, more)`,
+ * `splice`, `tools.shell.execute = run`) can't be listed. A function the constant is passed
+ * to could change it too; that isn't followed.
  */
 function laterEntries(constant: VariableDeclaration, depth: number, root: Node): Listing {
   const out: Listing = { entries: [], unlisted: [] };
@@ -403,7 +408,9 @@ function laterEntries(constant: VariableDeclaration, depth: number, root: Node):
       if (members === 1 && use.getOperatorToken().getKind() === SyntaxKind.EqualsToken) out.entries.push({ site: use, key, value: use.getRight() });
       else out.unlisted.push(use);
     } else if (Node.isCallExpression(use) && use.getExpression() === top && Node.isPropertyAccessExpression(top)) {
-      if (members === 1 && ADDING.has(top.getName())) {
+      // Calling an entry, or a method that reads, changes nothing.
+      if (members > 1) continue;
+      if (ADDING.has(top.getName())) {
         for (const arg of use.getArguments()) {
           if (Node.isSpreadElement(arg)) {
             const added = listing(arg.getExpression(), depth + 1, root);
@@ -411,7 +418,7 @@ function laterEntries(constant: VariableDeclaration, depth: number, root: Node):
             out.unlisted.push(...added.unlisted);
           } else out.entries.push({ site: arg, value: arg });
         }
-      } else if (!READS_ONLY.has(top.getName())) out.unlisted.push(use);
+      } else if (INSERTING.has(top.getName())) out.unlisted.push(use);
     }
   }
   return out;

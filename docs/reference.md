@@ -652,7 +652,7 @@ Anything else could be any tool, and so could a collection that can't be read: a
 parameter, a variable that can be reassigned, a function's result (such as
 `Object.fromEntries(...)`), options passed in from elsewhere, a plain object a
 helper of yours builds, or a constant changed in ways that can't be read
-(`Object.assign(tools, more)`, a computed key). Each is listed as a tool that
+(`Object.assign(tools, more)`, `tools.shell.execute = run`). Each is listed as a tool that
 reaches `unverifiable`, named by its key, or `*` for a whole collection, with a
 `PERM008` warning saying it can't be listed. That only happens where the
 collection's type allows a tool the framework runs: the schema lists of the

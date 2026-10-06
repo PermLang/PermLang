@@ -712,6 +712,19 @@ function makeTool(cmd: string) {
 }
 export async function viaFactory(prompt: string) {
   return generateText({ prompt, tools: { made: makeTool("ls") } });
+}
+// Changed after it's created: by Object.assign (can't be listed), and push (can).
+const merged: Record<string, any> = {};
+Object.assign(merged, baseTools());
+export const mergedAgent = new ToolLoopAgent({ tools: merged });
+const list: any[] = [];
+list.push({ name: "pushed", invoke: async () => execSync("ls").toString() });
+export const listAgent = new Agent({ name: "l", tools: list });
+// Calling an entry changes nothing.
+const used = { safe: { description: "The time", inputSchema: {}, execute: async () => Date.now() } };
+export const usedAgent = new ToolLoopAgent({ tools: used });
+export async function callDirectly() {
+  return used.safe.execute();
 }`,
     // A library's prebuilt tool runs code PermLang can't see.
     prebuilt: `import { Calculator } from "@langchain/community/tools/calculator";
@@ -883,17 +896,21 @@ export default class Anthropic {
   });
 
   it("lists plain-object tools however they're given, and reports collections it can't list", () => {
-    const inFile = check().tools.filter((t) => t.file.endsWith("collections.ts")).map((t) => `${t.name} ${t.line}: ${t.reaches.join(", ")}`);
+    const inFile = check().tools.filter((t) => t.file.endsWith("collections.ts")).map((t) => `${t.name} ${t.line}: ${t.reaches.join(", ") || "nothing"}`);
     expect(inFile.sort()).toEqual([
       // Object.fromEntries(...), { ...baseTools() }, a let, and options passed in.
       "* 22: unverifiable",
       "* 33: unverifiable",
       "* 37: unverifiable",
       "* 40: unverifiable",
+      // Object.assign(merged, ...).
+      "* 51: unverifiable",
       "cs 9: exec",
       "helped 27: unverifiable",
       "later 13: exec",
+      "pushed 54: exec",
       "quotedTool 11: exec",
+      "safe 57: nothing",
       "sh 5: exec",
       "spreadIn 15: exec",
       "spreadList 19: exec",
@@ -949,9 +966,11 @@ export default class Anthropic {
       "collections.ts *",
       "collections.ts *",
       "collections.ts *",
+      "collections.ts *",
       "collections.ts cs",
       "collections.ts helped",
       "collections.ts later",
+      "collections.ts pushed",
       "collections.ts quotedTool",
       "collections.ts sh",
       "collections.ts spreadIn",
