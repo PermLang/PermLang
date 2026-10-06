@@ -87,6 +87,18 @@
       "fs.read(tsconfig.json)",
       "fs.write"
     ],
+    "src/load.ts#add": [
+      "fs.read"
+    ],
+    "src/load.ts#blanking": [
+      "fs.read"
+    ],
+    "src/load.ts#projectOfFiles": [
+      "fs.read"
+    ],
+    "src/load.ts#projectOfTsConfig": [
+      "fs.read"
+    ],
     "src/main.ts#analyze": [
       "fs.read",
       "fs.read(permlang.config.json)",
@@ -204,7 +216,13 @@
     "src/package-files.ts#folders": [
       "fs.read"
     ],
+    "src/package-files.ts#readManifest": [
+      "fs.read"
+    ],
     "src/package-files.ts#workspaceFolders": [
+      "fs.read"
+    ],
+    "src/package-files.ts#workspacePatterns": [
       "fs.read"
     ],
     "src/project-files.ts#Entry.constructor": [
