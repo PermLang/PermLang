@@ -137,8 +137,9 @@ export class Hierarchy {
 /**
  * Whether a call through this signature declaration is dispatched: a call signature or
  * function type of the project's that's a callable interface or type alias, or the type of a
- * collection's entries; or an anonymous function of the project's that a collection's type
- * was inferred from. (Not a function held by a name, which a call by that name runs alone.)
+ * collection's entries; or an anonymous function of the project's that the callee's type was
+ * inferred from (`new Map([["run", (cmd: string) => ...]])`, or one a function returns). Not a
+ * function held by a name, which a call by that name runs alone.
  */
 function isDispatchedSignature(declaration: Node): boolean {
   if (!isFirstParty(declaration)) return false;
@@ -147,17 +148,26 @@ function isDispatchedSignature(declaration: Node): boolean {
   // What the type is written for, past parentheses, unions, and (for a call signature) its object type.
   let owner = declaration.getParentOrThrow();
   while (Node.isParenthesizedTypeNode(owner) || Node.isUnionTypeNode(owner) || Node.isIntersectionTypeNode(owner) || Node.isTypeLiteral(owner)) owner = owner.getParentOrThrow();
-  return COLLECTIONS_AND_DECLARATIONS.has(owner.getKind());
+  if (Node.isInterfaceDeclaration(owner) || Node.isTypeAliasDeclaration(owner)) return true;
+  // A collection's entries, unless the collection is a parameter's: like a callback, what's in
+  // it runs as part of the code that passes it, which is charged with it already.
+  return COLLECTIONS.has(owner.getKind()) && !Node.isParameterDeclaration(annotated(declaration));
 }
 
-// Where a function type is a callable interface or type alias, or a collection's entries: a
-// type argument (`Map<string, F>`, `new Map<string, F>()`), an array or tuple, or an index
-// signature. A parameter's, variable's, property's, or return type is left out.
-const COLLECTIONS_AND_DECLARATIONS = new Set([
-  SyntaxKind.InterfaceDeclaration, SyntaxKind.TypeAliasDeclaration, SyntaxKind.TypeReference, SyntaxKind.ExpressionWithTypeArguments,
-  SyntaxKind.NewExpression, SyntaxKind.CallExpression, SyntaxKind.ArrayType, SyntaxKind.TupleType, SyntaxKind.NamedTupleMember,
-  SyntaxKind.RestType, SyntaxKind.OptionalType, SyntaxKind.IndexSignature,
+// Where a function type is a collection's entries: a type argument (`Map<string, F>`,
+// `new Map<string, F>()`), an array or tuple, or an index signature. A variable's, property's,
+// or return type of its own is left out: one function, held by a name.
+const COLLECTIONS = new Set([
+  SyntaxKind.TypeReference, SyntaxKind.ExpressionWithTypeArguments, SyntaxKind.NewExpression, SyntaxKind.CallExpression,
+  SyntaxKind.ArrayType, SyntaxKind.TupleType, SyntaxKind.NamedTupleMember, SyntaxKind.RestType, SyntaxKind.OptionalType, SyntaxKind.IndexSignature,
 ]);
+
+/** What a type is written for: the parameter, variable, or other declaration whose type it's part of. */
+function annotated(type: Node): Node {
+  let node = type.getParentOrThrow();
+  while (Node.isTypeNode(node) || Node.isPropertySignature(node) || Node.isIndexSignatureDeclaration(node) || Node.isMethodSignature(node)) node = node.getParentOrThrow();
+  return node;
+}
 
 /**
  * The declarations of the call signatures of an expression's contextual type: what it's

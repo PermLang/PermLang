@@ -239,9 +239,13 @@ them by what the code says, not by names:
   the code around it is charged with what it does, as before. Unlike classes
   and interfaces, a function that merely fits the type isn't counted: nearly
   every function fits a call signature. A function type written for a
-  parameter (`function apply(run: (cmd: string) => void)`) isn't followed this
-  way: a callback runs as part of the code that passes it, which already
-  reaches it.
+  parameter (`function apply(run: (cmd: string) => void)`, or
+  `jobs: Array<() => void>`) isn't followed this way: a callback runs as part of
+  the code that passes it, which already reaches it. A callable type alias is
+  followed wherever it's used, parameters included, so a function that calls
+  what it's given through one (`function retry(job: Job)`) reaches every
+  function written against that alias, as a call through an interface reaches
+  every implementation.
 - **Objects of functions handed to a call.** A function that passes an object
   holding functions (`app.use({ run(q) {...} })`, or a `const` holding one,
   nested in arrays and objects too) reaches those functions. Handed out by a

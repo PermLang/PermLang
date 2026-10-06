@@ -110,6 +110,18 @@ describe("a collection of functions", () => {
     expect(reach(list, "t")).toEqual(["exec"]);
   });
 
+  // Like a callback: the functions in it run as part of the code that passes them.
+  it("isn't a collection's type written for a parameter", () => {
+    const report = check([
+      "function runAll(jobs: Array<() => void>, more: { later: (() => void)[] }) { jobs.forEach((j) => j()); more.later.forEach((j) => j()); }",
+      "export function quiet() { runAll([() => 1], { later: [() => 2] }); }",
+      'export function loud() { runAll([() => { execSync("x"); }], { later: [] }); }',
+    ].join("\n"));
+    expect(reach(report, "runAll")).toEqual([]);
+    expect(reach(report, "quiet")).toEqual([]);
+    expect(reach(report, "loud")).toEqual(["exec"]);
+  });
+
   it("doesn't run what's in another collection of the same type", () => {
     const report = check([
       'const quiet = new Map<string, () => number>([["a", () => 1]]);',
