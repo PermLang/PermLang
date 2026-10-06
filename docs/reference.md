@@ -48,14 +48,24 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **All v0.1 capabilities.**
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
-    (`const env = process.env; env.KEY`). Spreading or enumerating the
-    environment needs bare `env`. `process.env` (and `(process as any).env`) is
+    (`const env = process.env; env.KEY`), and patterns that take the
+    environment out of what holds it (`const { env: { KEY } } = process`,
+    `const { process: { env: { KEY } } } = globalThis`,
+    `({ env: { KEY: k } } = process)`, a parameter
+    `({ env: { KEY } }: NodeJS.Process)`). Spreading or enumerating the
+    environment, a rest element, or a computed key needs bare `env`.
+    `process.env` (and `(process as any).env`) is
     read the same way without Node's types, or with a project's own
-    `declare const process`; a `process`
+    `declare const process`, also as `globalThis.process.env`,
+    `global.process.env`, `process["env"]`, or through `const p = process` or
+    `const { env } = process`, whose uses are followed (an untyped
+    `const env = process.env` reads every variable); a `process`
     that doesn't resolve also gets a PERM007 warning, since its other APIs
     can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
-    `env(KEY)`, except what Vite sets itself (`MODE`, `DEV`, `PROD`, `SSR`,
-    `BASE_URL`). `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
+    `env(KEY)`, also as `import.meta["env"]`, through `const m = import.meta`,
+    or destructured (`const { env } = import.meta`), except what Vite sets
+    itself (`MODE`, `DEV`, `PROD`, `SSR`, `BASE_URL`).
+    `process.loadEnvFile(path)` needs `env` and `fs.read(path)`
     (`./.env` by default).
   - `exec`: `child_process` (`exec`, `execFile`, `spawn`, `fork`, and their
     `Sync` forms), `process.kill`, `process.execve`, and `cluster.fork` /
@@ -67,22 +77,42 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     and ignores a `url` option; after a URL, an options `hostname` replaces the
     URL's host but a `host` doesn't (Node's URL parsing sets `hostname`); `net`
     and `tls` connect to `host` (or `connect(port, host)`) and ignore
-    `hostname`. Other libraries' options must name one host in all of `url`,
-    `hostname`, and `host`. A spread, an accessor, a computed key, or a
+    `hostname`. `tls.connect(port, host, options)` merges the options over the
+    host argument, so their `host` wins: options that set a different one (or
+    may, with a spread or computed key) need bare `net`. `http2.connect(url,
+    options)` hands its options to `net` or `tls` the same way, so a `host`,
+    `path`, `socket`, `lookup`, or `createConnection` there, or options that
+    aren't written out, need bare `net`. An `http` / `https` request's `agent`
+    makes the connection, so any agent other than none (`false`, `undefined`) or
+    Node's own `new http.Agent({...})` / `new https.Agent({...})` without a
+    spread or redirecting option (written in place, or held by a `const` the
+    program never changes) needs bare `net`: a subclass or an agent passed in
+    could connect anywhere. `fetch`'s `dispatcher` option (Node's undici agent)
+    does the same, so options that set one, may set one, or aren't written out
+    where they're used need bare `net`; ordinary written-out options (`method`,
+    `headers`, `body`, ...) keep the URL's host. Other libraries' options must
+    name one host in all of `url`, `hostname`, and `host`. A spread, an
+    accessor, a computed key, or a
     `socketPath`, `lookup`, or `createConnection` option (or a `path` for `net`
     and `tls`) could send the connection anywhere, so it needs bare `net`. So do
     options that aren't written out where they're used (a variable, even one that
     may be `undefined`), and a first argument to `net.connect` or `tls.connect`
-    that isn't a port number or written-out options.
-  - `fs.read` / `fs.write`: `readFile` and `createReadStream` with a writing
-    `flag` / `flags` option (`"w"`, `"a+"`, or one that can't be read) write the
-    file, and used as values they could be called with any flags, as `open` can.
+    that isn't a port number or written-out options. A callback where options
+    could be (`net.connect(port, host, onConnect)`) isn't options.
+  - `fs.read` / `fs.write`: `readFile` with a writing `flag` option, and
+    `createReadStream` (or `new fs.ReadStream`) with a writing `flags` option
+    (`"w"`, `"a+"`, or one that can't be read), write the file. As Node does,
+    each reads only its own name and ignores the other (`readFile`'s `flags`, a
+    stream's `flag`). Used as values, they could be called with any flags, as
+    `open` can.
     `new fs.Utf8Stream({ dest })`, `ReadStream`, and `WriteStream` open their
     path. `fchmod`, `fchown`, and `futimes` (and a `FileHandle`'s `chmod`,
     `chown`, and `utimes`) change a file however it was opened, so they need
     `fs.write`. `process.chdir(dir)` needs `fs.read(dir)` and `fs.write(dir)`,
     because every relative path the program uses afterwards resolves inside
-    `dir`.
+    `dir`. `process.report.writeReport(file)` needs `fs.write(file)`, and
+    `module.enableCompileCache(dir)` needs `fs.read(dir)` and `fs.write(dir)`
+    (bare when they're called without a literal path).
   - `db`: **Prisma**. The table is the
     model's accessor name: `prisma.lead.create()` needs `db.write(lead)`. Raw
     queries need bare `db.read` and `db.write`: SQL (`$queryRaw`, `$executeRaw`,
@@ -200,20 +230,35 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   what the function reaches.
 - **Adversarial coverage.** Tricks that try to hide access are caught:
   - capability functions used as values: `urls.map(fetch)`, `promisify(exec)`,
-    `paths.forEach(unlinkSync)`, `{ fetch }`. `send.call(thisArg, url)` and
-    `send.apply(thisArg, [url])` are checked as calls, with their arguments. Calls
-    through a `const` alias resolve to the original; the alias used as a value
+    `paths.forEach(unlinkSync)`, `{ fetch }`, also inside what a module exports
+    (`export default [execSync]`, `export default { pick: () => execSync }`;
+    `export default fetch` on its own just exports the function, and calls
+    through the import are checked). `send.call(thisArg, url)`,
+    `send.apply(thisArg, [url])`, `Reflect.apply(send, thisArg, [url])`, and
+    `send.bind(thisArg, url)` (which fixes `url` for every later call) are
+    checked as calls, with their arguments. Calls through a `const` alias resolve
+    to the original; the alias used as a value
     (`const run = execSync; run.call(null, cmd)`, `Reflect.apply(run, ...)`,
-    `urls.map(get)` with `const get = fetch`) is a use of what it holds. Testing
+    `urls.map(get)` with `const get = fetch`) is a use of what it holds, and so
+    is a name destructured from a module, a global, or a parameter
+    (`const { execSync: run } = cp`, `const { fetch } = globalThis`,
+    `const { promises: { writeFile } } = fs`, `({ exec }: typeof cp) => ...`).
+    A chain of more than 32 aliases is unverifiable. A value whose code isn't in
+    sight is judged by its type: `require` used as a value
+    (`require.call(null, name)`, `["x"].map(require)`, `load(require)`), or what
+    `createRequire()` returns, is unverifiable; `require.resolve()`,
+    `require.main`, `require.cache`, and `typeof require` aren't uses. Testing
     whether a function exists (`if (globalThis.fetch)`, `!WebSocket`,
-    `x instanceof WebSocket`, `if (ready && window.WebSocket)`) isn't a use, but
+    `Boolean(globalThis.fetch)`, `x instanceof WebSocket`,
+    `if (ready && window.WebSocket)`) isn't a use, but
     picking one with `&&`, `||`, or `??` outside a condition
     (`const WS = window.WebSocket || Fallback`) is;
   - capability classes reached indirectly: through an alias
     (`const WS = WebSocket`), a subclass, `super(url)`, a `typeof WebSocket`
     parameter, or `Reflect.construct(WebSocket, ...)`;
   - browser APIs in indirect forms: `navigator.sendBeacon.call(...)`,
-    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`;
+    `XMLHttpRequest.prototype.open.call(...)`, `window.setTimeout("code")`,
+    `Reflect.apply(setTimeout, window, ["code"])`, `self.importScripts(url)`;
   - calls through an interface or base class, which reach every first-party
     implementation (see [how calls are followed](#how-calls-are-followed));
   - `super()`, implicit constructors, instance field initializers, classes built
@@ -227,12 +272,20 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `import x = require()`, `require()`, and `import()`, including one whose
     specifier is a `const`, an `as const` property, or an enum member).
 - **Unverifiable code (PERM004).** Code whose effects can't be determined is
-  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`,
-  `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`, and
-  `importScripts()`), native code and hooks (`process.dlopen`,
+  an error in annotated functions: `eval`, `new Function`, `setTimeout("code")`
+  (and, in a program with lib.dom's timers, a handler that may be a string, such
+  as one typed `any`, `unknown`, or `TimerHandler`, and a timer used as a value
+  that may later be given one, as in `codes.forEach(setTimeout)`; a timer given
+  only functions, Node's `promisify(setTimeout)`, and a copy made with
+  `setTimeout.bind(window)` and kept in a `const`, whose calls are checked
+  where they're made, run no string),
+  `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`,
+  `importScripts()`, a service worker's `register()`, and a worklet's
+  `addModule()`), native code and hooks (`process.dlopen`,
   `crypto.setEngine`, `module.register`, `registerHooks`, `runMain`,
   `module.require`, `new Module()`), the inspector's `Session.post`,
-  `process.binding()`, `process.getBuiltinModule(name)` with a computed name (a
+  `require` used as a value, `process.binding()`,
+  `process.getBuiltinModule(name)` with a computed name (a
   literal name is like importing the module), computed calls on sensitive
   objects (`fs[method]()`, `globalThis[name]()`) or behind an index signature
   (`table[name]()`), loading a module whose result can't be checked (see
@@ -250,7 +303,7 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **Data-flow rules (PERM009).** Where a secret or sensitive data may be sent.
   See [data-flow rules](#data-flow-rules).
 - **New dependencies** in the permission diff, with what PermLang sees of each
-  and its install scripts.
+  and its install scripts, and overrides that replace a package's code.
 - **Strictness levels, a lock file, a permission diff for pull requests, a
   GitHub Action with line annotations and code scanning, and SARIF output.** See
   below.
@@ -379,6 +432,24 @@ project compiled to CommonJS, check with `--project tsconfig.json` to have its
 imports of asset-looking files reported. A `require()` is held to the CommonJS
 rule either way.
 
+### Which files are checked
+
+`permlang check src` checks the TypeScript files under `src` (`.ts`, `.tsx`,
+`.mts`, `.cts`, outside `node_modules`), and `--project tsconfig.json` checks the
+files the tsconfig.json selects. That's where the check starts, not where it
+stops: a file of the project's own that a checked file imports (by `import`,
+`export ... from`, `import x = require()`, or a literal `import()`) runs with it,
+so it's checked too, wherever it is (`../lib/db.ts`, `scripts/telemetry.ts`), and
+so is everything it imports. Packages in `node_modules` and declaration files
+aren't analyzed: packages go by their adapters (see
+[packages without an adapter](#packages-without-an-adapter)), and calls into
+JavaScript behind the project's own `.d.ts` are unverifiable.
+
+The lock records each file the check read only because a checked file imports
+it, as `permlang.imported(lib/db.ts)`. A pull request that brings code from
+outside the paths into the check shows it under **Check settings changed**, and
+fails until `permlang lock` records it; so does one that stops importing it.
+
 ### Known limits
 
 The aim is to catch the whole adversarial suite, or to document each miss. These misses are documented as fixtures in
@@ -410,9 +481,22 @@ so the list can't go stale.
     `keys`; read or written with a computed key, also by `Reflect.get`; or
     given to a callback parameter typed `any` or `unknown`, as in
     `Promise.resolve(cp).then((m: any) => ...)`; or given as `this` to a function
-    of the project's own, as in `run.call(cp)`) is unverifiable (PERM004).
+    of the project's own, as in `run.call(cp)`; copied with a spread,
+    `{ ...cp }`; or passed to a parameter of the project's own typed with a type
+    parameter or a mapped type, as in `function run<T>(m: T)` or
+    `function run(m: Partial<typeof cp>)`) is unverifiable (PERM004).
     Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
-    checked through that parameter like the module itself.
+    checked through that parameter like the module itself. A module's function
+    or class called past a cast returns `any` too, so when what it returns or
+    builds reaches a capability (`new (pg as any).Client()`,
+    `(module as any).createRequire(file)`), the call is unverifiable.
+  - A default import of a capability module that the compiler options give no
+    default export (`import cp from "node:child_process"` with
+    `allowSyntheticDefaultImports` off, as under `"module": "commonjs"` without
+    `esModuleInterop`) is typed `any` by TypeScript, but bundlers and Node still
+    hand over the module. A named member (`cp.execSync(...)`) is looked up on the
+    module, and any other use (destructuring it, passing it on, exporting it) is
+    unverifiable.
   - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
     and `(require as any)(...)` are still `require`.
 
@@ -428,10 +512,14 @@ so the list can't go stale.
   `function handle(m: any)`), since only callbacks written in place are
   matched to what they're given. A module that's passed on from somewhere other
   than its own name (an array element or an object's property, as in
-  `use(modules[0])`) isn't followed either. Imports
+  `use(modules[0])`) isn't followed either, nor is an object holding one that's
+  then cast (`const holder = { cp }; (holder as any).cp.exec(cmd)`). Imports
   whose types can't be found, including packages shimmed with
   `declare module "x";`, are reported (PERM007), whether reached by `import`,
-  `import x = require()`, or a literal `import()`.
+  `import x = require()`, or a literal `import()`. A default import of a
+  package with no adapter that the compiler options give no default export (see
+  above) is `any` too, so calls on it aren't listed as calls into the package
+  (PERM006); TypeScript itself reports the import as an error (TS1192, TS1259).
 - `Proxy` traps, which can return a capability function for any property. A
   handler's traps are entry points (or charged to the function creating the
   `Proxy`), but a call through the `Proxy` isn't linked to them.
@@ -456,19 +544,39 @@ so the list can't go stale.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
 - `as const` objects and enum members are trusted as fixed values, though code
   can change them at runtime. Every reference to one is checked for a write (an
-  assignment, `delete`, `++`, or destructuring into a member; a cast; or
-  `Object.assign`, `Object.defineProperty`, `Reflect.set`, and the like with it
-  as the target), and values read from a written object are unknown. An object
-  passed to a function that writes to it, or stored in another variable first,
-  isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)).
-  Treating every such value as unknown instead would turn most uses of
-  constants into bare capabilities.
+  assignment, `delete`, `++`, or destructuring into a member; a cast; or being
+  the first argument of `Object.assign`, `Object.defineProperty`,
+  `Object.defineProperties`, `Object.setPrototypeOf`, `Reflect.set`,
+  `Reflect.defineProperty`, `Reflect.deleteProperty`, or
+  `Reflect.setPrototypeOf`, matched by declaration however they're reached:
+  `Object["assign"]`, `const { assign } = Object`, `globalThis.Object.assign`,
+  `.call`, `.apply`, `Reflect.apply`, or a spread list of arguments), and so is
+  an `as const` object's own method that writes to `this`. Values read from a
+  written object are unknown. A plain exported `const`, enum, or `as const`
+  object is also unknown when the object holding the exports is written: its
+  namespace (`namespace Api { export const url = ... }` with
+  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS, the module's
+  `exports` object reached by a namespace import (`import * as config` with
+  `Object.assign(config, ...)`); an ES module's namespace can't be written. An
+  object passed to a function that writes to it, or stored in another variable
+  first, isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)),
+  and neither are a CommonJS module's exports written through `require()`,
+  `module.exports`, or a namespace re-exported from another file
+  (`export * as config from "./config"`). Treating every such value as unknown
+  instead would turn most uses of constants into bare capabilities.
 
 Other gaps, not yet in fixtures:
 
 - Third-party packages without an adapter: what they touch is trusted. They are
   listed in every report and warned about (PERM006; see below).
 - A `ProcessEnv` received as a parameter typed as a plain object.
+- A library client's options that route a request through something else
+  aren't read: axios's `proxy`, `httpAgent`, and `httpsAgent`, node-fetch's
+  `agent`, or a `dispatcher` given to the `undici` package's own `request()` or
+  `fetch()`. The host is taken from the URL. (Node's `http`, `https`, `http2`,
+  `tls`, and the global `fetch` read theirs; see `net` above.) An `http.Agent`
+  held by a `const` is trusted unless the program writes to that `const` where
+  it's named; one passed to a function that changes it isn't followed.
 - The browser loading a resource for the page (an image's `src`, a script or
   stylesheet element, a CSS `url()`) or leaving it (`location.href = url`,
   `window.open(url)`, a form submission), which reaches the network without a
@@ -521,8 +629,9 @@ Other gaps, not yet in fixtures:
   one shape, a thousand classes that fit all of them, and a call through each
   interface take about ten seconds to check.
 - A file that TypeScript itself can't parse (code nested thousands of levels
-  deep) is unverifiable when the project's file list includes it. One reached
-  only through imports from outside that list still stops the check.
+  deep) is unverifiable when it's among the files the check starts from (under
+  the paths given, or in the project's file list). One reached only through
+  imports still stops the check, with an internal error (exit code 2).
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
   order, so adding one can renumber the others and show spurious lock changes.
 - The Action knows whether the lock file existed before only on pull requests
@@ -543,9 +652,26 @@ Other gaps, not yet in fixtures:
 - New dependencies are described with the pull request's own adapters. An
   adapter the pull request adds or changes is itself a settings change, which
   fails the check and is listed in the comment.
-- Of tsconfig.json's compiler options, only those that decide which files are
-  read and what imports and globals resolve to are recorded (see
-  [what the lock records](#what-the-lock-records)).
+- Of what package.json can change about installed code, the diff lists new
+  dependencies, ones from another source, and overrides (`overrides`,
+  `resolutions`, `pnpm.overrides`). It doesn't read `pnpm.packageExtensions`
+  (which adds dependencies to a package), patches applied at install
+  (`pnpm.patchedDependencies`, patch-package's `patches/` folder), or settings
+  outside package.json (`.npmrc`, `.yarnrc.yml`, `pnpm-workspace.yaml`). A
+  dependency or override doesn't fail the check by itself either: calls into a
+  package with no adapter do (see [code PermLang can't check](#what-the-lock-records)).
+- Of tsconfig.json's compiler options, only those listed under
+  [what the lock records](#what-the-lock-records) are recorded. The others
+  check types more or less strictly, or control emit, output paths, builds, and
+  editors; none of them changes which files are read, what an import or a name
+  resolves to, or what a default import or JSX element is. (Type-checking
+  options can still narrow or widen a type, such as `strictNullChecks` adding
+  `undefined`, but not which declaration a call resolves to.)
+- JSX isn't modeled beyond the components it names: the function every element
+  calls (`jsxImportSource`'s `jsx-runtime`, or `jsxFactory`), and that module's
+  top-level code, aren't charged to the code with the JSX. The lock records
+  those options, so a pull request that changes them shows, but a per-file
+  `/** @jsxImportSource ... */` or `/** @jsx ... */` comment doesn't.
 - If the Action can't look up the account its token belongs to, it assumes
   `github-actions[bot]`; with another kind of token, it then adds a new comment
   on each push instead of updating one.
@@ -651,7 +777,11 @@ where it lands depends on where the program runs. On Windows, a drive (`C:\`), a
 network share (`\\server\share`), and a drive-relative path (`C:x`, which is
 relative to drive C's own working directory) are each separate roots, so
 `fs.write(/evil)` doesn't cover `\\evil\share\x`, and `fs.read(.)` doesn't cover
-`C:..\x`. Drive letters match in any case.
+`C:..\x`. Drive letters match in any case. A network path is covered only when
+it's inside both as Windows reads it, where `..` can't climb out of the share
+(`\\server\share\..\x` is `\\server\share\x`), and as other systems read it
+(`//server/share/../x` is `/server/x`): `fs.write(//server/x)` doesn't cover
+`\\server\share\..\x\f`.
 
 ## Data-flow rules
 
@@ -974,6 +1104,12 @@ lists these packages with their call counts, and each one gets a warning
 | `error` | One error per package: every package must be mapped or declared pure. |
 | `trust` | No diagnostic. The report still lists them. |
 
+The same policy applies to imports whose types can't be found (PERM007). Whatever
+the policy, the lock records each package with no adapter and each import with
+no types, so a new one fails the check until `permlang lock` records it, and the
+permission diff lists it under **New code PermLang can't check** (see
+[what the lock records](#what-the-lock-records)).
+
 A package that touches nothing PermLang tracks is declared pure with an adapter
 whose `default` is `[]`. [`adapters/pure.json`](../adapters/pure.json) does this for
 Node's pure built-ins and common libraries (zod, date-fns, React, ...).
@@ -1072,6 +1208,14 @@ ran on and with which settings. Commit it. From then on:
   tsconfig.json. New and changed `@perm-unsafe` reasons are listed with the old
   reason.
 
+  **New code PermLang can't check** lists each import whose types can't be found
+  (PERM007, such as a `.js` or `.cjs` file next to the code) and each package the
+  code calls with no adapter (PERM006, including one vendored into a
+  `node_modules` folder inside the project) that the base's lock doesn't record,
+  with where it's first imported or called. What that code does isn't in the
+  diff, so it needs a reviewer's eye: it fails the check until `permlang lock`
+  records it, whatever the `"unmapped"` policy.
+
   The diff also lists **new dependencies**: packages the change adds to
   `./package.json`, in `dependencies`, `devDependencies`, `optionalDependencies`,
   or `peerDependencies`. For each one, it says what PermLang sees (checked by an
@@ -1080,9 +1224,17 @@ ran on and with which settings. Commit it. From then on:
   it's installed. It also lists a package already there that the change now
   installs from somewhere other than the registry: an alias
   (`"lodash": "npm:evil-lodash@1.0.0"`), a URL, git, or a local folder or tarball.
-  Its name, and so its adapter, stay the same while its code changes. These are
-  there for review: they don't fail the check, although calls into a package with
-  no adapter get a `PERM006` warning.
+  Its name, and so its adapter, stay the same while its code changes. And it lists
+  each override that's new or says something else now, since an override replaces
+  a package's code wherever it is in the dependency tree, without touching its
+  dependency entry: npm's `overrides` (nested ones too, shown as
+  `react > lodash.merge`), Yarn's (and pnpm's) `resolutions`, and `pnpm.overrides`.
+  One that installs from another source says so, like a dependency that does; one
+  that pins a registry version says **Overridden**. When the code reaches the same
+  access, the comment says "No permission changes. The dependencies changed,
+  though: review them below." These are there for review: they don't fail the
+  check by themselves, but once the code calls into a package with no adapter,
+  it's recorded as code PermLang can't check (above), which does.
 
 `--format markdown` produces the pull-request comment. Text from the code is
 escaped so it can't change the comment: it can't break out of code formatting or
@@ -1111,7 +1263,9 @@ base commit, there's nothing to compare: the command exits 2, and
 code and the lock file differ, or `null`), `unsafeChanged`, `analysisError` (or
 `null`), `lockDeleted`, `lockMoved` (the base's lock files the change stops
 checking with), `baseLockMissing`, and `dependencies` (each with its `section`,
-and `change`: `added` or `source`).
+and `change`: `added`, `source`, or `override`, which also names its `target`
+package). Changes in the code PermLang can't check are among `functions`, under
+the key `permlang.config.json#<unchecked>`.
 
 The text output of `check`, `lock`, `diff`, and `spec`, its GitHub annotations,
 and its error messages escape line breaks, control characters, and bidirectional
@@ -1136,6 +1290,7 @@ checking other files from the same folder (like the fixtures here), pass
       "permlang.tools(warn)",
       "permlang.unmapped(warn)"
     ],
+    "permlang.config.json#<unchecked>": ["unchecked.package(kafkajs)"],
     "src/leads.ts#handleLead": ["db.write(lead)", "email.send"]
   },
   "unsafe": { "src/render.ts#compile": "template compiler; trusted input" }
@@ -1154,6 +1309,7 @@ the `--config` file), whether or not it exists:
 | Capability | What it records |
 | --- | --- |
 | `permlang.files(path)`, or `permlang.project(tsconfig.json)` | The files checked: the paths given (`src` when none are given and there's no `./tsconfig.json`), or the TypeScript project given with `--project` or found as `./tsconfig.json`. |
+| `permlang.imported(file)` | Each file the check read only because a checked file imports it, directly or through other files (see [which files are checked](#which-files-are-checked)). |
 | `permlang.strictness(level)`, `permlang.unmapped(policy)`, `permlang.tools(policy)` | The settings in effect: a command-line option (or the Action's `strictness` input), else `permlang.config.json`, else the default. |
 | `permlang.flow(from -> to)` | Each [flow rule](#data-flow-rules). |
 | `permlang.adapter(path sha256:...)` | Each adapter manifest, from the config file or `--adapter`, with the first 16 hex digits of the SHA-256 of its content. The content is hashed as parsed JSON, so line endings and formatting don't change it. |
@@ -1161,11 +1317,41 @@ the `--config` file), whether or not it exists:
 When the files come from a TypeScript project, its config is an entry too: its
 `include`, `exclude`, and `files` after following `extends` (TypeScript's
 defaults when they aren't set: everything included, the output folders
-excluded), and the compiler options that decide what imports and globals resolve
-to: `baseUrl`, `paths`, `rootDirs`, `typeRoots`, `types`, `lib`, `noLib`,
-`allowJs`, `moduleResolution`, `customConditions`, and `moduleSuffixes`.
-A tsconfig.json that can't be parsed, or that extends a file that isn't there, is
-an error (exit code 2).
+excluded), and the compiler options that decide which files are read, what an
+import or a global resolves to, and what a default import or a JSX element is:
+
+- Always, with the value TypeScript uses, whether set or worked out from the
+  others (`module` decides `moduleResolution`, and both decide whether a default
+  import of a CommonJS module is the module): `target`, `module`,
+  `moduleResolution`, `moduleDetection`, `esModuleInterop`,
+  `allowSyntheticDefaultImports`, `resolvePackageJsonExports`,
+  `resolvePackageJsonImports`, and `useDefineForClassFields`. A change that
+  turns default imports off reads
+  `tsconfig.json now has allowSyntheticDefaultImports false, but permlang.lock.json records allowSyntheticDefaultImports true`.
+- When set: `baseUrl`, `paths`, `rootDirs`, `typeRoots`, `types`, `lib`,
+  `customConditions`, `moduleSuffixes`, `libReplacement`, `jsx`, `jsxFactory`,
+  `jsxFragmentFactory`, `jsxImportSource`, and `reactNamespace`.
+- When on: `noLib`, `allowJs` (or `checkJs`, which turns it on),
+  `preserveSymlinks`, `allowArbitraryExtensions`, and `importHelpers`.
+
+`noResolve` isn't recorded, because the check doesn't use it: it follows
+imports whether or not TypeScript is told to, since the imported code still runs.
+
+A tsconfig.json that can't be parsed, extends a file that isn't there, lists a
+file in `"files"` that isn't there, or selects no files at all is an error (exit
+code 2), and so are paths that hold no TypeScript files: a check of nothing
+would pass.
+
+The code PermLang can't check is an entry of its own, next to the settings,
+keyed `permlang.config.json#<unchecked>`:
+
+| Capability | What it records |
+| --- | --- |
+| `unchecked.import(src/telemetry.cjs)`, `unchecked.import(left-pad)` | Each import whose types can't be found (PERM007): a relative one by the path of the file it names, from the lock's folder (so `./x.cjs` in two folders is two entries), anything else as written. |
+| `unchecked.package(leftpad2)` | Each package the code calls that has no adapter (PERM006). |
+
+A new one fails the check, at the line that imports or calls it, until `permlang
+lock` records it; so does one the lock records that the code no longer has.
 
 So narrowing `include`, lowering `strictness`, trusting packages with no adapter,
 adding an adapter that declares a package pure, dropping a flow rule, or checking

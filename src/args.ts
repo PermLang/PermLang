@@ -13,7 +13,7 @@ export const USAGE = `Usage:
   permlang spec  [paths...] [options]    check .perm specs against the code (phase 2 groundwork)
 
 Which files: paths, or --project <tsconfig.json>. With neither, ./tsconfig.json
-if present, else ./src.
+if present, else ./src. The project's own files they import are checked too.
 
 Options:
   --project, -p <tsconfig.json>   check the files of a TypeScript project

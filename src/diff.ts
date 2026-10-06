@@ -4,10 +4,11 @@
 // that makes the diff incomplete (code that couldn't be analyzed, a deleted lock,
 // a lock that doesn't match the code) is said at the top, never left out.
 
-import type { DependencyChange } from "./deps.js";
+import { isOtherSource, type DependencyChange } from "./deps.js";
 import { isConfigKey, type FunctionChange, type LockDiff } from "./lock.js";
 import { printable } from "./report.js";
 import { isSetting, isSingleValued, settingKind, value as settingValue } from "./settings.js";
+import { isUncheckedKey, uncheckedCode, uncheckedWhat } from "./unchecked.js";
 
 /** For each lock key, each capability's path: units on the way, then the call. */
 export type ViaPaths = Record<string, Record<string, string[]>>;
@@ -73,7 +74,15 @@ const KNOWN: Record<DependencyChange["known"], string> = {
   unknown: "**Not checked**: no adapter",
 };
 
-const SECTION: Record<DependencyChange["section"], string> = { dependencies: "", devDependencies: "dev", optionalDependencies: "optional", peerDependencies: "peer" };
+const SECTION: Record<DependencyChange["section"], string> = {
+  dependencies: "",
+  devDependencies: "dev",
+  optionalDependencies: "optional",
+  peerDependencies: "peer",
+  overrides: "overrides",
+  resolutions: "resolutions",
+  "pnpm.overrides": "pnpm.overrides",
+};
 
 /** At most this many functions are named in one table cell. */
 const MAX_NAMED = 20;
@@ -89,11 +98,13 @@ interface Block {
 
 export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNotes = {}, limit = COMMENT_LIMIT): string {
   const lock = code(notes.lockFile ?? "permlang.lock.json");
-  const { settings, access } = split(diff);
+  const { settings, access, unchecked } = split(diff);
   const gaining = access.filter((f) => f.added.length > 0);
   const losing = access.filter((f) => f.removed.length > 0);
   const preapproved = lockOnly(notes);
-  const changed = gaining.length + losing.length + settings.length + diff.unsafeAdded.length + diff.unsafeRemoved.length + diff.unsafeChanged.length > 0;
+  const uncheckedNew = unchecked.flatMap((f) => f.added);
+  const uncheckedGone = unchecked.flatMap((f) => f.removed);
+  const changed = gaining.length + losing.length + settings.length + unchecked.length + diff.unsafeAdded.length + diff.unsafeRemoved.length + diff.unsafeChanged.length > 0;
 
   const top = [notes.marker ?? COMMENT_MARKER, "### PermLang permission diff", ""];
   for (const alert of alerts(notes, lock)) top.push(alert, "");
@@ -102,12 +113,16 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
   if (!changed) {
     // Only a complete diff, of code that matches its lock, can say that nothing changed.
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
-    top.push(complete ? "No permission changes." : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.", "");
+    // Dependencies don't change what the lock records, but they can change what the code runs.
+    const changedDeps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
+    top.push(complete ? `No permission changes.${changedDeps}` : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.", "");
   } else {
     const counts = [
       gaining.length > 0 ? `**${plural(gaining.length, "function")} ${gaining.length === 1 ? "gains" : "gain"} access**` : "",
       losing.length > 0 ? `${plural(losing.length, "function")} ${losing.length === 1 ? "loses" : "lose"} access` : "",
       settings.length > 0 ? "**Check settings changed**" : "",
+      uncheckedNew.length > 0 ? "**New code PermLang can't check**" : "",
+      uncheckedGone.length > 0 && uncheckedNew.length === 0 ? "Less code PermLang can't check" : "",
       diff.unsafeAdded.length > 0 ? `**${plural(diff.unsafeAdded.length, "new <code>@perm-unsafe</code> override")}**` : "",
       diff.unsafeChanged.length > 0 ? `**${plural(diff.unsafeChanged.length, "changed <code>@perm-unsafe</code> reason")}**` : "",
       diff.unsafeRemoved.length > 0 ? plural(diff.unsafeRemoved.length, "removed <code>@perm-unsafe</code> override") : "",
@@ -132,6 +147,14 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
       rows.push(`| ${code(`+ ${capability}`)} | ${where} | ${named}${byModel} |`);
     }
     blocks.push({ head: ["| New access | Where it happens | Now reachable from |", "| --- | --- | --- |"], rows, tail: [""] });
+  }
+
+  if (uncheckedNew.length > 0) {
+    blocks.push({
+      head: ["**New code PermLang can't check.** It has no types, or no adapter, so what it does isn't in this diff: review it.", ""],
+      rows: uncheckedNew.map((c) => `- ${code(`+ ${uncheckedCode(c).target}`)}: ${uncheckedWhat(c)}${plain(uncheckedAt(c, via))}`),
+      tail: [""],
+    });
   }
 
   if (settings.length > 0) {
@@ -159,12 +182,13 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
     blocks.push({ head: [`**${dependencyHeading(deps)}**`, "", "| Package | What PermLang sees | Install scripts |", "| --- | --- | --- |"], rows: deps.map(dependencyRow), tail: [""] });
   }
 
-  if (losing.length > 0 || diff.unsafeRemoved.length > 0) {
+  if (losing.length > 0 || diff.unsafeRemoved.length > 0 || uncheckedGone.length > 0) {
     blocks.push({
       head: ["<details><summary>Removed access</summary>", ""],
       rows: [
         ...losing.map((f) => `- ${code(f.name)} (${plain(f.file)}): ${listed(f.removed.map((c) => code(`- ${c}`)))}`),
         ...diff.unsafeRemoved.map((u) => `- ${code(u.key)}: <code>@perm-unsafe</code> removed`),
+        ...uncheckedGone.map((c) => `- ${code(`- ${uncheckedCode(c).target}`)}: no longer ${uncheckedWhat(c)}`),
       ],
       tail: ["", "</details>", ""],
     });
@@ -231,7 +255,7 @@ function alerts(notes: DiffNotes, lock: string): string[] {
   return out;
 }
 
-const SETTING_LABEL: Record<string, string> = { project: "checked files", files: "checked files", flow: "flow rule" };
+const SETTING_LABEL: Record<string, string> = { project: "checked files", files: "checked files", imported: "imported by the checked files", flow: "flow rule" };
 
 /** Settings changes, one row per value; a setting with one value that changed reads "now X, was Y". */
 function settingRows(changes: readonly FunctionChange[], via: ViaPaths): string[] {
@@ -258,10 +282,20 @@ function settingRows(changes: readonly FunctionChange[], via: ViaPaths): string[
   return rows;
 }
 
-/** A new package, or one now installed from another source, with what PermLang knows about it and the scripts that run on install. */
+/**
+ * A new package, one now installed from another source, or a new or changed override, with what
+ * PermLang knows about it and the scripts that run on install.
+ */
 function dependencyRow(d: DependencyChange): string {
   const scripts = d.installScripts === undefined ? "<sub>not installed here</sub>" : d.installScripts.length === 0 ? "none" : d.installScripts.map((x) => code(x)).join("<br>");
   const section = SECTION[d.section] ? ` <sub>(${SECTION[d.section]})</sub>` : "";
+  if (d.change === "override") {
+    const was = d.previous === undefined ? "" : `${plain(d.previous)} `;
+    const sees = isOtherSource(d.version)
+      ? `**Now installed from another source**, by an override: an adapter for ${code(d.target!)} may not describe this code`
+      : `**Overridden**: installed at this version wherever ${code(d.target!)} is in the dependency tree`;
+    return `| ${code(`~ ${d.name}`)} ${was}→ ${plain(d.version)}${section} | ${sees} | ${scripts} |`;
+  }
   if (d.change === "source") {
     return `| ${code(`~ ${d.name}`)} ${plain(d.previous!)} → ${plain(d.version)}${section} | **Now installed from another source**: an adapter for ${code(d.name)} may not describe this code | ${scripts} |`;
   }
@@ -269,9 +303,13 @@ function dependencyRow(d: DependencyChange): string {
 }
 
 function dependencyHeading(deps: readonly DependencyChange[]): string {
-  const added = deps.filter((d) => d.change === "added").length;
-  const moved = deps.length - added;
-  const parts = [added > 0 ? plural(added, "new dependency", "new dependencies") : "", moved > 0 ? `${plural(moved, "dependency", "dependencies")} from another source` : ""];
+  const count = (change: DependencyChange["change"]) => deps.filter((d) => d.change === change).length;
+  const [added, moved, overridden] = [count("added"), count("source"), count("override")];
+  const parts = [
+    added > 0 ? plural(added, "new dependency", "new dependencies") : "",
+    moved > 0 ? `${plural(moved, "dependency", "dependencies")} from another source` : "",
+    overridden > 0 ? plural(overridden, "changed override") : "",
+  ];
   return parts.filter(Boolean).join(", ");
 }
 
@@ -335,10 +373,17 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   if (notes.baseMissing) out.push(`There's no ${lock} at the base commit, so everything is listed as new.`);
   const header = out.length;
 
-  const { settings, access } = split(diff);
+  const { settings, access, unchecked } = split(diff);
   if (settings.length > 0) {
     const rows = settings.flatMap((s) => [...s.added.map((c) => `  + ${printable(s.file)}: ${printable(c)}`), ...s.removed.map((c) => `  - ${printable(s.file)}: ${printable(c)}`)]);
     out.push(["Check settings changed:", ...rows].join("\n"));
+  }
+  if (unchecked.length > 0) {
+    const rows = unchecked.flatMap((f) => [
+      ...f.added.map((c) => `  + ${printable(uncheckedCode(c).target)}: ${uncheckedWhat(c)}${printable(uncheckedAt(c, via))}`),
+      ...f.removed.map((c) => `  - ${printable(uncheckedCode(c).target)}: no longer ${uncheckedWhat(c)}`),
+    ]);
+    out.push(["New code PermLang can't check:", ...rows].join("\n"));
   }
   for (const f of access) {
     const head = `${printable(f.file)} ${printable(f.name)}${f.status === "added" ? " (new)" : f.status === "removed" ? " (removed)" : ""}`;
@@ -362,7 +407,8 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   }
   if (out.length === header) {
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
-    out.push(complete ? "No permission changes." : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.");
+    const changedDeps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
+    out.push(complete ? `No permission changes.${changedDeps}` : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.");
   }
   const deps = notes.dependencies ?? [];
   if (deps.length > 0) {
@@ -370,6 +416,11 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
       const section = SECTION[d.section] ? ` (${SECTION[d.section]})` : "";
       const scripts = d.installScripts && d.installScripts.length > 0 ? `; install scripts: ${d.installScripts.map(printable).join(", ")}` : "";
       if (d.change === "source") return `  ~ ${printable(d.name)} ${printable(d.previous!)} -> ${printable(d.version)}${section}: now installed from another source${scripts}`;
+      if (d.change === "override") {
+        const was = d.previous === undefined ? "" : `${printable(d.previous)} `;
+        const what = isOtherSource(d.version) ? "now installed from another source, by an override" : "overridden";
+        return `  ~ ${printable(d.name)} ${was}-> ${printable(d.version)}${section}: ${what}${scripts}`;
+      }
       const known = { adapter: "checked by an adapter", pure: "declared pure", detected: "detected directly", unknown: "not checked: no adapter" }[d.known];
       return `  + ${printable(d.name)} ${printable(d.version)}${section}: ${known}${scripts}`;
     });
@@ -380,12 +431,25 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
 
 // --- helpers -------------------------------------------------------------------
 
-/** Settings changes (in configuration entries), apart from changes in what code and configuration reach. */
-function split(diff: LockDiff): { settings: FunctionChange[]; access: FunctionChange[] } {
+/**
+ * Settings changes (in configuration entries), and changes in the code PermLang can't check
+ * (unchecked.ts), apart from changes in what code and configuration reach.
+ */
+function split(diff: LockDiff): { settings: FunctionChange[]; access: FunctionChange[]; unchecked: FunctionChange[] } {
   const settings: FunctionChange[] = [];
   const access: FunctionChange[] = [];
-  for (const f of diff.functions) (isConfigKey(f.key) && [...f.added, ...f.removed].every(isSetting) ? settings : access).push(f);
-  return { settings, access };
+  const unchecked: FunctionChange[] = [];
+  for (const f of diff.functions) {
+    if (isUncheckedKey(f.key)) unchecked.push(f);
+    else (isConfigKey(f.key) && [...f.added, ...f.removed].every(isSetting) ? settings : access).push(f);
+  }
+  return { settings, access, unchecked };
+}
+
+/** Where code PermLang can't check is first imported or called, from its entry's `via`: ", in src/app.ts:3". */
+function uncheckedAt(capability: string, via: ViaPaths): string {
+  const where = Object.entries(via).find(([key]) => isUncheckedKey(key))?.[1][capability]?.[0];
+  return where === undefined ? "" : `, ${uncheckedCode(capability).kind === "import" ? "in" : "called in"} ${where}`;
 }
 
 /** Whether the code and the working tree's lock differ at all. */

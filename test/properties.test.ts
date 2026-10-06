@@ -189,11 +189,26 @@ describe("capabilities", () => {
     );
   });
 
+  // A network path read as Windows does: the first two names are the server and the share, as
+  // written, and `..` can't climb above the share.
+  const inShare = (p: string) => {
+    const [server = "", share = "", ...rest] = p.split(/[\\/]/).filter((s) => s !== "");
+    const below = path.posix.normalize(`/${rest.join("/")}`).split("/").filter((s) => s !== "" && s !== ".");
+    return [server, share, ...below].slice(0, share === "" ? 1 : undefined);
+  };
+  const insideShare = (declared: string, used: string) => {
+    const [d, u] = [inShare(declared), inShare(used)];
+    return d.length <= u.length && d.every((s, i) => u[i] === s);
+  };
+
   it("keeps Windows network shares and drive-relative paths under their own root", () => {
     // `\\server\share\x` is absolute, but not under `/`; `C:x` is relative to drive C's own working directory.
+    // A network path is covered only when it's inside under both readings: as a plain path (as on
+    // other systems, where `//server/share/../x` is `/server/x`) and as Windows reads a share.
+    const network = (d: string, u: string) => inside(`/${d}`, `/${u}`) && insideShare(d, u);
     const roots: [string, (d: string, u: string) => boolean][] = [
-      ["\\\\", (d, u) => inside(`/${d}`, `/${u}`)],
-      ["//", (d, u) => inside(`/${d}`, `/${u}`)],
+      ["\\\\", network],
+      ["//", network],
       ["C:", inside],
     ];
     fc.assert(
@@ -204,6 +219,24 @@ describe("capabilities", () => {
         }
       }),
       { numRuns: 500 },
+    );
+  });
+
+  // Checked against Node's own reading of Windows paths: whatever a share's path does with `..`,
+  // a declaration covers it only if Windows puts it inside the declared folder.
+  it("never lets `..` climb out of a Windows network share", () => {
+    const name = fc.stringMatching(/^[a-z]{1,3}$/);
+    const win = (p: string) => path.win32.normalize(p).toLowerCase().replace(/\\$/, "");
+    fc.assert(
+      fc.property(name, name, name, relativePath, relativePath, (server, share, other, declared, used) => {
+        const declaredPath = `\\\\${server}\\${other}\\${declared}`;
+        const usedPath = `\\\\${server}\\${share}\\${used}`;
+        if (covers([{ name: "fs.write", arg: declaredPath }], { name: "fs.write", arg: usedPath })) {
+          const [d, u] = [win(declaredPath), win(usedPath)];
+          expect(u === d || u.startsWith(`${d}\\`)).toBe(true);
+        }
+      }),
+      { numRuns: 1000 },
     );
   });
 });
