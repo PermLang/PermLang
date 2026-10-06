@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url";
 import { Node } from "ts-morph";
 import { BUILTIN_VOCABULARY, CAPABILITY_NAME, UNVERIFIABLE, parsePermList, type Capability } from "./capability.js";
 import { containerName, hostOf, literalString, nodeRequestHost, nodeSocketHost } from "./detect/shared.js";
+import { printable } from "./report.js";
 
 interface Template {
   name: string;
@@ -51,8 +52,9 @@ export interface ParsedManifest {
 }
 
 export class AdapterError extends Error {
+  /** `errors` name fields, capabilities, and files from the manifest: each is one line of the message. */
   constructor(readonly errors: string[]) {
-    super(`Invalid adapter manifest:\n${errors.map((e) => `  ${e}`).join("\n")}`);
+    super(`Invalid adapter manifest:\n${errors.map((e) => `  ${printable(e)}`).join("\n")}`);
   }
 }
 

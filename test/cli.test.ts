@@ -206,13 +206,29 @@ describe("permlang spec", () => {
     );
   });
 
+  // A spec that can't be parsed exits 2: 1 means permission errors and nothing else (the second
+  // verification).
   it("reports a spec with no implementation, and one that can't be parsed", () => {
     write("svc/ping.perm", spec("net(api.example.com)", ""));
     write("svc/bad.perm", "perm broken(\n");
     const { code, out } = permlang("spec", "svc");
-    expect(code).toBe(1);
+    expect(code).toBe(2);
     expect(out).toMatch(/svc\/bad\.perm:1 error SPEC001/);
     expect(out).toContain("implementation not found");
+  });
+
+  // Capabilities from the code went into spec's output unescaped, so a path in a string could
+  // print `::stop-commands::` on a line of its own (the second verification, item 5).
+  it("escapes text from the code, so it can't print a line of its own", () => {
+    // Just enough of @types/node for process.env: this temporary repository has no node_modules.
+    write("svc/node.d.ts", "declare var process: { env: { [key: string]: string | undefined } };\n");
+    write("svc/ping.ts", 'export function ping() {\n  return process.env["X\\n::stop-commands::pwned\\n\\u001b[31m\\u202e"];\n}\n');
+    write("svc/ping.perm", spec("net(api.example.com)"));
+    const { code, out } = permlang("spec", "svc");
+    expect(code).toBe(1);
+    expect(out).toContain("FAIL: reaches env(X\\n::stop-commands::pwned\\n\\u001b[31m\\u202e)");
+    expect(out).not.toMatch(/^::/m);
+    expect(out).not.toMatch(new RegExp("[\\u001b\\u202e]"));
   });
 
   it("prints JSON, checks only the specs it's given, and says when there are none", () => {
@@ -314,6 +330,19 @@ describe("configuration errors", () => {
     const { code, out } = permlang("check", "my lib");
     expect(code).toBe(2);
     expect(out).toMatch(message);
+  });
+
+  // Field and capability names from an adapter manifest went into the error raw, so a manifest
+  // could print `::stop-commands::` on a line of its own (the second verification, item 5).
+  it("escapes what an invalid adapter manifest says, so it can't print a line of its own", () => {
+    const evil = "x\n::stop-commands::pwned\n::error::FAKE";
+    writeFileSync(path.join(dir, "acme.json"), JSON.stringify({ permlang: 1, package: "acme", [evil]: 1, defines: [`acme.${evil}`], functions: { [evil]: [`acme.${evil}`] } }));
+    const { code, out } = permlang("check", "my lib", "--adapter", "acme.json", "--no-lock");
+    expect(code).toBe(2);
+    expect(out).toContain('unknown field "x\\n::stop-commands::pwned\\n::error::FAKE"');
+    expect(out).toContain('invalid capability name "acme.x\\n::stop-commands::pwned\\n::error::FAKE"');
+    expect(out).toContain('functions["x\\n::stop-commands::pwned\\n::error::FAKE"]');
+    expect(out).not.toMatch(/^::/m);
   });
 });
 

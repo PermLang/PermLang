@@ -358,7 +358,7 @@ function spec(args: Args): number {
   const specs: Spec[] = [];
   const errors: SpecError[] = [];
   for (const file of files) {
-    if (!existsSync(file)) throw new UsageError(`Not found: ${file}`);
+    if (!existsSync(file)) throw new UsageError(`Not found: ${printable(file)}`);
     const parsed = parseSpecs(readFileSync(file, "utf8"), path.resolve(file), vocabulary);
     specs.push(...parsed.specs);
     errors.push(...parsed.errors);
@@ -368,12 +368,13 @@ function spec(args: Args): number {
   if (args.json) {
     console.log(JSON.stringify({ errors, results: results.map(({ spec: s, ...r }) => ({ spec: s.name, file: s.file, ...r })) }, null, 2));
   } else {
-    for (const e of errors) console.log(`${path.relative(process.cwd(), e.file).replaceAll("\\", "/")}:${e.line} error SPEC001: ${printable(e.message)}`);
+    for (const e of errors) console.log(`${printable(path.relative(process.cwd(), e.file).replaceAll("\\", "/"))}:${e.line} error SPEC001: ${printable(e.message)}`);
     if (errors.length > 0) console.log("");
     console.log(formatSpecResults(results));
   }
-  const failed = errors.length > 0 || results.some((r) => r.diagnostics.some((d) => d.severity === "error"));
-  return failed ? 1 : 0;
+  // A spec that can't be read is an error of its own (2): 1 means permission errors and nothing else.
+  if (errors.length > 0) return 2;
+  return results.some((r) => r.diagnostics.some((d) => d.severity === "error")) ? 1 : 0;
 }
 
 function findSpecFiles(root: string): string[] {
