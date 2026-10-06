@@ -300,6 +300,13 @@ const caught: Record<string, string> = {
   rd74_env_assignment_pattern: "export function t() { let k: string | undefined; ({ env: { STRIPE_KEY: k } } = process); return k; }",
   rd75_env_nested_computed: "export function t(name: string) { const { env: { [name]: v } } = process; return v; }",
   rd76_env_quoted_key: "export function t() { const { \"STRIPE_KEY\": k, [\"OTHER\"]: o } = process.env; return [k, o]; }",
+  // Capability modules that lose their type through a copy, a generic or mapped parameter, or what a member returns.
+  rd80_module_spread_copy: "import * as cp from \"node:child_process\";\nexport function t() { const c = { ...cp }; return (c as any).exec(\"id\"); }",
+  rd81_module_generic_parameter: "import * as cp from \"node:child_process\";\nfunction run<T>(m: T) { return (m as any).exec(\"id\"); }\nexport function t() { return run(cp); }",
+  rd82_module_partial_parameter: "import * as cp from \"node:child_process\";\nfunction run(m: Partial<typeof cp>) { return (m as any).exec(\"id\"); }\nexport function t() { return run(cp); }",
+  rd83_module_member_constructed: "import dns from \"node:dns\";\nexport function t() { return new (dns as any).Resolver().resolve4(\"evil.example\"); }",
+  rd84_module_member_called: "import module from \"node:module\";\nexport function t() { return (module as any).createRequire(__filename)(\"child_process\").exec(\"ls\"); }",
+  rd85_module_socket_constructed: "import net from \"node:net\";\nexport function t() { return new (net as any).Socket().connect(443, \"evil.example\"); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -382,6 +389,7 @@ const silent: Record<string, string> = {
   rd_fp50_host_options_precise: "import tls from \"node:tls\";\nimport net from \"node:net\";\nimport http from \"node:http\";\nimport http2 from \"node:http2\";\n/** @perm net(good.example) */\nexport function t(d: string) {\n  tls.connect(443, \"good.example\", { servername: \"good.example\", rejectUnauthorized: true }, () => {}).end(d);\n  tls.connect(443, \"good.example\", { host: \"good.example\" }).end(d);\n  net.connect(443, \"good.example\", () => {}).end(d);\n  http.request({ hostname: \"good.example\", agent: new http.Agent({ keepAlive: true }) }).end(d);\n  http.get(\"http://good.example/\", { agent: false });\n  http2.connect(\"https://good.example\", { host: \"good.example\" }, () => {});\n  http2.connect(\"https://good.example\", () => {});\n  return fetch(\"https://good.example/\", { method: \"POST\", headers: { a: \"b\" }, body: d, signal: undefined });\n}",
   rd_fp51_shared_agent: "import https from \"node:https\";\nconst keepAlive = new https.Agent({ keepAlive: true });\nconst agent = new https.Agent();\n/** @perm net(good.example) */\nexport function t() { return [https.get({ hostname: \"good.example\", agent: keepAlive }), https.get(\"https://good.example/\", { agent })]; }\nexport function stop() { keepAlive.destroy(); }",
   rd_fp70_env_lookalike_patterns: "/** @perm env(MODE) */\nexport function t(cfg: { env: { MODE: string; OTHER: string } }) { const { env: { OTHER } } = cfg; const { env: { MODE } } = process; let a = \"\"; ({ a } = { a: OTHER }); return [a, MODE]; }",
+  rd_fp80_module_kept_typed: "import * as cp from \"node:child_process\";\nimport * as path from \"node:path\";\nimport http from \"node:http\";\nfunction keep<T>(m: T) { return m; }\nfunction pick(m: Pick<typeof path, \"join\">) { return m.join(\"a\", \"b\"); }\n/** @perm exec */\nexport function t() { const copy = { ...path }; return [keep(path), pick(path), copy.join(\"a\"), (cp as any).execSync(\"id\"), (http as any).validateHeaderName(\"x-a\"), Object.freeze(cp)]; }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
@@ -481,4 +489,7 @@ describe("re-verification (detectors): reported as the access it is", () => {
   it("rd75_env_nested_computed", () => expect(capabilities("rd75_env_nested_computed")).toEqual(["env"]));
   // A quoted or literal computed key names the variable without its quotes.
   it("rd76_env_quoted_key", () => expect(capabilities("rd76_env_quoted_key")).toEqual(["env(OTHER)", "env(STRIPE_KEY)"]));
+  for (const name of ["rd80_module_spread_copy", "rd81_module_generic_parameter", "rd82_module_partial_parameter", "rd83_module_member_constructed", "rd84_module_member_called", "rd85_module_socket_constructed"]) {
+    it(name, () => expect(capabilities(name)).toEqual(["unverifiable"]));
+  }
 });

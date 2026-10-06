@@ -145,6 +145,11 @@ import { Pool } from "pg";
 const pool = new Pool();
 /** @perm env(NONE) */ export function leads() { return pool.query("SELECT * FROM leads"); }
 `,
+  "pg-any.ts": `
+import * as pg from "pg";
+/** @perm env(NONE) */ export function constructed() { return new (pg as any).Pool().query("DELETE FROM users"); }
+/** @perm env(NONE) */ export function typed() { return new pg.Pool().query("DELETE FROM users"); }
+`,
   "stripe.ts": `
 import Stripe, { type StripeConfig } from "stripe";
 const stripe = new Stripe("sk_test_placeholder");
@@ -272,6 +277,12 @@ describe("adapters on top of built-in detection", () => {
   it("adds a team adapter's capabilities to a database client's tables", () => {
     expect(actual("team.ts", "leads")).toEqual(["audit.query", "db.read(leads)"]);
   });
+});
+
+// What a package's class builds, past a cast, is `any`: nothing called on it can be checked.
+describe("a package's class constructed past a cast", () => {
+  it("is unverifiable when what it builds reaches a capability", () => expect(actual("pg-any.ts", "constructed")).toEqual(["unverifiable"]));
+  it("is checked as usual without the cast", () => expect(actual("pg-any.ts", "typed")).toEqual(["audit.query", "db.write(users)"]));
 });
 
 describe("stripe", () => {

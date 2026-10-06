@@ -365,9 +365,15 @@ so the list can't go stale.
     `keys`; read or written with a computed key, also by `Reflect.get`; or
     given to a callback parameter typed `any` or `unknown`, as in
     `Promise.resolve(cp).then((m: any) => ...)`; or given as `this` to a function
-    of the project's own, as in `run.call(cp)`) is unverifiable (PERM004).
+    of the project's own, as in `run.call(cp)`; copied with a spread,
+    `{ ...cp }`; or passed to a parameter of the project's own typed with a type
+    parameter or a mapped type, as in `function run<T>(m: T)` or
+    `function run(m: Partial<typeof cp>)`) is unverifiable (PERM004).
     Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
-    checked through that parameter like the module itself.
+    checked through that parameter like the module itself. A module's function
+    or class called past a cast returns `any` too, so when what it returns or
+    builds reaches a capability (`new (pg as any).Client()`,
+    `(module as any).createRequire(file)`), the call is unverifiable.
   - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
     and `(require as any)(...)` are still `require`.
 
@@ -380,7 +386,8 @@ so the list can't go stale.
   `function handle(m: any)`), since only callbacks written in place are
   matched to what they're given. A module that's passed on from somewhere other
   than its own name (an array element or an object's property, as in
-  `use(modules[0])`) isn't followed either. Imports
+  `use(modules[0])`) isn't followed either, nor is an object holding one that's
+  then cast (`const holder = { cp }; (holder as any).cp.exec(cmd)`). Imports
   whose types can't be found, including packages shimmed with
   `declare module "x";`, are reported (PERM007), whether reached by `import`,
   `import x = require()`, or a literal `import()`.
