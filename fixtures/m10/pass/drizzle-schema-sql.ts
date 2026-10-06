@@ -1,6 +1,6 @@
-import { StringChunk, sql } from "drizzle-orm";
+import { Name, StringChunk, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
-import { pgTable, text } from "drizzle-orm/pg-core";
+import { index, pgTable, text } from "drizzle-orm/pg-core";
 
 // Runtime defaults that return values, not SQL, add nothing to an insert or update.
 const leads = pgTable("leads", {
@@ -26,4 +26,24 @@ export async function write() {
 export function lookalikes(form: { value: string; where: string; default: number }) {
   const { value, where } = form;
   return db.select().from(leads).where(sql`${leads.id} = ${value} OR ${where} = ${form.default}`);
+}
+
+// A named function returning a value, a runtime default with no function (which TypeScript
+// rejects), and a table with no columns: nothing to put into a statement.
+declare function makeId(): string;
+const tickets = pgTable("tickets", { id: text("id").$defaultFn(makeId), note: text("note").$defaultFn() });
+const loose = pgTable("loose");
+
+/** @perm db.write(tickets), db.write(loose) */
+export async function quiet() {
+  await db.insert(tickets).values({});
+  await db.insert(loose).values({});
+  // A name on its own, and drizzle's own pieces joined, touch nothing.
+  return [new Name("leads"), sql.join([sql`a`, sql`b`], sql`, `)];
+}
+
+// A schema property whose type refers to itself and holds no SQL.
+/** @perm db.read(leads) */
+export function indexUsing() {
+  return [index("by_id").on(leads.id).config.using, db.select().from(leads)];
 }

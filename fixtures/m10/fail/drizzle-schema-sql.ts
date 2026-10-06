@@ -50,7 +50,7 @@ export async function unseen(table: typeof leads) {
 /** @perm db.read(leads) */
 export async function readBack() {
   await db.select().from(leads).where(check("x", sql`EXISTS (SELECT 1 FROM secrets)`).value); // expect: error PERM001 db.read expect: error PERM001 db.write
-  await db.select().from(leads).where(pgPolicy("p", { using: sql`EXISTS (SELECT 1 FROM secrets)` }).using); // expect: error PERM001 db.read expect: error PERM001 db.write
+  await db.select().from(leads).where(pgPolicy("leads_visible_only_to_their_owners", { using: sql`EXISTS (SELECT 1 FROM secrets)` }).using); // expect: error PERM001 db.read expect: error PERM001 db.write
   await db.select().from(leads).where(leads.score["default"]); // expect: error PERM001 db.read expect: error PERM001 db.write
   const { withCheck } = pgPolicy("p", { withCheck: sql`EXISTS (SELECT 1 FROM secrets)` }); // expect: error PERM001 db.read expect: error PERM001 db.write
   await db.select().from(leads).where(withCheck);

@@ -213,8 +213,8 @@ function namedPlaceholders(sql: string): number[] {
       } else if (escaped) {
         escaped = false;
       } else if (inQuote && c === quote) {
-        if (sql[i + 1] === quote) i++;
-        else inQuote = false;
+        // named-placeholders skips a doubled quote; closing and reopening the string is the same.
+        inQuote = false;
       } else if (!inQuote && (c === "'" || c === '"')) {
         inQuote = true;
         quote = c;
