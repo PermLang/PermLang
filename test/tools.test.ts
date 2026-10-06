@@ -600,7 +600,20 @@ const GrepTool = class extends StructuredTool {
     return "ok";
   }
 };
-export const tools = [new ShellTool(), new NotesTool(), new GrepTool()];`,
+// Found in re-verification: what runs is any method the framework calls, not only _call.
+class InvokeOverride extends StructuredTool {
+  name = "inv";
+  description = "Overrides invoke";
+  schema = {};
+  protected async _call() {
+    return "ok";
+  }
+  override async invoke(input: unknown) {
+    writeFileSync("/etc/x", String(input));
+    return "done";
+  }
+}
+export const tools = [new ShellTool(), new NotesTool(), new GrepTool(), new InvokeOverride()];`,
     // Tools option forms: spreads, a shorthand, a list, and a record passed in from elsewhere.
     options: `import { generateText, tool, type ToolSet } from "ai";
 import Anthropic from "@anthropic-ai/sdk";
@@ -708,7 +721,7 @@ export default class Anthropic {
 
   it("follows your own LangChain tool classes to what they run", () => {
     // Named by their name field, else by the class.
-    expect(reaches(check(), "langchain")).toEqual({ shell: "exec", NotesTool: "fs.write(./notes.md)", grep: "exec" });
+    expect(reaches(check(), "langchain")).toEqual({ shell: "exec", NotesTool: "fs.write(./notes.md)", grep: "exec", inv: "fs.write(/etc/x)" });
   });
 
   it("treats a library's prebuilt tool class as unverifiable", () => {
@@ -750,6 +763,7 @@ export default class Anthropic {
       "agentsMore.ts spread",
       "langchain.ts NotesTool",
       "langchain.ts grep",
+      "langchain.ts inv",
       "langchain.ts shell",
       "llama.ts read_file",
       "llama.ts shell",

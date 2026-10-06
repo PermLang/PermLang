@@ -269,11 +269,11 @@ function toolSubclass(call: NewExpression): ToolRegistration | undefined {
   const base = frameworkToolBase(chain.at(-1)!);
   if (!base) return undefined;
   const framework = aiFramework(packageOf(base))!;
-  // LangChain runs `_call`; for other frameworks, any method could be what runs.
-  const run = chain.flatMap((c) => c.getMethods()).find((m) => m.getName() === "_call" && m.hasBody());
+  // The whole class: LangChain runs `_call` through `invoke`, but a subclass can override
+  // `invoke` (or anything else the framework calls), so any of its methods could be what runs.
   // Its `name = "..."` field, else the class's name as written.
   const name = chain.map((c) => literalString(c.getProperty("name")?.getInitializer())).find((n) => n !== undefined);
-  return { name: name ?? call.getExpression().getText(), framework, site: call, handler: run ?? cls };
+  return { name: name ?? call.getExpression().getText(), framework, site: call, handler: cls };
 }
 
 /** The class an expression names: a class declaration, or a constant holding a class expression. */
