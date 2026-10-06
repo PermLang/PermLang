@@ -363,9 +363,15 @@ Not recognized yet:
 Workflows and scripts grant as much as code does, and AI agents edit them as
 readily. So the lock also records, for the folder it lives in:
 
-- **GitHub workflows** (`.github/workflows/*.yml`), and **composite Actions**
-  (`action.yml`, `.github/actions/**/action.yml`);
-- **`package.json` scripts.**
+- **GitHub workflows** (`.github/workflows/*.yml` and `*.yaml`);
+- **Actions in the repository:** `action.yml` or `action.yaml` at the root, under
+  `.github/actions/`, and in every folder a step runs with `uses: ./path`;
+- **`package.json` scripts,** at the root and in every
+  [workspace package](#workspaces).
+
+File names are matched in any case (`CI.YML`, `Action.yaml`): a runner on a
+case-insensitive file system finds them, and recording a file that never runs is
+harmless.
 
 Each file is an entry in the lock, keyed by its path (for example
 `.github/workflows/ci.yml#<ci.yml>`), and what it grants are its capabilities:
@@ -373,22 +379,92 @@ Each file is an entry in the lock, keyed by its path (for example
 | Capability | Meaning |
 | --- | --- |
 | `ci.trigger(event)` | An event the workflow runs on, such as `pull_request_target`. |
-| `ci.permission(scope: level)` | A token permission a job gets, from its own `permissions:` or the workflow's. `ci.permission(write-all)` and `ci.permission(read-all)` for the shorthands; `ci.permission(default)` when neither sets any, so the token gets the repository's default, which can be write access to everything. |
-| `ci.secret(NAME)` | A secret the file reads (`secrets.NAME`). `ci.secret(inherit)` for `secrets: inherit`; `ci.secret(all)` for `toJSON(secrets)`. |
-| `ci.action(owner/repo)` | An Action or reusable workflow a step or job runs (`uses:`). |
-| `ci.unpinned(owner/repo)` | ...referenced by a tag or branch rather than an exact commit, so what runs can change without a change here. |
+| `ci.permission(scope: level)` | A token permission a job gets, from its own `permissions:` or the workflow's. `ci.permission(write-all)` and `ci.permission(read-all)` for the shorthands; `ci.permission(default)` when neither sets any, or `permissions:` has no value, so the token gets the repository's default, which can be write access to everything. `permissions: {}` grants nothing, so it records nothing. |
+| `ci.secret(NAME)` | A secret an expression reads, named in upper case as GitHub stores it ([how they're found](#how-workflows-are-read)). `ci.secret(inherit)` for a reusable workflow called with `secrets: inherit`; `ci.secret(all)` when an expression reads secrets whose names aren't written out. |
+| `ci.action(owner/repo)` | An Action or reusable workflow a step or job runs (`uses:`). And a container image, as `ci.action(docker://name)`: a `uses: docker://` step, a Docker Action's `image:`, a job's `container:`, and its `services:`. An image's name is everything but its tag and digest, so its registry, port, and path are kept: `docker://ghcr.io:443/acme/tool`. |
+| `ci.unpinned(owner/repo)` | ...referenced by a tag or branch rather than an exact commit, or for an image, by a tag rather than a `@sha256:` digest, so what runs can change without a change here. A `uses: ./path` is unpinned when the repository has no `action.yml` (or Dockerfile) in that folder: something else puts it there at run time. |
 | `npm.script(name: command)` | A `package.json` script and its command, lifecycle hooks such as `postinstall` included. |
-| `ci.unverifiable`, `npm.unverifiable` | A file PermLang can't parse. It's recorded rather than skipped, so it can't hide anything. |
+| `ci.unverifiable(sha256:…)`, `npm.unverifiable(sha256:…)` | A file, or part of one, PermLang can't read: YAML that doesn't parse, a workflow without both `on:` and `jobs:` (GitHub wouldn't run it as written, and stray invisible characters can make PermLang and GitHub read it differently), an alias with no anchor before it, an image named by an expression, a link that leads nowhere. It's recorded rather than skipped, so it can't hide anything, with the file's SHA-256, so that any edit to the file changes the lock and shows in review. Line endings and a byte-order mark don't count, since Git can change them on checkout. |
 
 A change that adds one fails the check (`PERM005`) at the line that grants it,
 and shows in the pull-request comment, until `permlang lock` records it. That's
 the same review gate as for code. Updating a pinned Action to a new commit
-doesn't change the lock, but switching it to a tag does. Steps' `run:` commands
-aren't recorded yet.
+doesn't change the lock, but switching it to a tag does.
+
+### How workflows are read
+
+PermLang reads workflows and Actions the way GitHub does, so that what it records
+is what runs:
+
+- **Anchors and aliases** (`&name`, `*name`), which GitHub supports since 2025, are
+  followed everywhere, keys included. A trigger, a permissions block or level, a
+  step, an Action, or `secrets: inherit` written through an alias is recorded at the
+  line of the alias. An alias with no anchor before it, or inside the node it names,
+  is unverifiable. **Merge keys** (`<<: *defaults`) are expanded too, although GitHub
+  rejects them today, so nothing they bring in is missed if it ever accepts them. A
+  key written next to one doesn't replace the merged one: both are recorded.
+- **YAML 1.2,** whatever a `%YAML 1.1` directive says, so `on:` is always the
+  trigger key, as it is to GitHub.
+- **`${{ 'text' }}` is the text** in any key or value, as it is to GitHub:
+  `uses: ${{ 'owner/repo@main' }}` runs `owner/repo@main`.
+- **`uses:` counts only where GitHub runs it:** on steps (also steps grouped under
+  `parallel:`) and on jobs that call a reusable workflow. A `uses:` key under
+  `with:` or `env:` is just an input.
+- **Secrets are read from expressions:** every `${{ }}`, in keys as well as
+  values, and `if:` conditions, which are expressions without `${{ }}`. Text outside
+  an expression, such as `name: see docs/secrets.md`, isn't. GitHub matches names in
+  any case and ignores spaces, so `SECRETS.npm_token`, `secrets . NPM_TOKEN` and
+  `secrets[ 'npm_token' ]` are all `ci.secret(NPM_TOKEN)`. Any other use of the
+  context is `ci.secret(all)`: `secrets[matrix.name]`, `secrets[format(...)]`,
+  `secrets.*`, `toJSON(secrets)`, or `secrets` by itself.
+- **A byte-order mark** at the start of a file is ignored, as GitHub and npm do.
+
+### Workspaces
+
+npm, Yarn, pnpm and Bun run a workspace package's install scripts when the root is
+installed, so PermLang records each workspace package's scripts too, keyed by its
+path (`packages/api/package.json#<package.json>`). The packages are the folders
+listed in `package.json`'s `workspaces` (a list, or Yarn's and Bun's
+`{ "packages": [...] }`) and in `pnpm-workspace.yaml`'s `packages`. With no
+`packages` list, pnpm takes every package in the repository, and so does PermLang.
+
+Folders are matched as the package managers match them: `*`, `?`, `**`, `{a,b}`,
+`[abc]`, and `!` to leave folders out; `node_modules` is never searched. A pattern
+with syntax PermLang doesn't read (`+(a|b)`) matches any folder name there, so it
+can only record more, and an exclusion written with it is ignored. A `workspaces`
+or `packages` list PermLang can't read is unverifiable, and every package's scripts
+are recorded. pnpm's `package.yaml` is read like `package.json`; a `package.json5`
+that isn't plain JSON is unverifiable.
+
+### Known limits
+
+- Steps' `run:` commands aren't recorded.
+- A Docker Action built from a `Dockerfile` (`image: Dockerfile`, or a local Action
+  with only a Dockerfile) is part of the repository, but the Dockerfile isn't read:
+  a base image it pulls by tag (`FROM node:22`) isn't recorded as unpinned.
+- Other files that run code during an install aren't recorded: `.npmrc`
+  (`script-shell`, `node-options`), `.yarnrc.yml` (plugins, `yarnPath`),
+  `.pnpmfile.cjs`, `binding.gyp` (npm runs `node-gyp rebuild` for a package that
+  has one), and the `packageManager` field (Corepack downloads that version). Nor
+  are pnpm's settings for which dependencies may run install scripts, such as
+  `onlyBuiltDependencies`.
+- `uses: $/path`, a newer way to name an Action in the same repository that
+  GitHub's parser accepts, is read from the repository like `./path`, but recorded
+  as unpinned: which commit it runs isn't documented.
+- Actions and reusable workflows from other repositories aren't read; pinning them
+  to a commit is what keeps them from changing.
 
 **Upgrading from 0.2:** a lock written before 0.3 records no configuration. The
 first check after upgrading reports each entry as a warning instead of failing,
 and `permlang lock` records them.
+
+**Upgrading to 0.4:** PermLang now reads configuration it missed before (aliases,
+secrets written other ways, local Actions, images, workspace packages), names
+secrets in upper case, and adds a hash to unverifiable entries. The first check
+after upgrading can report these as new access; review them, then run
+`permlang lock`. Secrets mentioned outside an expression, and `uses:` keys that
+aren't steps or jobs, are no longer recorded; the check warns that the lock still
+records them until it's updated.
 
 ## Adapter manifests
 
@@ -663,6 +739,10 @@ src/graph.ts        the call graph and propagation along it
 src/unmapped.ts     packages with no adapter, and imports with no types
 src/unseen.ts       code a function reaches that has no types, for checking specs
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
+src/workflow-files.ts what a workflow or Action grants, read where GitHub reads it
+src/yaml-nodes.ts   YAML as GitHub reads it: anchors, aliases, merge keys
+src/ci-expressions.ts GitHub expressions: the secrets they read
+src/package-files.ts package.json scripts, and which folders are workspace packages
 src/tools.ts        tool registrations for AI models, their handlers, and what those reach
 src/flows.ts        data-flow rules: parsing, and finding functions that break them
 src/deps.ts         new dependencies in a change
