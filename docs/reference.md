@@ -1345,7 +1345,10 @@ If the diff can't be computed at all (the base commit can't be read, or the
 arguments are wrong, say), `--format markdown` still prints a comment that says
 so, and the command exits 2. With no lock file in the working tree or at the
 base commit, there's nothing to compare: the command exits 2, and
-`--format markdown` prints a short notice saying so.
+`--format markdown` prints a short notice saying so. The exception is a change
+that stops checking with the lock file the base's workflows check with (such as
+`args: src --no-lock` where the base had `--lock locks/app.json`): then the diff
+lists all access as new, under a warning that says so, since the check fails.
 
 `--format json` (or `--json`) is for tools, and includes `unrecorded` (where the
 code and the lock file differ, or `null`), `unsafeChanged`, `analysisError` (or

@@ -338,11 +338,12 @@ function diff(args: Args): number {
     headLock = found;
   } else {
     const diskLock = existsSync(lockName) ? parseLock(readText(lockName), lockName) : undefined;
-    if (!diskLock && !baseLock) throw new NoLockError(lockName);
-    // A change can leave the base's lock behind by checking with another one, which the check fails.
+    // A change can leave the base's lock behind by checking with another one, or with none, which
+    // the check fails. Then there's a diff to show even when neither commit has this lock file.
     notes.lockMoved = movedLocks(base, args.noLock ? undefined : lockName);
+    if (!diskLock && !baseLock && notes.lockMoved.length === 0) throw new NoLockError(lockName);
     // A pull request that deletes the lock turns the comparison off: the comment must say so.
-    notes.lockDeleted = diskLock === undefined;
+    notes.lockDeleted = diskLock === undefined && baseLock !== undefined;
     notes.lockOutdated = diskLock?.permlang === 1;
     headLock = diskLock ?? { permlang: LOCK_VERSION, functions: {}, unsafe: {} };
     // The working tree is the truth: diff the base against what the code reaches now, not only
