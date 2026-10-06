@@ -187,6 +187,14 @@ describe("more settings", () => {
     expect(settingPhrase("permlang.flow(env(K) -> net(x.example))")).toBe("the flow rule env(K) -> net(x.example)");
     expect(settingPhrase("permlang.project(tsconfig.json)")).toBe("the files of tsconfig.json");
     expect(settingPhrase("permlang.files(src)")).toBe("the files under src");
+    expect(settingPhrase("permlang.imported(lib/db.ts)")).toBe("lib/db.ts (imported by the checked files)");
     expect(settingPhrase("tsconfig.include(src)")).toBe("include src");
+  });
+
+  it("records the files read because the checked ones import them, apart from the scope", () => {
+    const e = settingsEntries(settings(), dir, [path.join(dir, "lib", "db.ts"), path.join(dir, "..", "shared", "x.ts")])[0]!;
+    expect(e.actual.filter((c) => c.startsWith("permlang.imported"))).toEqual(["permlang.imported(../shared/x.ts)", "permlang.imported(lib/db.ts)"]);
+    expect(e.via["permlang.imported(lib/db.ts)"]).toEqual(["imported"]);
+    expect(isSetting("permlang.imported(lib/db.ts)")).toBe(true);
   });
 });

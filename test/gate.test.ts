@@ -471,3 +471,56 @@ describe("adapters in the dependency list", () => {
     expect(permlang("diff", "HEAD", "src", "--format", "markdown").out).toContain("| <code>+ acme-sms</code> 1.0.0 | Declared pure |");
   });
 });
+
+describe("code the checked paths import, from outside them", () => {
+  // The paths given are where checking starts, not where it stops: what they import runs too.
+  const caller = (line: string, call = "evil()") => `${line}\n/** @perm net(api.example.com) */\nexport function useIt() {\n  return ${call};\n}\n`;
+
+  it.each([
+    ["a named import", caller('import { evil } from "../lib/evil";')],
+    ["a re-export", 'export { evil } from "../lib/evil";\n'],
+    ["an import for its side effects", 'import "../lib/evil";\n'],
+    ["a literal import()", caller("", 'import("../lib/evil").then((m) => m.evil())')],
+  ])("checks %s, and records the file in the lock", (_, code) => {
+    write("lib/evil.ts", 'export function evil() {\n  return fetch("https://evil.example/");\n}\nevil();\n');
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    write("src/more.ts", code);
+
+    const check = permlang("check", "src");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("lib/evil.ts");
+    expect(check.out).toContain("net(evil.example)");
+    expect(check.out).toContain("The check now also reads lib/evil.ts (imported by the checked files), which permlang.lock.json doesn't record.");
+    const md = permlang("diff", "HEAD", "src", "--format", "markdown").out;
+    expect(md).toContain("<code>+ net(evil.example)</code>");
+    expect(md).toContain("<code>+ lib/evil.ts</code>");
+    expect(md).not.toContain("No permission changes");
+
+    expect(permlang("lock", "src").code).toBe(0);
+    expect(lockJson().functions["permlang.config.json#<permlang.config.json>"]).toContain("permlang.imported(lib/evil.ts)");
+    expect(lockJson().functions["lib/evil.ts#evil"]).toEqual(["net(evil.example)"]);
+  });
+
+  it("follows imports through files outside the paths, and records nothing for files under them", () => {
+    write("lib/a.ts", 'import { b } from "./b";\nexport const a = () => b();\n');
+    write("lib/b.ts", 'export const b = () => fetch("https://evil.example/");\n');
+    write("src/more.ts", caller('import { a } from "../lib/a";', "a()"));
+    write("src/local.ts", "export const local = 1;\n");
+    write("src/app.ts", `import { local } from "./local";\n${ping("api.example.com")}export const l = local;\n`);
+    expect(permlang("lock", "src", "--strictness", "sketch").code).toBe(0);
+    const settings = lockJson().functions["permlang.config.json#<permlang.config.json>"]!;
+    expect(settings.filter((c) => c.startsWith("permlang.imported"))).toEqual(["permlang.imported(lib/a.ts)", "permlang.imported(lib/b.ts)"]);
+    expect(lockJson().functions["src/more.ts#useIt"]).toEqual(["net(evil.example)"]);
+  });
+
+  it("fails when the checked files stop importing a file the lock records", () => {
+    write("lib/pure.ts", "export const pure = () => 1;\n");
+    write("src/more.ts", 'import { pure } from "../lib/pure";\nexport const p = pure;\n');
+    expect(permlang("lock", "src", "--strictness", "sketch").code).toBe(0);
+    write("src/more.ts", "export const p = 1;\n");
+    const check = permlang("check", "src", "--strictness", "sketch");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("permlang.lock.json records lib/pure.ts (imported by the checked files), which the check no longer reads.");
+  });
+});

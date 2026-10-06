@@ -7,6 +7,7 @@
 //
 //   permlang.config.json#<permlang.config.json>
 //     permlang.files(src)                       the paths checked, or permlang.project(tsconfig.json)
+//     permlang.imported(lib/db.ts)              each file read only because a checked file imports it
 //     permlang.strictness(development)          the settings in effect, command-line options included
 //     permlang.unmapped(warn)
 //     permlang.tools(warn)
@@ -105,8 +106,11 @@ export interface Settings {
   scope: { project: string; found: boolean } | { paths: readonly string[]; given: boolean };
 }
 
-/** The lock entries for these settings: one for the settings, and one for the TypeScript project's file selection. */
-export function settingsEntries(settings: Settings, root: string): FunctionReport[] {
+/**
+ * The lock entries for these settings: one for the settings, and one for the TypeScript project's
+ * file selection. `imported` are the files the check also read because the selected ones import them.
+ */
+export function settingsEntries(settings: Settings, root: string, imported: readonly string[] = []): FunctionReport[] {
   const name = path.basename(settings.configFile);
   const text = readIfFile(settings.configFile);
   const entry = new Entry(settings.configFile, name);
@@ -115,6 +119,7 @@ export function settingsEntries(settings: Settings, root: string): FunctionRepor
   const scope = settings.scope;
   if ("project" in scope) entry.add(`permlang.project(${relative(root, scope.project)})`, scope.found ? "found" : "--project", 1);
   else for (const p of [...new Set(scope.paths.map((p) => relative(root, p)))].sort()) entry.add(`permlang.files(${p})`, scope.given ? "paths" : "default", 1);
+  for (const file of imported) entry.add(`permlang.imported(${relative(root, file)})`, "imported", 1);
 
   for (const key of ["strictness", "unmapped", "tools"] as const) {
     const { value, from } = settings[key];
@@ -238,6 +243,7 @@ export function settingPhrase(capability: string): string {
   if (kind === "adapter") return `the adapter ${v.replace(/ (sha256:\w+)$/, " ($1)")}`;
   if (kind === "project") return `the files of ${v}`;
   if (kind === "files") return `the files under ${v}`;
+  if (kind === "imported") return `${v} (imported by the checked files)`;
   return `${kind.replace(/^tsconfig\./, "")} ${v}`;
 }
 

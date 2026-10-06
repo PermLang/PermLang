@@ -199,7 +199,7 @@ function alerts(notes: DiffNotes, lock: string): string[] {
   return out;
 }
 
-const SETTING_LABEL: Record<string, string> = { project: "checked files", files: "checked files", flow: "flow rule" };
+const SETTING_LABEL: Record<string, string> = { project: "checked files", files: "checked files", imported: "imported by the checked files", flow: "flow rule" };
 
 /** Settings changes, one row per value; a setting with one value that changed reads "now X, was Y". */
 function settingRows(changes: readonly FunctionChange[], via: ViaPaths): string[] {

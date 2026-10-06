@@ -288,6 +288,24 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 every form of import: the code isn't a file in the project. A query or fragment
 doesn't make a script an asset (`./evil.js?x=.css` is still `./evil.js`).
 
+### Which files are checked
+
+`permlang check src` checks the TypeScript files under `src` (`.ts`, `.tsx`,
+`.mts`, `.cts`, outside `node_modules`), and `--project tsconfig.json` checks the
+files the tsconfig.json selects. That's where the check starts, not where it
+stops: a file of the project's own that a checked file imports (by `import`,
+`export ... from`, `import x = require()`, or a literal `import()`) runs with it,
+so it's checked too, wherever it is (`../lib/db.ts`, `scripts/telemetry.ts`), and
+so is everything it imports. Packages in `node_modules` and declaration files
+aren't analyzed: packages go by their adapters (see
+[packages without an adapter](#packages-without-an-adapter)), and calls into
+JavaScript behind the project's own `.d.ts` are unverifiable.
+
+The lock records each file the check read only because a checked file imports
+it, as `permlang.imported(lib/db.ts)`. A pull request that brings code from
+outside the paths into the check shows it under **Check settings changed**, and
+fails until `permlang lock` records it; so does one that stops importing it.
+
 ### Known limits
 
 The aim is to catch the whole adversarial suite, or to document each miss. These misses are documented as fixtures in
@@ -386,8 +404,9 @@ Other gaps, not yet in fixtures:
   fits an interface counts as an implementation of it, even if it's never used
   as one.
 - A file that TypeScript itself can't parse (code nested thousands of levels
-  deep) is unverifiable when the project's file list includes it. One reached
-  only through imports from outside that list still stops the check.
+  deep) is unverifiable when it's among the files the check starts from (under
+  the paths given, or in the project's file list). One reached only through
+  imports still stops the check, with an internal error (exit code 2).
 - Lock keys for same-named functions in one file (`#2`, `#3`) follow source
   order, so adding one can renumber the others and show spurious lock changes.
 - The Action knows whether the lock file existed before only on pull requests
@@ -962,6 +981,7 @@ the `--config` file), whether or not it exists:
 | Capability | What it records |
 | --- | --- |
 | `permlang.files(path)`, or `permlang.project(tsconfig.json)` | The files checked: the paths given (`src` when none are given and there's no `./tsconfig.json`), or the TypeScript project given with `--project` or found as `./tsconfig.json`. |
+| `permlang.imported(file)` | Each file the check read only because a checked file imports it, directly or through other files (see [which files are checked](#which-files-are-checked)). |
 | `permlang.strictness(level)`, `permlang.unmapped(policy)`, `permlang.tools(policy)` | The settings in effect: a command-line option (or the Action's `strictness` input), else `permlang.config.json`, else the default. |
 | `permlang.flow(from -> to)` | Each [flow rule](#data-flow-rules). |
 | `permlang.adapter(path sha256:...)` | Each adapter manifest, from the config file or `--adapter`, with the first 16 hex digits of the SHA-256 of its content. The content is hashed as parsed JSON, so line endings and formatting don't change it. |

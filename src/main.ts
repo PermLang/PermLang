@@ -39,7 +39,7 @@ const USAGE = `Usage:
   permlang spec  [paths...] [options]    check .perm specs against the code (phase 2 groundwork)
 
 Which files: paths, or --project <tsconfig.json>. With neither, ./tsconfig.json
-if present, else ./src.
+if present, else ./src. The project's own files they import are checked too.
 
 Options:
   --project, -p <tsconfig.json>   check the files of a TypeScript project
@@ -545,10 +545,20 @@ function analyze(args: Args): Report {
     projectRoot: root,
   };
   const scope = settings.scope;
-  const report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(scope.paths.flatMap(expand), options);
-  // What the check ran on and with is recorded in the lock, like what the code reaches.
-  report.functions.push(...settingsEntries(settings, root));
+  const selected = "project" in scope ? readTsConfig(scope.project).fileNames : scope.paths.flatMap(expand);
+  const report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(selected, options);
+  // What the check ran on and with is recorded in the lock, like what the code reaches, and so
+  // are the files it read only because the selected ones import them.
+  report.functions.push(...settingsEntries(settings, root, importedFiles(report, selected)));
   return report;
+}
+
+/** The files analyzed that the paths or the tsconfig.json didn't select: the ones they import. */
+function importedFiles(report: Report, selected: readonly string[]): string[] {
+  // Windows paths differ in case and separator between Node and TypeScript; the file is the same.
+  const key = (file: string) => (process.platform === "win32" ? path.resolve(file).toLowerCase() : path.resolve(file));
+  const chosen = new Set(selected.map(key));
+  return [...new Set(report.units.map((u) => u.file))].filter((file) => !chosen.has(key(file)));
 }
 
 /**

@@ -177,6 +177,8 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
       const setting = settings.includes(capability);
       const old = paired.get(capability);
       const subject = `${settingSubject(change.file, capability)} ${settingPhrase(capability)}${setting ? origin(via[capability]![0]) : ""}`;
+      // A file the checked files import isn't a setting to choose: recording it is all there is to do.
+      const settingFix = setting && !isImported(capability);
       out.push(
         drift({
           file,
@@ -191,7 +193,7 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
               : config
                 ? `${change.file} now grants ${capability}, which ${lockName} doesn't record.`
                 : `${change.name} can now reach ${capability}, which ${lockName} doesn't record.`,
-          fix: setting ? settingsFix : fix,
+          fix: settingFix ? settingsFix : fix,
         }),
       );
     }
@@ -206,11 +208,11 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
           function: change.name,
           capability,
           message: setting
-            ? `${lockName} records ${settingPhrase(capability)}, which ${capability.startsWith("tsconfig.") ? `${change.file} no longer has` : "the check no longer runs with"}.`
+            ? `${lockName} records ${settingPhrase(capability)}, which ${capability.startsWith("tsconfig.") ? `${change.file} no longer has` : isImported(capability) ? "the check no longer reads" : "the check no longer runs with"}.`
             : config
               ? `${change.file} ${gone} grants ${capability}, but ${lockName} still records it.`
               : `${change.name} ${gone} reaches ${capability}, but ${lockName} still records it.`,
-          fix: setting ? settingsFix : fix,
+          fix: setting && !isImported(capability) ? settingsFix : fix,
         }),
       );
     }
@@ -238,7 +240,13 @@ export function lockDrift(committed: LockFile, current: LockFile, report: Report
 
 /** "The check runs with" for PermLang's own settings; "tsconfig.json now has" for the project's. */
 function settingSubject(file: string, capability: string): string {
+  if (isImported(capability)) return "The check now also reads";
   return capability.startsWith("tsconfig.") ? `${file} now has` : "The check runs with";
+}
+
+/** A file the check read because a checked file imports it (`permlang.imported(lib/db.ts)`). */
+function isImported(capability: string): boolean {
+  return capability.startsWith("permlang.imported(");
 }
 
 /** Where a setting came from, when it isn't the config file: a command-line option, or the default. */

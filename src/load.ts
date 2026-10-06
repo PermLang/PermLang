@@ -21,7 +21,10 @@ export function failureReason(error: unknown): string {
 }
 
 /**
- * A project of these files (paths or glob patterns), with compiler options.
+ * A project of these files (paths or glob patterns), with compiler options, and every file they
+ * import, as a tsconfig.json's project has. Code a checked file imports runs with it, wherever it
+ * is: left out, calls into it would reach nothing. (The check analyzes the project's own files
+ * among them, not packages or declaration files.)
  * @perm fs.read
  */
 export function projectOfFiles(files: readonly string[], compilerOptions: ts.CompilerOptions): Project {
@@ -36,6 +39,7 @@ export function projectOfFiles(files: readonly string[], compilerOptions: ts.Com
       else add(project, file, blank);
     }
   }
+  project.resolveSourceFileDependencies();
   return project;
 }
 
