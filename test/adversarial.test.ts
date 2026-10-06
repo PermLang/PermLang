@@ -318,6 +318,10 @@ const silent: Record<string, string> = {
   fp25_reflect_get_reads: "export function t(k: string) { return [Reflect.get(globalThis, \"__APP__\"), Reflect.get(window, k)]; }",
   fp26_module_constant: "import * as fs from \"node:fs\";\nexport function t() { return fs.constants.F_OK; }",
   fp27_then_any_harmless: "export function t() { return Promise.resolve(1).then((n: any) => n + 1); }",
+  // Engine re-verification (0.4): a call through a callable type runs what's written against it,
+  // not every function that fits; and a callback runs as part of the code that passes it.
+  rve_fp01_fits_callable: "import { execSync } from \"node:child_process\";\ntype Runner06 = (cmd: string) => void;\nfunction shell06(cmd: string) { execSync(cmd); }\nexport function t(run: Runner06, c: string) { return run(c); }",
+  rve_fp02_callback_parameter: "import { execSync } from \"node:child_process\";\nfunction apply07(run: (c: string) => unknown, c: string) { return run(c); }\nfunction loud07() { return apply07((c) => execSync(c), \"x\"); }\nexport function t() { return apply07((c) => c.length, \"y\"); }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
