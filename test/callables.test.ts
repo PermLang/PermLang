@@ -9,7 +9,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { Expression } from "ts-morph";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { checkTsConfig, type CheckOptions, type Report } from "../src/check.js";
 import { removeTemporary } from "./temporary.js";
 
@@ -179,5 +180,41 @@ describe("an anonymous function reached through its type", () => {
     expect(vouched.diagnostics.filter((d) => d.function === "t")).toEqual([]);
     const plain = check(code(""));
     expect(plain.diagnostics.find((d) => d.function === "t")?.fix).toBe("rewrite it so what it calls is known statically, or mark setup @perm-unsafe with a reason.");
+  });
+
+  // Each call reaches what the function calls, too, however many calls there are.
+  it("is the same unit for every call that reaches it", () => {
+    const report = check([
+      "function shell(arg: string) { return execSync(arg); }",
+      'const ops = new Map<string, (arg: string) => unknown>([["run", (arg) => shell(arg)]]);',
+      "export function first(arg: string) { return ops.get(\"run\")!(arg); }",
+      "export function second(arg: string) { return [ops.get(\"run\")!(arg), ops.get(\"run\")!(arg)]; }",
+    ].join("\n"));
+    const paths = report.diagnostics.filter((d) => d.function !== "<module>").map((d) => `${d.function}: ${d.path?.join(" → ")}`);
+    expect(paths).toEqual(["first: <function at a.ts:3> → shell → execSync(arg)", "second: <function at a.ts:3> → shell → execSync(arg)"]);
+  });
+});
+
+// Which functions are written against a type is worked out for the whole project when a call
+// first needs it. An expression TypeScript fails on is left out, rather than failing the file
+// whose call needed the list.
+describe("an expression TypeScript can't type", () => {
+  it("is left out, and the other functions written against the type are still found", () => {
+    const getContextualType = Expression.prototype.getContextualType;
+    const failing = vi.spyOn(Expression.prototype, "getContextualType").mockImplementation(function (this: Expression) {
+      if (this.getText().includes("broken")) throw new RangeError("Maximum call stack size exceeded");
+      return getContextualType.call(this);
+    });
+    try {
+      const report = check([
+        "type Runner = (cmd: string) => void;",
+        "export const runners: Runner[] = [(cmd) => { execSync(cmd); }, (broken) => { void broken; }];",
+        "export function t(run: Runner, c: string) { return run(c); }",
+      ].join("\n"));
+      expect(reach(report, "t")).toEqual(["exec"]);
+      expect(report.diagnostics.filter((d) => d.message.includes("couldn't be analyzed"))).toEqual([]);
+    } finally {
+      failing.mockRestore();
+    }
   });
 });

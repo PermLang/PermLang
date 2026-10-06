@@ -26,7 +26,7 @@
 // A function type written for a parameter isn't one of these: a callback runs as part of the
 // code that passes it, which is charged with it already.
 
-import { Node, SyntaxKind, ts, type ClassDeclaration, type ClassExpression, type Identifier, type ObjectLiteralExpression, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, ts, type ClassDeclaration, type ClassExpression, type Expression, type Identifier, type ObjectLiteralExpression, type SourceFile, type Type } from "ts-morph";
 import { resolveAlias } from "./detect/shared.js";
 import { isInNodeModules, unitNodeForDeclaration, unitNodeForSymbol } from "./units.js";
 import { descendantsOfKind } from "./walk.js";
@@ -118,7 +118,7 @@ export class Hierarchy {
   private writtenAgainst(): Map<Node, Node[]> {
     if (this.written) return this.written;
     const written = new Map<Node, Node[]>();
-    const add = (expression: Node, fn: Node) => {
+    const add = (expression: Expression, fn: Node) => {
       for (const signature of contextualSignatures(expression)) if (isDispatchedSignature(signature)) push(written, signature, fn);
     };
     for (const sf of this.sourceFiles) {
@@ -175,13 +175,12 @@ function annotated(type: Node): Node {
  * expression TypeScript fails on (nested too deeply, say) is left out, as a call it fails to
  * resolve is (shared.ts), rather than failing the file whose call needed them.
  */
-function contextualSignatures(expression: Node): Node[] {
+function contextualSignatures(expression: Expression): Node[] {
   try {
-    const type = Node.isExpression(expression) ? expression.getContextualType()?.getNonNullableType() : undefined;
+    const type = expression.getContextualType()?.getNonNullableType();
     if (!type) return [];
     const parts = type.isUnion() ? type.getUnionTypes() : [type];
-    // (A signature TypeScript puts together, for a union say, has no declaration.)
-    return parts.flatMap((t) => t.getCallSignatures().flatMap((s): Node[] => (s.compilerSignature.getDeclaration() ? [s.getDeclaration()] : [])));
+    return parts.flatMap((t) => t.getCallSignatures().map((s) => s.getDeclaration()));
   } catch {
     return [];
   }
@@ -192,7 +191,7 @@ function contextualSignatures(expression: Node): Node[] {
  * is: an argument (`ops.set("x", run)`), an entry (`[run]`), a value (`{ go: run }`,
  * `const r: Runner = run`, `r = run`, `return run`), or what's cast (`run as Runner`).
  */
-function functionPassed(id: Identifier): { expression: Node; unit: Node } | undefined {
+function functionPassed(id: Identifier): { expression: Expression; unit: Node } | undefined {
   const parent = id.getParentOrThrow();
   // `api.run` stands for the whole access; `api` in it is an object, not a function passed.
   if (Node.isPropertyAccessExpression(parent) && parent.getExpression() === id) return undefined;
@@ -205,8 +204,7 @@ function functionPassed(id: Identifier): { expression: Node; unit: Node } | unde
 }
 
 function isContextuallyTyped(expression: Node): boolean {
-  const outer = expression.getParent();
-  if (!outer) return false;
+  const outer = expression.getParentOrThrow();
   if (Node.isCallExpression(outer) || Node.isNewExpression(outer)) return (outer.getArguments() as Node[]).includes(expression);
   if (Node.isPropertyAssignment(outer) || Node.isVariableDeclaration(outer)) return outer.getInitializer() === expression;
   if (Node.isBinaryExpression(outer)) return outer.getRight() === expression && outer.getOperatorToken().getKind() === SyntaxKind.EqualsToken;
