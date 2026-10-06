@@ -189,10 +189,13 @@ Other gaps, not yet in fixtures:
 | `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
 | `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
-| `PERM009` | error | A function reads data a flow rule protects and can send it somewhere the rule doesn't allow. See [data-flow rules](#data-flow-rules). |
-| `SPEC001`–`SPEC004` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
+| `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
+| `SPEC001`–`SPEC005` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
 
-Sketch strictness reports everything but fails only on `PERM005`.
+At sketch strictness, the rules about `@perm` annotations (`PERM001` to `PERM004`) are
+warnings. What you ask for explicitly still fails: `PERM005` (the lock file),
+`PERM009` (flow rules), and `PERM006`, `PERM007`, or `PERM008` when their policy is
+`"error"`.
 
 ## Capabilities
 
@@ -223,25 +226,60 @@ may *go*: "the Stripe key may only be sent to Stripe".
 }
 ```
 
-A function that reads the `from` capability directly, and can send to a host
-`to` doesn't list, is a `PERM009` error. That covers sending itself or through
-anything it calls, and a host that can't be determined (`fetch(url)`). The
-error points at the call that leads there:
+`from` is data a function reads: `env`, `fs.read`, `db.read`, or `net` (what a
+host sends back), with or without a scope. `to` lists the network hosts it may
+go to. Anything else, such as `"to": ["fs.write(./public)"]` or `"from": "exec"`,
+is a configuration error, and so is a misspelled setting in a rule: none of them
+could ever match.
+
+A function that gets hold of the `from` data, and can send it somewhere `to`
+doesn't allow, is a `PERM009` error. "Somewhere" is:
+
+- a host `to` doesn't list, or a host that can't be determined (`fetch(url)`);
+- a command (`exec`), or code that can't be verified (`eval`, say): either one
+  could send it anywhere, so no rule can allow it.
+
+It's an error at every strictness level, sketch included: a rule is something you
+asked for.
+
+That covers sending it itself or through anything it calls. The error points at
+the call that leads there:
 
 ```
-src/billing.ts:7:9 error PERM009: charge reads env(STRIPE_KEY) and can send to net(analytics.example),
-  through track → fetch("https://analytics.example/event", ...), which the flow rule for env(STRIPE_KEY) doesn't allow.
+src/billing.ts:9:9 error PERM009: charge reads env(STRIPE_KEY) and can send to net(analytics.example), through track → fetch("https://analytics.example/event", ...), which the flow rule for env(STRIPE_KEY) doesn't allow.
+  -> keep env(STRIPE_KEY) away from that call, or add net(analytics.example) to the rule's "to" in permlang.config.json.
 ```
+
+A function gets hold of the data when it reads it, or when it calls a function
+that has it and can hand it back:
+
+- by returning a value: a getter such as `stripeKey()`, or a function whose result
+  could carry the key, even one that returns only what Stripe sent back;
+- by calling a callback the caller passed in (`withKey((key) => ...)`);
+- as the object a constructor builds (`new StripeClient()`), or what a module
+  exports.
+
+A function that calls one that returns nothing (`void`, or `Promise<void>`) and
+takes no callback isn't flagged for what it sends elsewhere: the data can't come
+back to it. So `checkout()` calling `chargeCustomer(): Promise<void>` and then an
+analytics service passes.
 
 A `from` without a scope covers a whole category: `"env"` protects every
 environment variable. Reading the whole environment (`JSON.stringify(process.env)`)
 counts as reading every variable.
 
-**This first version works per function.** It doesn't follow the value itself:
-a key read into a module-level constant and used by another function isn't
-caught, and neither is one passed to a callee as an argument. Callers of a
-function that reads the key aren't flagged, since the key stays inside it. Only
-network hosts are checked as destinations.
+**This doesn't follow the value itself.** It works from which functions can get
+hold of the data and what they can reach, so:
+
+- data stored somewhere and read by other code isn't followed: a key read into a
+  module-level constant, or into an object's field by one method and sent by
+  another;
+- a function that returns a value is assumed to hand the data back even when its
+  result can't contain it, so a caller that also sends elsewhere is flagged;
+- data that leaves through a thrown error isn't followed;
+- a command inherits the whole environment, so one run by a function that never
+  touches the key can still read it. Only commands run by functions that get
+  hold of the data are flagged.
 
 ## Tools given to AI models
 
@@ -256,11 +294,19 @@ reach, through everything it calls:
 
 | Framework | Recognized |
 | --- | --- |
-| Vercel AI SDK (`ai`) | `tool({ execute })`, `dynamicTool(...)` |
-| MCP (`@modelcontextprotocol/sdk`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and `setRequestHandler(CallToolRequestSchema, handler)`, which serves every tool (named `*`) |
-| OpenAI Agents (`@openai/agents`) | `tool({ name, execute })` |
-| LangChain (`@langchain/core`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, and other `new ...Tool(...)` classes |
-| Anthropic, Mastra, LlamaIndex | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler |
+| Vercel AI SDK (`ai`, `@ai-sdk/*`) | `tool({ execute })`, `dynamicTool(...)`; plain objects in a `tools` option, such as `generateText({ tools: { shell: { execute } } })` or `new ToolLoopAgent({ tools })`, written in the call or in a constant, spreads included; provider tools such as `anthropic.tools.bash_20250124({ execute })` |
+| MCP (`@modelcontextprotocol/sdk`, and version 2's `@modelcontextprotocol/server`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and the handler that serves every tool (named `*`): `setRequestHandler(CallToolRequestSchema, handler)`, or `setRequestHandler("tools/call", handler)` in version 2 |
+| OpenAI Agents (`@openai/agents`, `@openai/agents-*`) | `tool({ name, execute })`, and the built-in tools that run here: `shellTool({ shell })`, `computerTool({ computer })`, `applyPatchTool({ editor })` |
+| LangChain (`@langchain/*`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, other `new ...Tool(...)` classes, prebuilt tools that extend `Tool` (such as `new Calculator()`), and your own subclasses of `StructuredTool` or `Tool`, including class expressions (what their `_call` reaches) |
+| LlamaIndex (`llamaindex`, `@llamaindex/*`) | `FunctionTool.from(fn, ...)` and `tool(fn, ...)` |
+| Anthropic (`@anthropic-ai/*`), Mastra (`@mastra/*`) | their `tool`/`createTool`/`betaTool`-style helpers with an `execute`, `run`, or `func` handler, and plain objects with one in a `tools` list (the Anthropic SDK's `toolRunner({ tools: [{ name, run }] })`) |
+
+A package counts by its family, because one package often re-exports another's
+(`@openai/agents` re-exports `tool` from `@openai/agents-core`). The handler is
+the last function argument when there is one (MCP's callback, LangChain's
+`func`), else the definition's function-valued `execute`, `run`, or `func`, else a
+built-in tool's `shell`, `computer`, or `editor` object, whose methods are what
+runs. A schema property that happens to be called `run` isn't a handler.
 
 Every tool is listed in the report, with what it reaches. When a tool reaches
 something a model shouldn't trigger unchecked, there's a `PERM008` warning at
@@ -270,18 +316,47 @@ the registration:
 - writing files or data (`fs.write`, `db.write`);
 - sending to a host that isn't fixed (bare `net`), since the model can choose
   where data goes;
+- reading a file, table, or environment variable that isn't fixed (bare
+  `fs.read`, `db.read`, `env`, which also means reading the whole environment),
+  since the model can choose what it reads and gets back;
 - app-level actions from adapters, such as `payments.refund` or `email.send`.
 
-Reading files, tables, environment variables, or a fixed host doesn't warn: that's
+Reading a fixed file, table, environment variable, or host doesn't warn: that's
 what tools are for. Set `"tools"` in `permlang.config.json` to `"error"` to fail
-the build instead, or `"trust"` to only list them.
+the build instead (at every strictness level, sketch included), or `"trust"`
+to only list them.
 
 In the pull-request comment, new access a tool can reach is marked *An AI model
 can trigger this*, with the tool's name.
 
-A handler PermLang can't find (passed in from elsewhere, say) counts as
-unverifiable. Tools registered through a wrapper of your own aren't recognized
-yet.
+What counts as unverifiable, and what reaches nothing:
+
+- A handler PermLang can't follow counts as unverifiable: a parameter, a
+  variable that can be reassigned, a value from a package with no types, or
+  constants that refer to each other. A library function given as the handler
+  (`execute: execSync`) reaches what PermLang knows that function does. A
+  library's object or class instance (`shell: sandboxShell`,
+  `editor: new RemoteEditor()`), or a computer factory typed only with the
+  library's interface, is unverifiable: the framework calls its methods, and
+  their code can't be seen.
+- A tool without a handler here counts as unverifiable too, unless its type says
+  it runs at the model provider: the AI SDK hands its calls back to your app, a
+  provider tool like `bash_20250124()` runs them in whatever sandbox the call is
+  given, and a library's prebuilt tool runs its own code.
+- A tool whose framework types it as running at the provider reaches nothing
+  here: OpenAI Agents' `HostedTool` (`webSearchTool()`, `fileSearchTool(...)`, a
+  hosted `shellTool({ environment })`) and the AI SDK's `ProviderExecutedTool`
+  (Anthropic's code execution). A type of your own with such a name doesn't count.
+
+Not recognized yet:
+
+- Tools registered through a wrapper of your own.
+- Plain-object tools passed through anything but the call itself or a constant
+  (a function's parameter, say), including a whole `tools` list or record passed
+  in that way.
+- Tool lists that are only schemas, such as the `tools: [...]` of the Anthropic or
+  OpenAI SDK's message calls. Your own code answers the model's calls there,
+  wherever it handles them, and PermLang can't link that code to the tool.
 
 ## Project configuration
 
@@ -452,7 +527,7 @@ Set `"strictness"` in `permlang.config.json`, or pass `--strictness`:
 
 | Level | What fails |
 | --- | --- |
-| `sketch` | Nothing. Every function's permissions are inferred and reported. Start here on an existing codebase. |
+| `sketch` | Only what you ask for explicitly: access the lock file doesn't record (`PERM005`), flow rules (`PERM009`), and `"unmapped": "error"` or `"tools": "error"`. Rules about `@perm` annotations are reported as warnings, and every function's permissions are inferred. Start here on an existing codebase. |
 | `development` (default) | Annotated functions that exceed their `@perm`, invalid annotations, unverifiable code, and exported functions or top-level code without `@perm`. |
 | `production` | All of the above, plus any function (private helpers too) that reaches something without being covered by function- or module-level `@perm`. |
 
@@ -625,7 +700,9 @@ perm process_refund(order: Order, reason: Text) -> RefundResult
 ```
 
 `permlang spec src` checks each spec's `perms:` against what the implementation
-actually reaches. Rules and examples are parsed and reported as not yet verified.
+actually reaches. It fails when the implementation reaches code it can't see (an
+import whose types can't be found), and when the `implements:` name matches more
+than one function. Rules and examples are parsed and reported as not yet verified.
 See [docs/spec-format.md](spec-format.md).
 
 ## Real-world trial
@@ -660,12 +737,13 @@ src/dispatch.ts     implementations reachable through interfaces and base classe
 src/units.ts        functions, methods, and files that permissions attach to
 src/graph.ts        the call graph and propagation along it
 src/unmapped.ts     packages with no adapter, and imports with no types
+src/unseen.ts       code a function reaches that has no types, for checking specs
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
 src/workflow-files.ts what a workflow or Action grants, read where GitHub reads it
 src/yaml-nodes.ts   YAML as GitHub reads it: anchors, aliases, merge keys
 src/ci-expressions.ts GitHub expressions: the secrets they read
 src/package-files.ts package.json scripts, and which folders are workspace packages
-src/tools.ts        tool registrations for AI models, and their handlers
+src/tools.ts        tool registrations for AI models, their handlers, and what those reach
 src/flows.ts        data-flow rules: parsing, and finding functions that break them
 src/deps.ts         new dependencies in a change
 src/check.ts        comparing declared vs. actual per unit
