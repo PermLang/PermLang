@@ -200,7 +200,7 @@ describe("permlang spec", () => {
     write("svc/ping.perm", spec("net(api.example.com)"));
     const { code, out } = permlang("spec", "svc");
     expect(code).toBe(1);
-    expect(out).toContain("perms     unchecked: reaches code whose types can't be found");
+    expect(out).toContain("perms     unchecked: reaches code PermLang can't see");
     expect(out).toContain(
       "error SPEC005: perm ping: ping reaches code PermLang can't see, so its permissions can't be checked: it calls into untyped-pinger, whose types can't be found.\n    -> install the missing types",
     );

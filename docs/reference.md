@@ -1282,8 +1282,8 @@ perm process_refund(order: Order, reason: Text) -> RefundResult
 
 `permlang spec src` checks each spec's `perms:` against what the implementation
 actually reaches. It fails when the implementation reaches code it can't see (an
-import whose types can't be found), and when the `implements:` name matches more
-than one function. Rules and examples are parsed and reported as not yet verified.
+import whose types can't be found, or a call through a value typed `any`), and
+when the `implements:` name matches more than one function. Rules and examples are parsed and reported as not yet verified.
 See [docs/spec-format.md](spec-format.md).
 
 ## Real-world trial
