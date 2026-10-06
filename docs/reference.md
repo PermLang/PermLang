@@ -45,7 +45,7 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   and [Strictness levels](#strictness-levels). Each suggested fix names a place
   the annotation attaches to: a `/** @module @perm ... */` comment for a file's
   top-level code, the class for an implicit constructor.
-- **All v0.1 capabilities.**
+- **The built-in capabilities.**
   - `env`: any expression typed `NodeJS.ProcessEnv`, so `process.env.KEY`,
     `process.env["KEY"]`, destructuring, `"KEY" in process.env`, and aliases
     (`const env = process.env; env.KEY`), and patterns that take the
@@ -457,12 +457,14 @@ fails until `permlang lock` records it; so does one that stops importing it.
 
 ### Known limits
 
-The aim is to catch the whole adversarial suite, or to document each miss. These misses are documented as fixtures in
+The aim is to catch the whole adversarial suite, or to document each miss. Misses
+are kept as fixtures in
 [`fixtures/m4/limits/`](../fixtures/m4/limits) and [`fixtures/m6/limits/`](../fixtures/m6/limits),
 and as "known misses" in the adversarial suite
 ([`test/adversarial.test.ts`](../test/adversarial.test.ts)), which also lists
-the harmless code that must stay silent. Each miss's test fails once it's fixed,
-so the list can't go stale.
+the harmless code that must stay silent. Each of those tests fails once its miss
+is fixed, so they can't go stale. The list below also describes misses that have
+no test yet.
 
 - Values typed `any`: nothing called on them can be resolved. Where a global
   object, a capability module, or a database client becomes `any`, the escape
@@ -712,7 +714,8 @@ Other gaps, not yet in fixtures:
 
 ## Configuration
 
-`permlang.config.json`, next to the lock file. Every setting is optional.
+`permlang.config.json`, in the folder the command runs in (or the file
+`--config` names). Every setting is optional.
 
 ```json
 {
@@ -965,6 +968,13 @@ what tools are for. Set `"tools"` in `permlang.config.json` to `"error"` to fail
 the build instead (at every strictness level, sketch included), or `"trust"`
 to only list them.
 
+The lock records what each function reaches, not which tools exist. A new tool
+whose code reaches something new fails the check like any new access. But a new
+tool that reaches only what its file's code already reached (a second
+command-running tool next to the first, say) doesn't change the lock: with the
+default `"warn"`, it gets a `PERM008` warning, and the permission diff doesn't
+show it. Use `"tools": "error"` to fail on it.
+
 In the pull-request comment, new access a tool can reach is marked *An AI model
 can trigger this*, with the tool's name.
 
@@ -1043,7 +1053,7 @@ Each file is an entry in the lock, keyed by its path (for example
 | `ci.action(owner/repo)` | An Action or reusable workflow a step or job runs (`uses:`). And a container image, as `ci.action(docker://name)`: a `uses: docker://` step, a Docker Action's `image:`, a job's `container:`, and its `services:`. An image's name is everything but its tag and digest, so its registry, port, and path are kept: `docker://ghcr.io:443/acme/tool`. |
 | `ci.unpinned(owner/repo)` | ...referenced by a tag or branch rather than an exact commit, or for an image, by a tag rather than a `@sha256:` digest, so what runs can change without a change here. A `uses: ./path` is unpinned when the repository has no `action.yml` (or Dockerfile) in that folder: something else puts it there at run time. |
 | `npm.script(name: command)` | A `package.json` script and its command, lifecycle hooks such as `postinstall` included. |
-| `ci.unverifiable(sha256:…)`, `npm.unverifiable(sha256:…)` | A file, or part of one, PermLang can't read: YAML that doesn't parse, a workflow without both `on:` and `jobs:` (GitHub wouldn't run it as written, and stray invisible characters can make PermLang and GitHub read it differently), an alias with no anchor before it, an image named by an expression, a link that leads nowhere. It's recorded rather than skipped, so it can't hide anything, with the file's SHA-256, so that any edit to the file changes the lock and shows in review. Line endings and a byte-order mark don't count, since Git can change them on checkout. |
+| `ci.unverifiable(sha256:…)`, `npm.unverifiable(sha256:…)` | A file, or part of one, PermLang can't read: YAML that doesn't parse, a workflow without both `on:` and `jobs:` (GitHub wouldn't run it as written, and stray invisible characters can make PermLang and GitHub read it differently), an alias with no anchor before it, an image named by an expression, a link that leads nowhere, line breaks that YAML parsers disagree on ([below](#how-workflows-are-read)). It's recorded rather than skipped, so it can't hide anything, with the file's SHA-256, so that any edit to the file changes the lock and shows in review. Line endings and a byte-order mark don't count, since Git can change them on checkout. |
 
 A change that adds one fails the check (`PERM005`) at the line that grants it,
 and shows in the pull-request comment, until `permlang lock` records it. So does
@@ -1121,22 +1131,12 @@ that isn't plain JSON is unverifiable.
 - Actions and reusable workflows from other repositories aren't read; pinning them
   to a commit is what keeps them from changing.
 
-**Upgrading from 0.3 or earlier:** there's no grace period. A lock written
-before 0.4 fails the check with one error until `permlang lock` rewrites it; see
-[upgrading the lock](#upgrading-from-03-or-earlier). 0.4 also reads configuration
-it missed before (aliases, secrets written other ways, local Actions, images,
-workspace packages), names secrets in upper case, adds a hash to unverifiable
-entries, and no longer records secrets mentioned outside an expression or `uses:`
-keys that aren't steps or jobs. So the rewritten lock can differ from the old one
-here too: review the change before committing it.
+Upgrading from 0.3 or earlier changes these entries too: see
+[upgrading from 0.3](#upgrading-from-03-or-earlier).
 
 ## Adapter manifests
 
-A manifest maps a package's functions to capabilities. Keys are
-`Container.member`, where the container is the class, interface, or type alias
-that declares the function. Use `Container()` for a call signature and a bare
-`name` for a top-level function. `{host:N}` and `{arg:N}` fill a scope from
-argument N:
+A manifest maps a package's functions to capabilities:
 
 ```json
 {
@@ -1151,32 +1151,43 @@ argument N:
 }
 ```
 
-`{host:N}` reads a URL, a template with a literal host, `new URL(...)`, or an
-options object whose `url`, `hostname`, and `host` all name the same host (for
-the `net` and `tls` modules, the options' `host`, as Node reads it). A spread,
-an accessor, a computed key, or a `socketPath`, `lookup`, or `createConnection`
-option makes it unknown. `{host:N+}` reads argument N the way Node's
-`http.request(input, options)` does: `hostname` before `host`, no `url` option,
-and an options argument after a URL can replace its host with `hostname`. A
-placeholder that can't be read gives the bare capability, so the call needs,
-say, `net`.
+- `package` is the package's name, or a list of names that share the manifest.
+- `defines` lists the app-level capabilities the manifest introduces, such as
+  `payments.refund`. A `@perm`, a spec, or a flow rule can name only the
+  built-in capabilities and ones an adapter defines, so a misspelling is an
+  error.
+- `functions` keys are `Container.member`, where the container is the class,
+  interface, or type alias that declares the function: `Container()` for a call
+  signature, `Container.constructor` for a constructor, and a bare `name` for a
+  top-level function. Keys must match how the package's types declare the
+  function: `process.kill` is declared on the `Process` interface, so its key is
+  `Process.kill`, not `kill`. An empty list maps a function to nothing.
+- `default` applies to every other method in the package (not constructors).
 
-`default` applies to every other method in the package (not constructors). An
-empty list maps a function to nothing. Keys must match how the package's types
-declare the function: `process.kill` is declared on the `Process` interface, so
-its key is `Process.kill`, not `kill`. Add your own adapters in
-`permlang.config.json`; they take precedence over the built-in ones:
+A scope can come from the call's arguments (counted from 0):
+
+- `{arg:N}` is argument N, when it's a literal string.
+- `{host:N}` reads a URL, a template with a literal host, `new URL(...)`, or an
+  options object whose `url`, `hostname`, and `host` all name the same host (for
+  the `net` and `tls` modules, the options' `host`, as Node reads it). A spread,
+  an accessor, a computed key, or a `socketPath`, `lookup`, or `createConnection`
+  option makes it unknown.
+- `{host:N+}` reads argument N the way Node's `http.request(input, options)`
+  does: `hostname` before `host`, no `url` option, and an options argument after
+  a URL can replace its host with `hostname`.
+- `{host:N?}` counts only when argument N can set a host (Stripe's
+  `new Stripe(key, { host })`); a config that doesn't name one adds nothing.
+
+A placeholder that can't be read gives the bare capability, so the call needs,
+say, `net`. Add your own adapters in `permlang.config.json`; they take
+precedence over the built-in ones:
 
 ```json
 { "adapters": ["./permlang/adapters/acme-sms.json"] }
 ```
 
-Two more placeholders cover hosts set in options: `{host:N+}` is argument N's
-host unless a later options argument sets another (Node's
-`http.request(url, { hostname })`), and `{host:N?}` counts only when argument N
-can set a host (Stripe's `new Stripe(key, { host })`; a config that doesn't name
-one adds nothing). For database clients, PermLang's own detection applies first,
-and adapters add to it.
+For database clients, PermLang's own detection applies first, and adapters add
+to it.
 
 ### Packages without an adapter
 
@@ -1246,14 +1257,15 @@ Set `"strictness"` in `permlang.config.json`, or pass `--strictness`:
 | Level | What fails |
 | --- | --- |
 | `sketch` | Only what you ask for explicitly: any difference between the code and the lock file (`PERM005`), such as access it doesn't record, flow rules (`PERM009`), and `"unmapped": "error"` or `"tools": "error"`. Rules about `@perm` annotations are reported as warnings, and every function's permissions are inferred. Start here on an existing codebase. |
-| `development` (default) | Annotated functions that exceed their `@perm`, invalid annotations, unverifiable code, and exported functions or top-level code without `@perm`. |
+| `development` (default) | All of the above, plus annotated functions that exceed their `@perm`, invalid annotations, unverifiable code, and [exported functions, entry points](#exported-functions-and-entry-points), or top-level code without `@perm`. |
 | `production` | All of the above, plus any function (private helpers too) that reaches something without being covered by function- or module-level `@perm`. |
 
 ## The lock file and the permission diff
 
 `permlang lock` writes `permlang.lock.json`: what every function can reach, what
-every workflow, Action, and `package.json` script grants, and which files the check
-ran on and with which settings. Commit it. From then on:
+every workflow, Action, and `package.json` script grants, which files the check
+ran on and with which settings, and the code PermLang can't check. Commit it.
+From then on:
 
 - **`permlang check` fails when the code and the lock differ in any way**
   (PERM005), at every strictness level, sketch included:
@@ -1265,6 +1277,9 @@ ran on and with which settings. Commit it. From then on:
     could approve access in advance by editing only the lock, for a later change
     to use without showing up. The error points at the lock's own line.
   - A `@perm-unsafe` override is new, gone, or has a different reason.
+  - The code calls a package with no adapter, or imports something with no
+    types, that the lock doesn't record, or no longer calls or imports one it
+    records (see [what the lock records](#what-the-lock-records)).
   - The check ran on other files, or with other settings, than the lock records
     (see below).
 
@@ -1275,7 +1290,7 @@ ran on and with which settings. Commit it. From then on:
 
   | New access | Where it happens | Now reachable from |
   | --- | --- | --- |
-  | `+ net(api.data-broker.io)` | `scoreLead`<br>axios.post("https://api.data-broker.io/v2/enrich", ...) | `scoreLead`, `handleLead` |
+  | `+ net(api.data-broker.io)` | `enrich`<br>fetch("https://api.data-broker.io/v2/enrich", ...) | `enrich` (new), `handleLead` |
 
   The diff compares `base-ref`'s lock with what the code reaches now, not only
   with the lock file on disk. With `--head <ref>`, it compares two committed lock
@@ -1289,7 +1304,8 @@ ran on and with which settings. Commit it. From then on:
   - When the code couldn't be analyzed (an invalid setting, say). The diff then
     shows only what the lock files record, says so, and never says "No permission
     changes".
-  - When the base commit has no lock file, so everything is listed as new.
+  - When the base commit has no lock file, so everything is listed as new, or an
+    older PermLang wrote it, so the settings are listed as new.
 
   Changes to what's checked, or how strictly, are listed under **Check settings
   changed**, such as `unmapped: now trust, was warn`, or an `exclude` added to
@@ -1350,10 +1366,11 @@ base commit, there's nothing to compare: the command exits 2, and
 `--format json` (or `--json`) is for tools, and includes `unrecorded` (where the
 code and the lock file differ, or `null`), `unsafeChanged`, `analysisError` (or
 `null`), `lockDeleted`, `lockMoved` (the base's lock files the change stops
-checking with), `baseLockMissing`, and `dependencies` (each with its `section`,
+checking with), `baseLockMissing`, `dependencies` (each with its `section`,
 and `change`: `added`, `source`, or `override`, which also names its `target`
-package). Changes in the code PermLang can't check are among `functions`, under
-the key `permlang.config.json#<unchecked>`.
+package), and `aiTools` (for each capability, the AI tools that can reach it).
+Changes in the code PermLang can't check are among `functions`, under the key
+`permlang.config.json#<unchecked>`.
 
 The text output of `check`, `lock`, `diff`, and `spec`, its GitHub annotations,
 and its error messages escape line breaks, control characters, and bidirectional
@@ -1371,17 +1388,30 @@ checking other files from the same folder (like the fixtures here), pass
 {
   "permlang": 2,
   "functions": {
-    ".github/workflows/ci.yml#<ci.yml>": ["ci.permission(contents: read)", "ci.trigger(pull_request)"],
+    ".github/workflows/ci.yml#<ci.yml>": [
+      "ci.permission(contents: read)",
+      "ci.trigger(pull_request)"
+    ],
     "permlang.config.json#<permlang.config.json>": [
       "permlang.files(src)",
       "permlang.strictness(development)",
       "permlang.tools(warn)",
       "permlang.unmapped(warn)"
     ],
-    "permlang.config.json#<unchecked>": ["unchecked.package(kafkajs)"],
-    "src/leads.ts#handleLead": ["db.write(lead)", "email.send"]
+    "permlang.config.json#<unchecked>": [
+      "unchecked.package(posthog-node)"
+    ],
+    "src/leads.ts#handleLead": [
+      "email.send",
+      "net(api.hubspot.com)"
+    ],
+    "src/render.ts#compile": [
+      "unverifiable"
+    ]
   },
-  "unsafe": { "src/render.ts#compile": "template compiler; trusted input" }
+  "unsafe": {
+    "src/render.ts#compile": "template compiler; trusted input"
+  }
 }
 ```
 
@@ -1402,10 +1432,11 @@ the `--config` file), whether or not it exists:
 | `permlang.flow(from -> to)` | Each [flow rule](#data-flow-rules). |
 | `permlang.adapter(path sha256:...)` | Each adapter manifest, from the config file or `--adapter`, with the first 16 hex digits of the SHA-256 of its content. The content is hashed as parsed JSON, so line endings and formatting don't change it. |
 
-When the files come from a TypeScript project, its config is an entry too: its
-`include`, `exclude`, and `files` after following `extends` (TypeScript's
-defaults when they aren't set: everything included, the output folders
-excluded), and the compiler options that decide which files are read, what an
+When the files come from a TypeScript project, its config is an entry too
+(`tsconfig.json#<tsconfig.json>`, with capabilities such as
+`tsconfig.include(src)`): its `include`, `exclude`, and `files` after following
+`extends` (TypeScript's defaults when they aren't set: everything included, the
+output folders excluded), and the compiler options that decide which files are read, what an
 import or a global resolves to, and what a default import or a JSX element is:
 
 - Always, with the value TypeScript uses, whether set or worked out from the
@@ -1509,10 +1540,24 @@ permlang.lock.json:1:1 error PERM005: permlang.lock.json was written by an older
   -> run `permlang lock` once to update it, and commit the change.
 ```
 
-Run `permlang lock` once, with the paths and options your check uses, and commit
-the result. Nothing in a pull request can make the check lenient instead: there's
-no grace period. `permlang lock` also replaces a lock it can't read at all (one
-with merge-conflict markers, say), with a warning to review all of it.
+Run `permlang lock` once, with the paths and options your check uses, review the
+change, and commit it. GitHub Action users on `@v0` get 0.4 automatically, so
+their next run fails this way until the updated lock is committed. Nothing in a
+pull request can make the check lenient instead: there's no grace period. In the
+pull request that updates the lock, the comment lists the settings as new, since
+the old lock didn't record them.
+
+The updated lock can record more than the old one. 0.4 reports access that 0.3
+missed, and records more: the settings, which files were checked, and the code
+PermLang can't check (see [what the lock records](#what-the-lock-records)). For
+workflows and `package.json` scripts, it reads configuration it missed before
+(aliases, secrets written other ways, local Actions, images, workspace packages),
+names secrets in upper case, adds a hash to unverifiable entries, and no longer
+records secrets mentioned outside an expression, or `uses:` keys that aren't on
+steps or jobs. Review all of it before committing.
+
+`permlang lock` also replaces a lock it can't read at all (one with
+merge-conflict markers, say), with a warning to review all of it.
 
 ## GitHub Action
 
@@ -1590,12 +1635,13 @@ and 10 warning annotations per step; the full list is in the log and the
 comment. This repository runs it on itself (see
 `.github/workflows/permlang.yml` and `permlang.lock.json`).
 
-`@v0` follows the latest 0.x release. A minor release (0.2, 0.3, ...) can
-detect more and fail builds that passed before; the [changelog](../CHANGELOG.md)
-says when. To upgrade on your own schedule, pin an exact release instead. The
-safest pin is the release's commit, since a tag can be moved
-(`PermLang/permlang@<commit-sha> # v0.3.3`); Dependabot keeps such pins up to
-date. See the [releases](https://github.com/PermLang/PermLang/releases).
+`@v0` follows the latest 0.x release. A minor release (0.3, 0.4, ...) can
+detect more and fail builds that passed before (0.4 fails every existing lock
+once: see [upgrading from 0.3](#upgrading-from-03-or-earlier)); the
+[changelog](../CHANGELOG.md) says when. To upgrade on your own schedule, pin an
+exact release instead. The safest pin is the release's commit, since a tag can
+be moved (`PermLang/permlang@<commit-sha> # v0.4.0`); Dependabot keeps such pins
+up to date. See the [releases](https://github.com/PermLang/PermLang/releases).
 
 **Code scanning.** Set `sarif: true` to also upload the findings to GitHub code
 scanning, where they appear in the repository's **Security** tab next to
@@ -1705,25 +1751,30 @@ without Node 22 in its tool cache (some self-hosted runners), it installs it
 with `actions/setup-node` (with its package-manager cache turned off), which
 does put it first on the PATH for later steps.
 
-## Usage
+## Command line
+
+Install PermLang in the project (`npm install --save-dev permlang`), then run it
+with `npx`:
 
 ```bash
-npm install
-npm test                                           # conformance + unit tests
-npm run permlang -- init src                        # set up a project: sketch config + first lock
-npm run permlang -- check fixtures/m1 --no-lock    # run the checker from source
-npm run permlang -- check src --json               # JSON report of declared vs. actual permissions
-npm run permlang -- check src --github-annotations # also print GitHub Actions annotations (the Action does this)
-npm run permlang -- check src --sarif out.sarif    # also write the findings as SARIF, for code scanning
-npm run permlang -- lock src                       # write permlang.lock.json
-npm run permlang -- check src --require-lock       # also fail when permlang.lock.json is missing
-npm run permlang -- check src --base origin/main   # ...and as the Action does: see "A missing lock file"
-npm run permlang -- diff origin/main               # permission changes since main
-npm run permlang -- diff origin/main --summary s.md  # ...and the markdown diff, uncut, in s.md
-npm run permlang -- spec src --spec x.perm        # check a .perm spec against the code
-npm run permlang -- --version                      # the installed version
-npm run permlang -- check --help                   # usage (any command)
+npx permlang init src --workflow                  # set up: a sketch config, a workflow, and a first lock
+npx permlang check src                            # check permissions, and compare with permlang.lock.json
+npx permlang check src --json                     # JSON report of declared vs. actual permissions
+npx permlang check src --github-annotations       # also print GitHub Actions annotations (the Action does this)
+npx permlang check src --sarif out.sarif          # also write the findings as SARIF, for code scanning
+npx permlang check src --no-lock                  # check without comparing with the lock file
+npx permlang lock src                             # write permlang.lock.json
+npx permlang check src --require-lock             # also fail when permlang.lock.json is missing
+npx permlang check src --base origin/main         # ...and as the Action does: see "A missing lock file"
+npx permlang diff origin/main src                 # permission changes since main
+npx permlang diff origin/main src --summary s.md  # ...and the markdown diff, uncut, in s.md
+npx permlang spec src --spec x.perm               # check a .perm spec against the code
+npx permlang --version                            # the installed version
+npx permlang check --help                         # usage (any command)
 ```
+
+In a clone of PermLang's own repository, `npm run permlang -- <command>` runs it
+from source (see [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
 Exit codes: `0` no errors; `1` permission errors, and nothing else; `2`
 anything else: a usage or configuration error (a `.perm` spec that can't be
@@ -1734,15 +1785,16 @@ An internal error prints the error and where it happened, to
 Each command takes only its own options. Another command's option is a usage
 error that says which command takes it (`check takes --json, not --format`),
 since ignoring it would quietly do something else. `--help` goes on its own,
-and an option's value can't start with `-`. `diff` also takes `check`'s options,
-so the GitHub Action can pass the same `args` to both: `--json` is `--format
-json` there (an explicit `--format` wins), and `--require-lock`, `--sarif`, and
-`--github-annotations` don't change the diff.
+and an option's value can't start with `-`. `diff` also takes `check`'s options
+except `--base` (its base is its first argument), so the GitHub Action can pass
+the same `args` to both: `--json` is `--format json` there (an explicit
+`--format` wins), and `--require-lock`, `--sarif`, and `--github-annotations`
+don't change the diff.
 
 With `--json`, `--github-annotations` prints the annotations on standard error,
 so standard output stays valid JSON. GitHub Actions reads both.
 
-### Using PermLang as a library
+## Using PermLang as a library
 
 The `permlang` package is an ES module only: `import { checkFiles } from
 "permlang"` works, and `require("permlang")` fails with
@@ -1768,8 +1820,9 @@ perm process_refund(order: Order, reason: Text) -> RefundResult
 `permlang spec src` checks each spec's `perms:` against what the implementation
 actually reaches. It fails when the implementation reaches code it can't see (an
 import whose types can't be found, or a call through a value typed `any`), and
-when the `implements:` name matches more than one function. Rules and examples are parsed and reported as not yet verified.
-See [docs/spec-format.md](spec-format.md).
+when the `implements:` name matches more than one function. Rules and examples
+are parsed and reported as not yet verified. See
+[docs/spec-format.md](spec-format.md).
 
 ## Real-world trial
 
@@ -1806,6 +1859,7 @@ src/walk.ts         walking syntax trees without recursion, and finding position
 src/load.ts         building the ts-morph project, setting aside files that can't be parsed
 src/unmapped.ts     packages with no adapter, and imports (and `process`) with no types
 src/unseen.ts       code a function reaches that has no types, for checking specs
+src/unchecked.ts    the code PermLang can't check (no adapter, no types), as a lock entry
 src/project-files.ts workflows, Actions, and package.json scripts, as lock entries
 src/workflow-files.ts what a workflow or Action grants, read where GitHub reads it
 src/yaml-nodes.ts   YAML as GitHub reads it: anchors, aliases, merge keys
