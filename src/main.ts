@@ -155,12 +155,13 @@ function init(args: Args): number {
     const report = analyze({ ...args, strictness: undefined });
     const lock = buildLock(report, path.dirname(lockFile));
     writeFileSync(lockFile, serializeLock(lock));
-    // Configuration entries (the settings, workflows, package.json scripts) aren't functions.
+    // Configuration entries (the settings, workflows, package.json scripts) aren't functions. There's
+    // always at least one: the settings the lock was written with.
     const keys = Object.keys(lock.functions);
     const reaching = keys.filter((k) => !isConfigKey(k)).length;
     const config = keys.length - reaching;
-    const entries = config > 0 ? `, and ${plural(config, "configuration entry", "configuration entries")} ${config === 1 ? "records" : "record"} the settings and project files` : "";
-    done.push(`Wrote ${lockName}: ${plural(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${plural(report.files, "file")}${entries}.`);
+    const entries = `${plural(config, "configuration entry", "configuration entries")} ${config === 1 ? "records" : "record"} the settings and project files`;
+    done.push(`Wrote ${lockName}: ${plural(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${plural(report.files, "file")}, and ${entries}.`);
     unmapped = report.unmapped.length;
   }
 
