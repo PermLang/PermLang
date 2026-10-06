@@ -127,22 +127,36 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `DELETE` it fully understands. Anything else (`WITH`, `UNION`, DDL, `COPY`,
     `PRAGMA`, more than one statement) can touch any table, as can text that
     databases read differently (MySQL's `--` with no space after it, backslashes,
-    executable comments such as `/*! ... */`), a function it doesn't know to be
-    harmless (including `lower` called through a schema, `evil.lower(x)`, or a quoted
-    name), a parenthesized list after an `INSERT` table that isn't a list of
+    executable comments such as `/*! ... */`, and SQLite's `[...]` names and
+    Tcl-style variables such as `:a(...)`, which run to the first `]` or `)` whatever
+    is between), a function it doesn't know to be harmless (including `lower` called
+    through a schema, `evil.lower(x)`, or a quoted name, and a call right after a
+    placeholder, such as `@setval(...)`, which Postgres reads as the operator `@` and
+    a call), a parenthesized list after an `INSERT` table that isn't a list of
     columns, a quoted name it can't report as written (`"audit.log"`), and SQL nested
-    more than 64 levels deep. So can SQL built with string concatenation or a
+    more than 64 levels deep. A `?` placeholder is read as MySQL and SQLite read it,
+    on its own (SQLite's `?12` takes digits too), so in `?FROM secrets` the word after
+    it is the keyword `FROM`. So can SQL built with string concatenation or a
     template passed to `query()`; a config object (`{ text }`, `{ sql }`) with a
     spread, a computed key, or the SQL named twice, any of which can replace the
-    text; a mysql2 value with a `toSqlString()` method (what `mysql.raw()` returns),
-    whose text mysql2 pastes into the query; and a tag called as a function with
-    an array made to look like a template's strings. These need bare `db.read`
+    text; and a tag called as a function with an array made to look like a
+    template's strings. mysql2's `query()` fills in values itself, by pasting each
+    one into the text: a value with a `toSqlString()` method (what `mysql.raw()`
+    returns) is pasted in as SQL. So each value must be one mysql2 escapes as data,
+    as written or by its type: a string, number, boolean, `null`, date, or buffer, or
+    an array, a record (`Record<string, string>`), or an object literal of those. Any
+    other value could have that method, whatever its declared type lists: one typed
+    as an interface or object type, `object`, `unknown`, `any`, or a generic, or cast
+    to a plain type where it's passed. A placeholder inside a string, quoted name, or
+    comment counts too, since older mysql2 versions fill those in and a value pasted
+    there can end the string. (`execute()` and prepared statements bind values on the
+    server, so neither applies to them.) These need bare `db.read`
     and `db.write`. Neon's query function called with SQL text (before 1.0) is read
     like `query()`. So does any client method PermLang doesn't know, so new APIs
     can't pass silently; postgres.js's query modifiers (`.values()`, `.cursor()`,
-    `.describe()`, ...) and mysql2's `.promise()` touch nothing beyond the query
-    they belong to. Schema-qualified names are declared as written
-    (`db.read(public.users)`).
+    `.describe()`, ...), mysql2's `.promise()`, and a mysql2 prepared statement's
+    `execute()` touch nothing beyond the query they belong to. Schema-qualified
+    names are declared as written (`db.read(public.users)`).
 - **Adapter manifests.** JSON files mapping a library's functions to
   capabilities, including app-level ones such as `payments.refund`. Built-in
   adapters in [`adapters/`](../adapters) cover HTTP clients, Stripe, email, Redis,
@@ -411,8 +425,13 @@ Other gaps, not yet in fixtures:
 - Table names in SQL are reported as written. Postgres folds unquoted names to
   lower case, so `LEADS` and `"LEADS"` are different tables there but are both
   reported as `LEADS`.
-- A mysql2 value typed `any` that has a `toSqlString()` method: mysql2 pastes its
-  text into the query, but nothing in its type shows that.
+- A mysql2 value cast to a plain type before it reaches `query()`
+  (`const id = raw as unknown as number`, then `query(sql, [id])`): its type says
+  it's a number, so a `toSqlString()` method it has isn't seen. A cast where the
+  value is passed is looked through. Values whose types could hold that method,
+  such as an object typed by an interface, need bare `db.read` and `db.write` even
+  when they're plain data at runtime; pass a record or an object literal instead,
+  or use `execute()`.
 - A Drizzle `` sql`...` `` fragment's tables are charged to the code where the
   fragment is written. One kept in a shared constant counts toward its module's
   top-level code (and so toward every importer), not toward each query that uses it.

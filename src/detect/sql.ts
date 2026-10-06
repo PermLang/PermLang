@@ -10,8 +10,8 @@
 import { Node, type PropertyAssignment, type ShorthandPropertyAssignment, type Type } from "ts-morph";
 import { packageName, packageOf } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
-import { sqlTables } from "./sql-tables.js";
-import { argumentsOf, containerName, literalString, resolvedDeclaration, unwrapExpression, type CallLike } from "./shared.js";
+import { sqlTables, type SqlOptions } from "./sql-tables.js";
+import { argumentsOf, containerName, literalString, propertyValue, resolvedDeclaration, unwrapExpression, type CallLike } from "./shared.js";
 
 /** Methods whose first argument is SQL text, per package. */
 const TEXT_METHODS: Record<string, readonly string[]> = {
@@ -55,6 +55,8 @@ const SPECIAL_METHODS: Record<string, Record<string, readonly Capability[]>> = {
 
 // sqlite3's Statement has run/all/get too, without SQL text; only Database's take SQL.
 const TEXT_CONTAINERS: Record<string, string> = { sqlite3: "Database" };
+// Statement handles, whose methods run the SQL they were prepared with.
+const STATEMENT_CONTAINERS: Record<string, readonly string[]> = { mysql2: ["PreparedStatementInfo", "PrepareStatementInfo"] };
 
 /** Packages whose tagged templates run SQL with bound parameters. */
 const TAG_PACKAGES = new Set(["postgres", "@neondatabase/serverless", "@vercel/postgres"]);
@@ -87,18 +89,106 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   const special = SPECIAL_METHODS[name]?.[method];
   if (special) return [...special];
   const textContainer = TEXT_CONTAINERS[name];
-  if (TEXT_METHODS[name]!.includes(method) && (!textContainer || containerName(declaration) === textContainer)) {
+  const container = containerName(declaration) ?? "";
+  // A mysql2 prepared statement runs the SQL prepare() was given; its values are bound.
+  if (STATEMENT_CONTAINERS[name]?.includes(container)) return [];
+  if (TEXT_METHODS[name]!.includes(method) && (!textContainer || container === textContainer)) {
     // Used as a value (no call), the SQL is unknown.
     if (!call) return unknown;
     const args = argumentsOf(call);
-    // mysql2 pastes a value's toSqlString() into the SQL as it is: mysql.raw(...) does this.
-    if (name === "mysql2" && args.some((a) => carriesSql(a.getType(), a))) return unknown;
+    if (name === "mysql2" && method === "query") return mysqlQuery(args);
     return fromSql(queryText(args[0]));
   }
-  if (SAFE_METHODS[name]?.includes(method) || (textContainer && containerName(declaration) !== textContainer && TEXT_METHODS[name]!.includes(method))) {
+  if (SAFE_METHODS[name]?.includes(method) || (textContainer && container !== textContainer && TEXT_METHODS[name]!.includes(method))) {
     return [];
   }
   return unknown;
+}
+
+/**
+ * mysql2's query() builds the statement in the client: it pastes each value, escaped, into
+ * the text at its placeholder (execute() and prepare() bind them instead). A value whose
+ * `toSqlString()` method is pasted in as SQL (what mysql.raw() returns) can touch any table,
+ * so every value must be one mysql2 escapes: see isPlainValue. And a placeholder in a string
+ * or comment, which older versions fill in too, is unknown (sql-tables.ts).
+ */
+function mysqlQuery(args: readonly Node[]): Capability[] {
+  const [first, second] = args;
+  const values = [second, first && optionValues(first)].filter((v): v is Node => v !== undefined && !isCallback(v));
+  if (!values.every(isPlainValue)) return unknown;
+  return fromSql(queryText(first), { formatted: true });
+}
+
+/** `values` in a `{ sql, values }` options object; a spread or computed key could set it. */
+function optionValues(arg: Node): Node | undefined {
+  const options = unwrapExpression(arg);
+  if (!Node.isObjectLiteralExpression(options)) return undefined;
+  const value = propertyValue(options, "values");
+  return value === "absent" ? undefined : value === "unknown" ? options : value;
+}
+
+function isCallback(arg: Node): boolean {
+  return unwrapExpression(arg).getType().getCallSignatures().length > 0;
+}
+
+/**
+ * Whether mysql2 pastes a value into the query escaped, as data: a string, number, boolean,
+ * null, Date, or Buffer, and arrays and records of those, at any depth. Any other object
+ * could have a `toSqlString()` method, whatever its declared type says: an interface or a
+ * parameter's object type describes some of an object's members, not all of them. So do
+ * `object`, `unknown`, `any`, and a generic. Read from the expression where it's written
+ * (an array or object literal, element by element) and otherwise from its type; a cast is
+ * looked through, since it doesn't change the value.
+ */
+function isPlainValue(value: Node): boolean {
+  const inner = unwrapExpression(value);
+  if (Node.isArrayLiteralExpression(inner)) {
+    return inner.getElements().every((e) => (Node.isSpreadElement(e) ? isPlainType(e.getExpression().getType(), e) : isPlainValue(e)));
+  }
+  if (Node.isObjectLiteralExpression(inner)) {
+    return inner.getProperties().every((p) => {
+      if (Node.isPropertyAssignment(p)) return isPlainValue(p.getInitializerOrThrow());
+      if (Node.isShorthandPropertyAssignment(p)) return isPlainType(p.getType(), p);
+      if (Node.isSpreadAssignment(p)) return isPlainType(p.getExpression().getType(), p);
+      return false; // a method or accessor: `toSqlString() { ... }`
+    });
+  }
+  return isPlainType(inner.getType(), inner);
+}
+
+function isPlainType(type: Type, at: Node, seen = new Set<object>()): boolean {
+  if (type.isAny() || type.isUnknown()) return false;
+  if (seen.has(type.compilerType)) return true; // a recursive type, checked where it started
+  seen.add(type.compilerType);
+  if (type.isUnion()) return type.getUnionTypes().every((t) => isPlainType(t, at, seen));
+  if (type.isString() || type.isNumber() || type.isBoolean() || type.isBigInt() || type.isNull() || type.isUndefined()) return true;
+  if (type.isLiteral() || type.isBooleanLiteral() || type.isEnum() || type.isEnumLiteral() || type.isTemplateLiteral()) return true;
+  if (type.isTypeParameter()) {
+    const constraint = type.getConstraint();
+    return constraint !== undefined && isPlainType(constraint, at, seen);
+  }
+  // mysql2 escapes these before it looks for toSqlString(), whatever subclass they are.
+  if (isPlatformClass(type, ["Date", "Buffer", "Uint8Array"])) return true;
+  if (type.isArray() || type.isTuple()) {
+    const elements = type.isArray() ? [type.getArrayElementTypeOrThrow()] : type.getTupleElements();
+    return elements.every((t) => isPlainType(t, at, seen));
+  }
+  if (!type.isObject() || type.getCallSignatures().length > 0) return false;
+  const members = type.getProperties().map((p) => p.getTypeAtLocation(at));
+  // A record, `Record<string, string>`, holds only members of its value type; an object made
+  // by an object literal holds the members written in it. Other object types can hold more.
+  const index = type.getStringIndexType();
+  const literal = type.getSymbol()?.getDeclarations().some((d) => Node.isObjectLiteralExpression(d)) === true;
+  if (index === undefined && !literal) return false;
+  return (index === undefined || isPlainType(index, at, seen)) && members.every((t) => isPlainType(t, at, seen));
+}
+
+/** A class from the TypeScript lib or Node's types, by name: not a project class called `Date`. */
+function isPlatformClass(type: Type, names: readonly string[]): boolean {
+  const symbol = type.getSymbol();
+  if (!symbol || !names.includes(symbol.getName())) return false;
+  const declarations = symbol.getDeclarations();
+  return declarations.length > 0 && declarations.every((d) => /\/node_modules\/(typescript\/lib|@types\/node)\//.test(d.getSourceFile().getFilePath()));
 }
 
 /**
@@ -117,8 +207,8 @@ function directCall(signature: Node & { getParameters(): Node[] }, first: Node |
   return types.some((t) => t.isAny() || t.isUnknown() || t.getProperty("raw") !== undefined) ? unknown : [];
 }
 
-function fromSql(sql: string | undefined): Capability[] {
-  const tables = sql === undefined ? undefined : sqlTables(sql);
+function fromSql(sql: string | undefined, options?: SqlOptions): Capability[] {
+  const tables = sql === undefined ? undefined : sqlTables(sql, options);
   if (!tables) return unknown;
   return [
     ...tables.read.map((t): Capability => ({ name: "db.read", arg: t })),
@@ -158,25 +248,6 @@ function propertyText(prop: PropertyAssignment | ShorthandPropertyAssignment): s
   if (Node.isPropertyAssignment(prop)) return literalString(prop.getInitializer());
   const declaration = prop.getValueSymbol()?.getValueDeclaration();
   return declaration && Node.isVariableDeclaration(declaration) ? literalString(declaration.getNameNode()) : undefined;
-}
-
-/**
- * Whether a mysql2 argument holds a value with a `toSqlString` method: itself, an
- * element of its arrays (bulk inserts nest them), a named placeholder's value, or
- * the `values` of a `{ sql, values }` options object. Read from the type, so a
- * value held in a variable counts too.
- */
-function carriesSql(type: Type, at: Node, seen = new Set<object>()): boolean {
-  if (seen.has(type.compilerType)) return false;
-  seen.add(type.compilerType);
-  if (type.getProperty("toSqlString")) return true;
-  const parts =
-    type.isUnion() ? type.getUnionTypes()
-    : type.isArray() ? [type.getArrayElementTypeOrThrow()]
-    : type.isTuple() ? type.getTupleElements()
-    : type.isObject() && type.getCallSignatures().length === 0 ? type.getProperties().map((p) => p.getTypeAtLocation(at))
-    : [];
-  return parts.some((t) => carriesSql(t, at, seen));
 }
 
 /**

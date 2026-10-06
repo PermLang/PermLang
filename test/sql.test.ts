@@ -59,6 +59,16 @@ describe("sqlTables: understood statements", () => {
     ["SELECT a -- Windows line ends\r\nFROM leads", { read: ["leads"], write: [] }],
     ["SELECT * FROM leads WHERE x = ANY('{1,2}'::int[])", { read: ["leads"], write: [] }],
     ['SELECT * FROM [order details] JOIN b USING (id, "k")', { read: ["order details", "b"], write: [] }],
+    // Found in the fourth review: MySQL and SQLite read `?` on its own, so a keyword after it is a keyword.
+    ["INSERT INTO leads (name) SELECT ?FROM secrets", { read: ["secrets"], write: ["leads"] }],
+    ["SELECT name, ?FROM secrets", { read: ["secrets"], write: [] }],
+    ["SELECT name, ?1FROM secrets", { read: ["secrets"], write: [] }],
+    ["SELECT * FROM leads WHERE id = ?1 OR id = ?12", { read: ["leads"], write: [] }],
+    // Placeholders and subscripts the review's fixes must keep reading.
+    ["SELECT * FROM leads WHERE id = $1::int AND tags && $2::text[]", { read: ["leads"], write: [] }],
+    ["SELECT $1::numeric(10,2), amount::varchar(255) FROM leads", { read: ["leads"], write: [] }],
+    ["SELECT data['name'], data['a']['b'] FROM leads", { read: ["leads"], write: [] }],
+    ["SELECT * FROM leads WHERE id = :id AND tag = @tag", { read: ["leads"], write: [] }],
   ])("%s", (sql, expected) => {
     expect(sqlTables(sql)).toEqual(expected);
   });
@@ -153,8 +163,60 @@ describe("sqlTables: anything else is unknown", () => {
     // Postgres's U&"..." is the table secrets, not U.
     'DELETE FROM U&"secrets"',
     'INSERT INTO U&"secrets" VALUES (1)',
+    // Found in the fourth review. SQLite reads a variable's name up to a Tcl-style suffix,
+    // `:a(...)`, which runs to the first `)`: the quote inside it starts no string there.
+    "SELECT :a('x) FROM secrets --')",
+    "SELECT @a('x) FROM secrets --')",
+    "SELECT $1('x) FROM secrets --')",
+    "SELECT :1('x) FROM secrets --')",
+    "SELECT :a::b('x) FROM secrets --')",
+    "SELECT :a::('x) FROM secrets --')",
+    "SELECT $1::1lower('x) FROM secrets --')",
+    // SQLite reads `[` to the first `]` as a name, whatever is in between.
+    "SELECT ['] FROM secrets --'] FROM leads",
+    'SELECT ["] FROM secrets --"] FROM leads',
+    "SELECT [-- ] FROM secrets",
+    "SELECT [/*] FROM secrets */] FROM leads",
+    // Postgres calls a function after `@` (an operator) or after `:` in a slice; a name read
+    // as a placeholder must not hide the call.
+    "SELECT @setval('s', 1) FROM leads",
+    "SELECT @setval ('s', 1) FROM leads",
+    "SELECT tags[1:setval('s', 1)] FROM leads",
+    "SELECT tags[1:setval ('s', 1)] FROM leads",
+    "SELECT ?setval('s', 1) FROM leads",
+    "SELECT 1(2) FROM leads",
   ])("unknown: %j", (sql) => {
     expect(sqlTables(sql)).toBeUndefined();
+  });
+
+  // mysql2's query() pastes each value into the text at its `?` (and, with namedPlaceholders,
+  // at each `:name`), and older versions do it inside strings, names, and comments too. A value
+  // pasted there can end the string and run as SQL, so a placeholder inside one is unknown.
+  describe("SQL the client fills in with values", () => {
+    it.each([
+      "SELECT '?' FROM leads",
+      "SELECT `?` FROM leads",
+      'SELECT "?" FROM leads',
+      "SELECT 1 /* ? */ FROM leads",
+      "SELECT 1 -- ?\nFROM leads",
+      // named-placeholders skips '...' and "..." only, so it fills in these.
+      "SELECT `:a` FROM leads",
+      "SELECT 1 /* :a */ FROM leads",
+      // Its quote tracking starts a string at the apostrophe in the comment, so it ends one
+      // where the string really starts, and fills in `:a` inside it.
+      "/* it's */ SELECT * FROM leads WHERE x = ':a'",
+    ])("unknown: %j", (sql) => {
+      expect(sqlTables(sql, { formatted: true })).toBeUndefined();
+      expect(sqlTables(sql)).toBeDefined();
+    });
+
+    it.each([
+      ["SELECT * FROM leads WHERE id = ? AND note = '12:30'", ["leads"]],
+      ["SELECT * FROM leads WHERE created > '10:30' AND id = :id", ["leads"]],
+      ['SELECT ":a" FROM leads', ["leads"]],
+    ])("%j reads %j", (sql, read) => {
+      expect(sqlTables(sql, { formatted: true })).toEqual({ read, write: [] });
+    });
   });
 
   it("gives up on deeply nested SQL instead of overflowing the stack", () => {
