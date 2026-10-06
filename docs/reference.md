@@ -402,13 +402,26 @@ so the list can't go stale.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
 - `as const` objects and enum members are trusted as fixed values, though code
   can change them at runtime. Every reference to one is checked for a write (an
-  assignment, `delete`, `++`, or destructuring into a member; a cast; or
-  `Object.assign`, `Object.defineProperty`, `Reflect.set`, and the like with it
-  as the target), and values read from a written object are unknown. An object
-  passed to a function that writes to it, or stored in another variable first,
-  isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)).
-  Treating every such value as unknown instead would turn most uses of
-  constants into bare capabilities.
+  assignment, `delete`, `++`, or destructuring into a member; a cast; or being
+  the first argument of `Object.assign`, `Object.defineProperty`,
+  `Object.defineProperties`, `Object.setPrototypeOf`, `Reflect.set`,
+  `Reflect.defineProperty`, `Reflect.deleteProperty`, or
+  `Reflect.setPrototypeOf`, matched by declaration however they're reached:
+  `Object["assign"]`, `const { assign } = Object`, `globalThis.Object.assign`,
+  `.call`, `.apply`, `Reflect.apply`, or a spread list of arguments), and so is
+  an `as const` object's own method that writes to `this`. Values read from a
+  written object are unknown. A plain exported `const`, enum, or `as const`
+  object is also unknown when the object holding the exports is written: its
+  namespace (`namespace Api { export const url = ... }` with
+  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS, the module's
+  `exports` object reached by a namespace import (`import * as config` with
+  `Object.assign(config, ...)`); an ES module's namespace can't be written. An
+  object passed to a function that writes to it, or stored in another variable
+  first, isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)),
+  and neither are a CommonJS module's exports written through `require()`,
+  `module.exports`, or a namespace re-exported from another file
+  (`export * as config from "./config"`). Treating every such value as unknown
+  instead would turn most uses of constants into bare capabilities.
 
 Other gaps, not yet in fixtures:
 

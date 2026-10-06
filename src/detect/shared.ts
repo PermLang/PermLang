@@ -3,11 +3,13 @@
 import {
   Node,
   SyntaxKind,
+  ts,
   type CallExpression,
   type NewExpression,
   type ObjectLiteralExpression,
   type Symbol as MorphSymbol,
   type Identifier,
+  type SourceFile,
   type TaggedTemplateExpression,
   type Type,
 } from "ts-morph";
@@ -67,7 +69,9 @@ export function literalString(arg: Node | undefined, depth = 0): string | undefi
     return isWritten(declaration.getParent().getNameNode()) ? undefined : literalString(declaration.getInitializer(), depth + 1);
   }
   if (Node.isVariableDeclaration(declaration)) {
-    return isConst(declaration) ? literalString(declaration.getInitializer(), depth + 1) : undefined;
+    const name = declaration.getNameNode();
+    const fixed = isConst(declaration) && Node.isIdentifier(name) && !holderWritten(name);
+    return fixed ? literalString(declaration.getInitializer(), depth + 1) : undefined;
   }
   if (!Node.isPropertyAssignment(declaration)) return undefined;
   const holder = constObjectHolder(declaration);
@@ -100,30 +104,107 @@ function constObjectHolder(property: Node): Identifier | undefined {
 // changes them at runtime. So every reference to the object, anywhere in the
 // program, is checked for a write: an assignment, `delete`, `++`/`--`, or
 // destructuring into one of its members (`CONFIG.url = ...`, `CONFIG.a.b = ...`);
-// a cast (after which anything can happen to it); or being the target of
-// Object.assign, Object.defineProperty, Reflect.set, and the like.
+// a cast (after which anything can happen to it); being the target of one of
+// WRITING_FUNCTIONS, matched by the declaration it resolves to however it's reached
+// (`Object["assign"]`, `const { assign } = Object`, `globalThis.Object.assign`,
+// `.call`, `.apply`, `Reflect.apply`, or a spread list of arguments); or, for an
+// `as const` object, a method of its own that writes to `this`.
+//
+// A plain exported `const` is fixed only as long as the object holding the exports
+// is: a namespace (`namespace Api { export const url = "..." }` is a property of
+// `Api`), or, in a file compiled to CommonJS, the `exports` object that a namespace
+// import in another file reaches (`import * as config from "./config"`). Writes to
+// that object count for every constant it holds, and so for enums and `as const`
+// objects exported the same way.
 //
 // Not followed: the object stored in another variable or passed to a function
-// that then writes to it. That's a known limit.
+// that then writes to it, and a CommonJS module's exports written through
+// `require()`, `module.exports`, or a namespace re-exported from another file.
+// Those are known limits.
 
 // Per program, so that a project edited and checked again (through the library API) is read afresh.
 const written = new WeakMap<object, WeakMap<Node, boolean>>();
 
-const WRITING_FUNCTIONS = new Set([
-  "Object.assign", "Object.defineProperty", "Object.defineProperties", "Object.setPrototypeOf",
-  "Reflect.set", "Reflect.defineProperty", "Reflect.deleteProperty", "Reflect.setPrototypeOf",
-]);
+// Functions that change their first argument's properties, by the interface or namespace that declares them.
+const WRITING_FUNCTIONS: Record<string, readonly string[]> = {
+  ObjectConstructor: ["assign", "defineProperty", "defineProperties", "setPrototypeOf"],
+  Reflect: ["set", "defineProperty", "deleteProperty", "setPrototypeOf"],
+};
 
 /** Whether the program may change an enum or `as const` object, named `name`, after it's created. */
 function isWritten(name: Identifier): boolean {
-  const program = name.getProject().getProgram().compilerObject;
+  return cachedWrite(name, () => name.findReferencesAsNodes().some((reference) => writesThrough(reference)) || writesItself(name) || holderWritten(name));
+}
+
+function cachedWrite(key: Node, compute: () => boolean): boolean {
+  const program = key.getProject().getProgram().compilerObject;
   const cache = written.get(program) ?? new WeakMap<Node, boolean>();
   written.set(program, cache);
-  const cached = cache.get(name);
+  const cached = cache.get(key);
   if (cached !== undefined) return cached;
-  const result = name.findReferencesAsNodes().some((reference) => writesThrough(reference));
-  cache.set(name, result);
+  // A namespace's members are checked through the namespace, which is never its own member.
+  cache.set(key, false);
+  const result = compute();
+  cache.set(key, result);
   return result;
+}
+
+/** An `as const` object with a method that writes to its own object: `set(u) { (this as any).url = u; }`. */
+function writesItself(name: Identifier): boolean {
+  const holder = name.getParent();
+  const initializer = Node.isVariableDeclaration(holder) ? holder.getInitializer() : undefined;
+  const object = initializer && unwrapExpression(initializer);
+  if (!object || !Node.isObjectLiteralExpression(object)) return false;
+  // Functions declared with `function` or as classes inside it have a `this` of their own.
+  return object.getDescendantsOfKind(SyntaxKind.ThisKeyword).some((self) => {
+    const owner = self.getFirstAncestor((a) => Node.isFunctionDeclaration(a) || Node.isFunctionExpression(a) || Node.isClassDeclaration(a) || Node.isClassExpression(a) || Node.isMethodDeclaration(a) || Node.isGetAccessorDeclaration(a) || Node.isSetAccessorDeclaration(a));
+    return owner !== undefined && ownMethod(owner, object) && writesThrough(self);
+  });
+}
+
+/** A method, accessor, or function property written directly in `object`. */
+function ownMethod(owner: Node, object: Node): boolean {
+  const parent = owner.getParentOrThrow();
+  if (Node.isMethodDeclaration(owner) || Node.isGetAccessorDeclaration(owner) || Node.isSetAccessorDeclaration(owner)) return parent === object;
+  return Node.isFunctionExpression(owner) && Node.isPropertyAssignment(parent) && parent.getParent() === object;
+}
+
+/**
+ * Whether the object that holds an exported declaration (a `const`, an enum, a namespace) can be
+ * written: its namespace, or, in a file compiled to CommonJS, the `exports` object reached by a
+ * namespace import in another file.
+ */
+function holderWritten(name: Identifier): boolean {
+  const declaration = name.getParent();
+  const statement = Node.isVariableDeclaration(declaration) ? declaration.getVariableStatement() : declaration;
+  if (!statement || !Node.isModifierable(statement) || !statement.hasModifier(SyntaxKind.ExportKeyword)) return false;
+  const container = statement.getParent();
+  if (Node.isModuleBlock(container)) {
+    const namespace = container.getParent();
+    return Node.isModuleDeclaration(namespace) && Node.isIdentifier(namespace.getNameNode()) && isWritten(namespace.getNameNode() as Identifier);
+  }
+  return Node.isSourceFile(container) && exportsWritten(container);
+}
+
+/** Whether a CommonJS file's `exports` object is written through a namespace import of it. */
+function exportsWritten(file: SourceFile): boolean {
+  if (!emitsCommonJs(file)) return false;
+  return cachedWrite(file, () => file.getReferencingNodesInOtherSourceFiles().some((reference) => {
+    const name = Node.isImportDeclaration(reference) ? reference.getNamespaceImport()
+      : Node.isImportEqualsDeclaration(reference) ? reference.getNameNode()
+      : undefined;
+    return name !== undefined && isWritten(name);
+  }));
+}
+
+/** Whether a file is compiled to CommonJS, where its exports are a plain object. */
+function emitsCommonJs(file: SourceFile): boolean {
+  const format = file.compilerNode.impliedNodeFormat;
+  if (format !== undefined) return format === ts.ModuleKind.CommonJS;
+  const options = file.getProject().getCompilerOptions();
+  const fallback = (options.target ?? ts.ScriptTarget.ES5) >= ts.ScriptTarget.ES2015 ? ts.ModuleKind.ES2015 : ts.ModuleKind.CommonJS;
+  const kind = options.module ?? fallback;
+  return kind === ts.ModuleKind.CommonJS || kind === ts.ModuleKind.AMD || kind === ts.ModuleKind.UMD;
 }
 
 /** Whether one reference to an object writes to it. */
@@ -148,12 +229,77 @@ function writesThrough(reference: Node): boolean {
   return members > 0 && isAssignedTo(chain);
 }
 
-/** `Object.assign(target, ...)` and the like, with `target` as given. */
+/**
+ * Whether `target` is what a writing function changes: the first argument of
+ * `Object.assign(target, ...)` and the like, however the function is reached
+ * (`fn.call(thisArg, target)`, `fn.apply(thisArg, [target])`,
+ * `Reflect.apply(fn, thisArg, [target])`). In a list of arguments that's spread
+ * (`Object.assign(...[target, source])`), or after a spread, any position could be the first.
+ */
 function isWritingCallTarget(target: Node): boolean {
-  const call = target.getParent();
-  if (!Node.isCallExpression(call) || call.getArguments()[0] !== target) return false;
+  const argument = argumentOf(target);
+  if (!argument) return false;
+  const { call, index, list } = argument;
+  // An unknown position (-1) could be the target's.
+  const first = index <= 0;
+  if (list === undefined && isWritingFunction(resolvedDeclaration(call))) return first;
   const callee = unwrapExpression(call.getExpression());
-  return Node.isPropertyAccessExpression(callee) && WRITING_FUNCTIONS.has(`${callee.getExpression().getText()}.${callee.getName()}`);
+  if (Node.isPropertyAccessExpression(callee) && writes(callee.getExpression())) {
+    // `fn.call(thisArg, target, ...)`, `fn.apply(thisArg, [target, ...])`.
+    if (callee.getName() === "call") return list === undefined && (index === 1 || index === -1);
+    if (callee.getName() === "apply") return list === 1 && first;
+  }
+  // `Reflect.apply(fn, thisArg, [target, ...])`.
+  return list === 2 && first && isReflectApply(call) && writes(call.getArguments()[0]);
+}
+
+/**
+ * Where an expression is given to a call: its argument index, or its index in an array literal
+ * given as argument `list`. An array spread into the call (`f(...[a, b])`) stands for the
+ * arguments from where it's spread. -1 when a spread before it means it could be anywhere.
+ */
+function argumentOf(node: Node): { call: CallExpression; index: number; list?: number } | undefined {
+  const parent = node.getParent();
+  if (Node.isCallExpression(parent)) {
+    const at = parent.getArguments().indexOf(node);
+    return at < 0 ? undefined : { call: parent, index: positionIn(parent.getArguments(), at) };
+  }
+  if (!Node.isArrayLiteralExpression(parent)) return undefined;
+  const elements: Node[] = parent.getElements();
+  const element = positionIn(elements, elements.indexOf(node));
+  const list = outermost(parent);
+  const holder = list.getParent();
+  if (Node.isSpreadElement(holder) && Node.isCallExpression(holder.getParent())) {
+    const call = holder.getParentOrThrow() as CallExpression;
+    const at = positionIn(call.getArguments(), call.getArguments().indexOf(holder));
+    return { call, index: at < 0 || element < 0 ? -1 : at + element };
+  }
+  return Node.isCallExpression(holder) ? { call: holder, index: element, list: holder.getArguments().indexOf(list) } : undefined;
+}
+
+/** A node's index among others, or -1 when a spread before it means it could be anywhere. */
+function positionIn(nodes: readonly Node[], index: number): number {
+  return nodes.slice(0, index).some((n) => Node.isSpreadElement(n)) ? -1 : index;
+}
+
+/** An expression with the parentheses, casts, and `!` around it. */
+function outermost(node: Node): Node {
+  let outer = node;
+  for (let parent = outer.getParent(); parent && unwrapExpression(parent) === unwrapExpression(node); parent = outer.getParent()) outer = parent;
+  return outer;
+}
+
+/** Whether a function value is one of WRITING_FUNCTIONS: `Object.assign`, or an alias of it. */
+function writes(fn: Node | undefined): boolean {
+  return fn !== undefined && fn.getType().getCallSignatures().some((s) => isWritingFunction(s.compilerSignature.declaration && s.getDeclaration()));
+}
+
+function isWritingFunction(declaration: Node | undefined): boolean {
+  if (!declaration || !declaration.getSourceFile().isDeclarationFile()) return false;
+  if (!Node.isMethodSignature(declaration) && !Node.isFunctionDeclaration(declaration)) return false;
+  const name = declaration.getName();
+  const container = containerName(declaration);
+  return name !== undefined && container !== undefined && (WRITING_FUNCTIONS[container]?.includes(name) ?? false);
 }
 
 /** The target of an assignment, `delete`, `++`/`--`, or a destructuring assignment. */
