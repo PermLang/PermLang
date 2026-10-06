@@ -294,7 +294,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   (`table[name]()`), loading a module whose result can't be checked (see
   [loading modules](#loading-modules)), calls into the project's own JavaScript
   through a hand-written `.d.ts`, and a file PermLang couldn't analyze (code
-  nested thousands of levels deep, say). The only way to accept it is
+  nested thousands of levels deep, say), whether it's imported or one of its
+  functions is called. The only way to accept it is
   `@perm-unsafe`, which also stops it from failing the function's callers'
   annotations. It doesn't hide it from AI tools or flow rules (see the escape
   hatch above).
@@ -407,7 +408,7 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 | a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
 | a package with no adapter | listed and warned about (PERM006), like an import of it |
 | a package declared pure, or data (see below) | nothing |
-| a specifier that can't be traced, or a file outside the project | unverifiable |
+| a specifier that can't be traced, or a file outside the project (an absolute path, `/opt/x.js` or `C:/x.js` wherever the check runs) | unverifiable |
 
 `data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
 every form of import: the code isn't a file in the project. A query or fragment
@@ -1348,7 +1349,10 @@ If the diff can't be computed at all (the base commit can't be read, or the
 arguments are wrong, say), `--format markdown` still prints a comment that says
 so, and the command exits 2. With no lock file in the working tree or at the
 base commit, there's nothing to compare: the command exits 2, and
-`--format markdown` prints a short notice saying so.
+`--format markdown` prints a short notice saying so. The exception is a change
+that stops checking with the lock file the base's workflows check with (such as
+`args: src --no-lock` where the base had `--lock locks/app.json`): then the diff
+lists all access as new, under a warning that says so, since the check fails.
 
 `--format json` (or `--json`) is for tools, and includes `unrecorded` (where the
 code and the lock file differ, or `null`), `unsafeChanged`, `analysisError` (or

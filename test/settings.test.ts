@@ -257,6 +257,32 @@ describe("more settings", () => {
     expect(chosen(project())).toEqual(["tsconfig.include(**/*)", "tsconfig.jsx(react-jsxdev)", "tsconfig.jsxImportSource(preact)"]);
   });
 
+  it("records each value of jsx as tsconfig.json spells it", () => {
+    for (const jsx of ["preserve", "react", "react-native", "react-jsx", "react-jsxdev"]) {
+      write("tsconfig.json", JSON.stringify({ compilerOptions: { jsx } }));
+      expect(chosen(project())).toContain(`tsconfig.jsx(${jsx})`);
+    }
+  });
+
+  it("records every target, module, and moduleResolution by its name", () => {
+    const recorded = (compilerOptions: Record<string, string>) => {
+      write("tsconfig.json", JSON.stringify({ compilerOptions }));
+      return project().actual.filter((c) => /^tsconfig\.(target|module|moduleResolution|moduleDetection)\(/.test(c));
+    };
+    expect(recorded({ target: "esnext", module: "preserve", moduleResolution: "bundler", moduleDetection: "legacy" })).toEqual([
+      "tsconfig.module(Preserve)",
+      "tsconfig.moduleDetection(Legacy)",
+      "tsconfig.moduleResolution(Bundler)",
+      "tsconfig.target(ESNext)",
+    ]);
+    expect(recorded({ target: "es2015", module: "node16" })).toEqual([
+      "tsconfig.module(Node16)",
+      "tsconfig.moduleDetection(Force)",
+      "tsconfig.moduleResolution(Node16)",
+      "tsconfig.target(ES2015)",
+    ]);
+  });
+
   it("pairs an old and a new value for each option that holds one", () => {
     expect(isSingleValued("tsconfig.allowSyntheticDefaultImports(true)")).toBe(true);
     expect(isSingleValued("tsconfig.jsxImportSource(preact)")).toBe(true);

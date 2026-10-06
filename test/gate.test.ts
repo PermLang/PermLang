@@ -686,6 +686,16 @@ describe("new code PermLang can't check is recorded in the lock", () => {
     expect(check.out).toContain(`permlang.lock.json:${line}:1 error PERM005: permlang.lock.json records src/telemetry.cjs as code PermLang can't check, which the code no longer imports.`);
   });
 
+  it("names an entry a hand-edited lock adds, however it's written", () => {
+    expect(permlang("lock", "src", "--strictness", "sketch").code).toBe(0);
+    const lock = lockJson();
+    lock.functions["permlang.config.json#<unchecked>"] = ["unchecked.package(leftpad2"];
+    writeLock(lock);
+    const check = permlang("check", "src", "--strictness", "sketch");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("error PERM005: permlang.lock.json records leftpad2 as code PermLang can't check, which the code no longer calls into.");
+  });
+
   it("tells apart files of the same name imported from different folders", () => {
     write("src/a/x.cjs", "module.exports = 1;\n");
     write("src/a/use.ts", 'import "./x.cjs";\nexport const a = 1;\n');

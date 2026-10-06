@@ -70,10 +70,10 @@ function isOwn(root: string, file: string, folder: string): boolean {
   return steps.some((s) => path.posix.normalize((s.workingDirectory ?? ".").replaceAll("\\", "/")).replace(/\/$/, "") === folder);
 }
 
+/** The repository's root, or undefined outside a repository (where git fails, or an old git prints nothing, which realpath fails on too). */
 function gitRoot(): string | undefined {
   try {
-    const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return root ? realpathSync.native(root) : undefined;
+    return realpathSync.native(execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
   } catch {
     return undefined;
   }
