@@ -17,8 +17,8 @@ We aim to reply to every issue and pull request within a week.
 
 ## Setting up
 
-You need Node 22 or later to run the tests. (PermLang itself runs on Node 20.1
-or later.)
+To run the tests, use Node 22.12 or later, which is what Vitest supports.
+(PermLang itself runs on Node 20.1 or later, and CI tests it there too.)
 
 ```bash
 git clone https://github.com/PermLang/PermLang && cd PermLang
