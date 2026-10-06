@@ -21,7 +21,12 @@ and makes sure someone sees it before it's merged.
 
 </div>
 
-[![A pull request where the tests pass but PermLang fails: the change adds net(api.data-broker.io), reached from enrich and handleLead](https://raw.githubusercontent.com/PermLang/PermLang/main/docs/images/pr-check.png)](https://github.com/PermLang/permlang-demo/pull/1)
+<a href="https://github.com/PermLang/permlang-demo/pull/1">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/PermLang/PermLang/main/docs/images/pr-check-dark.png">
+    <img alt="A pull request where the tests pass but PermLang fails: the change adds net(api.data-broker.io), reached from enrich and handleLead" src="https://raw.githubusercontent.com/PermLang/PermLang/main/docs/images/pr-check.png">
+  </picture>
+</a>
 
 ---
 
