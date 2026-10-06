@@ -2,8 +2,9 @@
 // `promisify(exec)`, `paths.forEach(unlinkSync)`, `Reflect.construct(WebSocket, [url])`.
 // The function can then be called anywhere with any arguments, so the reference
 // itself is the use, with every scope dynamic. `fn.call(thisArg, ...args)`,
-// `fn.apply(thisArg, [...args])`, and `Reflect.apply(fn, thisArg, [...args])` are
-// calls, checked with their arguments.
+// `fn.apply(thisArg, [...args])`, `Reflect.apply(fn, thisArg, [...args])`, and
+// `fn.bind(thisArg, ...args)` with arguments bound are calls, checked with their
+// arguments.
 //
 // Not counted: calling it (that's a call), `typeof fetch`, `x instanceof WebSocket`,
 // testing whether it exists (`if (globalThis.fetch)`, `Boolean(globalThis.fetch)`),
@@ -166,6 +167,11 @@ interface Invocation extends Use {
 function valueReach(site: Node): Reach {
   const parent = site.getParent();
   if (Node.isCallExpression(parent) && parent.getArguments()[0] === site && isNodePromisify(parent)) return "value given functions";
+  // `fn.bind(thisArg)` makes a copy with the same signature, so calls through it are checked where
+  // they're made, and so is a `const` holding it, used as a value. Used in place
+  // (`codes.forEach(setTimeout.bind(window))`), the copy is reached as the original would be.
+  const bound = boundCopy(site);
+  if (bound) return isConstInitializer(bound) ? "value given functions" : valueReach(bound);
   const contextual = Node.isExpression(site) ? site.getContextualType()?.getNonNullableType() : undefined;
   const signatures = contextual?.getCallSignatures() ?? [];
   const givenFunctions = signatures.length > 0 && signatures.every((signature) => {
@@ -180,6 +186,19 @@ function valueReach(site: Node): Reach {
   return givenFunctions ? "value given functions" : "value";
 }
 
+/** `fn.bind(thisArg)`, with no arguments bound, for `fn`. (Bound arguments make it an invocation.) */
+function boundCopy(site: Node): CallExpression | undefined {
+  const access = site.getParent();
+  if (!Node.isPropertyAccessExpression(access) || access.getExpression() !== site || access.getName() !== "bind") return undefined;
+  const call = access.getParent();
+  return Node.isCallExpression(call) && call.getExpression() === access && call.getArguments().length <= 1 ? call : undefined;
+}
+
+function isConstInitializer(node: Node): boolean {
+  const parent = node.getParent();
+  return Node.isVariableDeclaration(parent) && parent.getInitializer() === node && parent.getVariableStatement()?.getDeclarationKind() === "const";
+}
+
 /** Node's util.promisify. */
 function isNodePromisify(call: CallExpression): boolean {
   const declaration = resolvedDeclaration(call);
@@ -187,7 +206,7 @@ function isNodePromisify(call: CallExpression): boolean {
 }
 
 /**
- * `fn.call(thisArg, ...args)`, `fn.apply(thisArg, [...args])`, or
+ * `fn.call(thisArg, ...args)`, `fn.apply(thisArg, [...args])`, `fn.bind(thisArg, ...args)`, or
  * `Reflect.apply(fn, thisArg, [...args])`: a call of `fn` with known arguments.
  */
 function invocation(site: Node): Invocation | undefined {
@@ -199,7 +218,8 @@ function invocation(site: Node): Invocation | undefined {
   const call = access.getParent();
   if (!Node.isCallExpression(call) || call.getExpression() !== access) return undefined;
   const [, ...rest] = call.getArguments();
-  if (access.getName() === "call") return { call, args: rest, reach: "called" };
+  // `fn.bind(thisArg, a)` fixes the first arguments of every later call: a call with those.
+  if (access.getName() === "call" || (access.getName() === "bind" && rest.length > 0)) return { call, args: rest, reach: "called" };
   return access.getName() === "apply" ? listed(call, rest[0]) : undefined;
 }
 

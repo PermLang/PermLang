@@ -188,7 +188,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     (`export default [execSync]`, `export default { pick: () => execSync }`;
     `export default fetch` on its own just exports the function, and calls
     through the import are checked). `send.call(thisArg, url)`,
-    `send.apply(thisArg, [url])`, and `Reflect.apply(send, thisArg, [url])` are
+    `send.apply(thisArg, [url])`, `Reflect.apply(send, thisArg, [url])`, and
+    `send.bind(thisArg, url)` (which fixes `url` for every later call) are
     checked as calls, with their arguments. Calls through a `const` alias resolve
     to the original; the alias used as a value
     (`const run = execSync; run.call(null, cmd)`, `Reflect.apply(run, ...)`,
@@ -229,7 +230,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
   (and, in a program with lib.dom's timers, a handler that may be a string, such
   as one typed `any`, `unknown`, or `TimerHandler`, and a timer used as a value
   that may later be given one, as in `codes.forEach(setTimeout)`; a timer given
-  only functions, or Node's `promisify(setTimeout)`, runs no string),
+  only functions, Node's `promisify(setTimeout)`, and a copy made with
+  `setTimeout.bind(window)` and kept in a `const`, whose calls are checked
+  where they're made, run no string),
   `vm`, `new Worker` (Node's, and the browser's `Worker`, `SharedWorker`,
   `importScripts()`, a service worker's `register()`, and a worklet's
   `addModule()`), native code and hooks (`process.dlopen`,

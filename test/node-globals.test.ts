@@ -243,12 +243,18 @@ describe("browser timers, without Node's types", () => {
       "/** @perm env(MODE) */",
       "export function handlerUnion(h: string | (() => void)) { window.setTimeout(h, 0); }",
       "/** @perm env(MODE) */",
-      "export function functions(h: () => void, f: Function) { setTimeout(h, 0); setTimeout(f, 0); [h].forEach(setTimeout); setTimeout.call(window, h, 1); Reflect.apply(setTimeout, window, [h, 1]); return Promise.resolve(h).then(setInterval); }",
+      "export function functions(h: () => void, f: Function) { setTimeout(h, 0); setTimeout(f, 0); [h].forEach(setTimeout); setTimeout.call(window, h, 1); Reflect.apply(setTimeout, window, [h, 1]); const schedule = window.setTimeout.bind(window); schedule(h, 2); setTimeout.bind(window, h, 3)(); return Promise.resolve(h).then(setInterval); }",
+      "/** @perm env(MODE) */",
+      "export function boundInPlace(codes: string[]) { codes.forEach(window.setTimeout.bind(window)); }",
+      "/** @perm env(MODE) */",
+      "export function boundStored(codes: string[]) { const later = window.setTimeout.bind(window); codes.forEach(later); }",
+      "/** @perm env(MODE) */",
+      "export function boundArgument() { const run = setTimeout.bind(window, \"alert(1)\"); run(); }",
     ].join("\n"),
   });
 
   it("treats a timer that may be given a string as unverifiable", () => {
-    for (const fn of ["forEachCode", "thenCode", "reflectCode", "stored", "handlerType", "handlerAny", "handlerUnknown", "handlerUnion"]) {
+    for (const fn of ["forEachCode", "thenCode", "reflectCode", "stored", "handlerType", "handlerAny", "handlerUnknown", "handlerUnion", "boundInPlace", "boundStored", "boundArgument"]) {
       expect(errors(report, fn), fn).toEqual(["PERM004 unverifiable"]);
     }
   });

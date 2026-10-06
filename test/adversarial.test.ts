@@ -261,6 +261,8 @@ const caught: Record<string, string> = {
   rd16_require_then: "export function t() { return Promise.resolve(\"child_process\").then(require); }",
   // Reflect.apply with a written-out list is a call with those arguments, like `.apply`.
   rd17_reflect_apply_arguments: "export function t() { Reflect.apply(process.chdir, process, [\"/etc/cron.d\"]); }",
+  // bind with arguments fixes them for every later call: a call with those.
+  rd18_bind_arguments: "import * as fs from \"node:fs\";\nexport function t() { const w = fs.writeFileSync.bind(null, \"/etc/x\"); return w; }",
   // A capability function inside what a module exports by default is used there, as in any other expression.
   rd20_export_default_array: "import { execSync } from \"node:child_process\";\nexport default [execSync];",
   rd21_export_default_arrow: "import { execSync } from \"node:child_process\";\nexport default { pick: () => execSync };",
@@ -471,6 +473,7 @@ describe("re-verification (detectors): reported as the access it is", () => {
   it("rd10_require_call", () => expect(capabilities("rd10_require_call")).toEqual(["unverifiable"]));
   it("rd15_create_require_reflect", () => expect(capabilities("rd15_create_require_reflect")).toEqual(["unverifiable"]));
   it("rd17_reflect_apply_arguments", () => expect(capabilities("rd17_reflect_apply_arguments")).toEqual(["fs.read(/etc/cron.d)", "fs.write(/etc/cron.d)"]));
+  it("rd18_bind_arguments", () => expect(capabilities("rd18_bind_arguments")).toEqual(["fs.write(/etc/x)"]));
   it("rd25_long_alias_chain", () => expect(capabilities("rd25_long_alias_chain")).toEqual(["unverifiable"]));
   it("rd26_alias_chain_eleven", () => expect(capabilities("rd26_alias_chain_eleven")).toEqual(["exec"]));
   it("rd30_timer_reflect_apply_string", () => expect(capabilities("rd30_timer_reflect_apply_string")).toEqual(["unverifiable"]));
