@@ -1227,7 +1227,9 @@ account. The comment's text goes to GitHub in a file, and stays under GitHub's
 length limit; the job summary gets the diff uncut (up to GitHub's 1 MiB limit
 there). If its comment can't be updated, the step fails, since the old comment
 would go on looking current. If the diff can't be computed, the comment says so
-instead, even when it's `args` that's wrong. When neither the pull request nor
+instead, even when it's `args` that's wrong; and when the check itself stopped
+with an error (exit code 2), the comment says so first, whatever the diff
+shows. When neither the pull request nor
 its base commit has a lock file, there's no diff: the Action posts no comment,
 but replaces one it posted earlier (when a later push deleted the pull
 request's new lock file, say) with a notice saying so. Other problems (fetching
