@@ -20,7 +20,7 @@
 // the client it generates into node_modules/.prisma/client, and a client generated
 // into a custom `output` folder, which Prisma marks (isGeneratedClient).
 
-import { Node, SyntaxKind, type ImportDeclaration, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, type ImportDeclaration, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import { packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { descendantsOfKind } from "../walk.js";
@@ -186,7 +186,12 @@ export function computedModels(sourceFile: SourceFile): { node: Node; uses: Capa
 
 /** A Prisma client: an object whose members include models (a delegate, or an extended client's model). */
 function holdsModels(type: Type, at: Node): boolean {
-  if (type.isAny() || type.isUnknown()) return false;
+  if (type.isAny() || type.isUnknown() || type.isArray() || type.isTuple() || type.isString()) return false;
+  // Most objects indexed with a computed key have nothing to do with Prisma: look at whose
+  // types they are before looking at their members' types.
+  const fromPrisma = (s: MorphSymbol | undefined) => s?.getDeclarations().some((d) => isPrismaClient(d)) === true;
+  const parts = [type, ...(type.isIntersection() ? type.getIntersectionTypes() : [])];
+  if (!parts.some((t) => fromPrisma(t.getAliasSymbol()) || fromPrisma(t.getSymbol())) && !type.getProperties().some(fromPrisma)) return false;
   return type.getNonNullableType().getProperties().some((p) => {
     const member = p.getTypeAtLocation(at);
     return [member, ...(member.isIntersection() ? member.getIntersectionTypes() : [])].some((t) => {
