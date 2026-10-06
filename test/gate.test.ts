@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli, runCliStreams } from "./run-cli.js";
+import { removeTemporary } from "./temporary.js";
 
 let dir: string;
 
@@ -41,7 +42,8 @@ beforeEach(() => {
   git("config", "core.autocrlf", "false");
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+// Windows can hold the folder open for a while after a check has read it.
+afterEach(() => removeTemporary(dir));
 
 describe("the lock must match the code exactly (G1)", () => {
   it("fails when the lock records access the code doesn't reach, so it can't approve access in advance", () => {
