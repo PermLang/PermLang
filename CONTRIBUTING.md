@@ -6,8 +6,9 @@ change comes with a test that proves it.
 ## Reporting
 
 - **A way to get past PermLang** (code that reaches the network, files, secrets,
-  a database, or processes without being reported): please report it
-  **privately**, as [SECURITY.md](SECURITY.md) describes, not in a public issue.
+  a database, or processes without being reported, or a pull request that adds
+  access without the check failing): please report it **privately**, as
+  [SECURITY.md](SECURITY.md) describes, not in a public issue.
 - **A false positive, a missed access that's already a documented limit, or a
   bug:** open an [issue](https://github.com/PermLang/PermLang/issues/new/choose).
   There's a form for each.
@@ -17,8 +18,8 @@ We aim to reply to every issue and pull request within a week.
 
 ## Setting up
 
-You need Node 22 or later to run the tests. (PermLang itself runs on Node 20.1
-or later.)
+To run the tests, use Node 22.12 or later, which is what Vitest supports.
+(PermLang itself runs on Node 20.1 or later, and CI tests it there too.)
 
 ```bash
 git clone https://github.com/PermLang/PermLang && cd PermLang

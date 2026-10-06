@@ -1,5 +1,5 @@
 name: PermLang
-description: Fail pull requests that give TypeScript code new access to servers, files, secrets, databases, AI tools, or CI permissions.
+description: Fail pull requests that give TypeScript code new access to servers, files, secrets, databases, or CI. Flag risky AI tools.
 author: PermLang
 branding:
   icon: shield

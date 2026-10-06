@@ -72,8 +72,9 @@ It also flags two things code review rarely catches:
   what it can reach, and warns when a model could run commands, write data, send
   to any address, or read any file or secret it names.
 - **🔒 Where secrets may go.** A rule like *"the Stripe key may only be sent to
-  Stripe"* fails a change where code that gets hold of the key can also send to
-  another server. It follows the functions that read the key, not the key
+  Stripe"* fails a change where code that gets hold of the key can also send it
+  somewhere else: another server, an email, a command, or a library PermLang
+  can't see into. It follows the functions that read the key, not the key
   itself, so a key kept in a variable outside a function isn't tracked
   ([details](docs/reference.md#data-flow-rules)).
 
@@ -105,8 +106,8 @@ Start gentle and tighten up when you're ready.
 
 | Level | Best for | What fails the build |
 | --- | --- | --- |
-| 🌱 **Sketch** | Trying it on an existing project | Only changes the inventory doesn't record (new access, or access it lists that the code no longer has), and rules you add to the settings file yourself (such as where a secret may go). Everything else is just reported. |
-| 🛠️ **Development** (default) | Most teams | Also: functions that break their own rules, and public functions with no rules. |
+| 🌱 **Sketch** | Trying it on an existing project | Only differences from the inventory (new access, access it lists that the code no longer has, or a changed setting), and rules you add to the settings file yourself (such as where a secret may go). Everything else is just reported. |
+| 🛠️ **Development** (default) | Most teams | Also: functions that break their own rules, code that can't be analyzed (such as `eval`), and public functions with no rules. |
 | 🔒 **Production** | Sensitive code | Also: every function, including internal helpers, must be covered by a rule. |
 
 ## Get started
@@ -126,6 +127,11 @@ walks through the rest in about ten minutes.
 > **PermLang is new (v0.x).** Feedback, false positives, and missed access are
 > all welcome as [issues](https://github.com/PermLang/PermLang/issues). See the
 > [changelog](CHANGELOG.md) for what each release changes.
+>
+> **Upgrading from 0.3?** The check fails with one error until you update
+> PermLang (`npm install --save-dev permlang@^0.4.0`), run `npx permlang lock`
+> with the same paths as your check, review the updated inventory, and commit it
+> ([details](docs/reference.md#upgrading-from-03-or-earlier)).
 
 ## What it can't see (yet)
 
@@ -133,10 +139,11 @@ PermLang is upfront about its blind spots, and reports them instead of hiding th
 
 - **Libraries it doesn't know.** It understands many popular ones (Stripe, AI
   SDKs, Redis, databases, HTTP clients, and more). Unknown libraries are listed
-  in every report, so you can decide whether to trust them.
-- **Code that can't be analyzed ahead of time**, such as `eval`, is an error
-  unless a developer marks it as reviewed and gives a reason. Every such
-  exception is listed.
+  in every report, and a change that starts using a new one fails the check
+  until someone reviews it.
+- **Code that can't be analyzed ahead of time**, such as `eval`, is reported.
+  At the default strictness it's an error until a developer marks it as
+  reviewed and gives a reason. Every such exception is listed.
 - A few advanced tricks are documented, with tests, in the
   [reference](docs/reference.md#known-limits).
 
@@ -163,7 +170,8 @@ PermLang's own repository runs CodeQL too.
 **Does it run my code or send it anywhere?**
 No. It reads your source with the TypeScript compiler and never runs it. Your
 code stays on your machine or CI runner: the command-line tool makes no network
-calls, and the GitHub Action only posts its results to the pull request.
+calls, and the GitHub Action only posts its results to the pull request (and to
+code scanning, if you turn that on).
 
 **Is it free?**
 Yes. PermLang is open source under the Apache 2.0 license.
