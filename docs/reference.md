@@ -146,9 +146,11 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     (spread from something other than a `const` or a project function that returns
     them), that SQL could read any table: bare `db.read`.
   - `db`: **raw SQL clients** (`pg`, `mysql2`, `better-sqlite3`, `sqlite3`,
-    `postgres`, `@neondatabase/serverless`, `@vercel/postgres`). When the query
+    `postgres`, `@neondatabase/serverless`, `@vercel/postgres`, and Node's own
+    `node:sqlite`). When the query
     is literal text, its tables are read out of it: `SELECT ... FROM leads JOIN
-    teams` needs `db.read(leads), db.read(teams)`. Tagged templates (`` sql`...` ``)
+    teams` needs `db.read(leads), db.read(teams)`. Tagged templates (`` sql`...` ``,
+    and a `node:sqlite` tag store's `` store.all`...` ``)
     count, because their substitutions are bound parameters, unless a substitution
     is itself SQL (a postgres.js fragment or `sql(name)` helper). The reader fails
     closed: it names tables only for a single `SELECT`, `INSERT`, `UPDATE`, or

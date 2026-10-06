@@ -8,7 +8,7 @@ import { Node, SyntaxKind, type NoSubstitutionTemplateLiteral, type SourceFile, 
 import { packageOf, type AdapterIndex } from "./adapters.js";
 import { isAsset, isUrlSpecifier, loadOf, loadTarget } from "./detect/modules.js";
 import { resolveAlias, resolvedDeclaration, type CallLike } from "./detect/shared.js";
-import { SQL_PACKAGES } from "./detect/sql.js";
+import { SQL_PACKAGES, isNodeSqlite } from "./detect/sql.js";
 import { descendantsOfKind, forEachDescendant, lineAndColumn } from "./walk.js";
 
 export interface UnmappedPackage {
@@ -70,7 +70,8 @@ function calledPackage(node: CallLike): string | undefined {
     resolvedDeclaration(node) ??
     (Node.isNewExpression(node) ? newTargetDeclaration(node.getExpression()) : undefined);
   if (!declaration?.getSourceFile().isDeclarationFile() && !declaration?.getSourceFile().getFilePath().includes("/node_modules/")) return undefined;
-  return packageOf(declaration);
+  // Node's own SQLite client is detected (detect/sql.ts); the npm package called sqlite isn't.
+  return isNodeSqlite(declaration) ? "node:sqlite" : packageOf(declaration);
 }
 
 /** `require("kafkajs")`, or import() through a const: the package is used through `any`, like a call into it. */

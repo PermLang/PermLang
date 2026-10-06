@@ -10,7 +10,7 @@ import { fsCapabilities, fsFunctionName } from "./fs.js";
 import { drizzleCapabilities } from "./drizzle.js";
 import { isPrismaClient, prismaCapabilities } from "./prisma.js";
 import { containerName, isGlobalLibFunction, type CallLike } from "./shared.js";
-import { SQL_PACKAGES, sqlCapabilities } from "./sql.js";
+import { SQL_PACKAGES, isNodeSqlite, sqlCapabilities } from "./sql.js";
 
 export function declarationCapabilities(
   declaration: Node,
@@ -66,7 +66,7 @@ export function isDatabaseObject(type: Type): boolean {
       for (const d of symbol?.getDeclarations() ?? []) {
         if (!Node.isClassDeclaration(d) && !Node.isInterfaceDeclaration(d) && !Node.isTypeAliasDeclaration(d)) continue;
         const pkg = packageOf(d);
-        if ((pkg !== undefined && DATABASE_PACKAGES.has(packageName(pkg))) || isPrismaClient(d)) return true;
+        if ((pkg !== undefined && DATABASE_PACKAGES.has(packageName(pkg))) || isNodeSqlite(d) || isPrismaClient(d)) return true;
       }
     }
   }
