@@ -35,7 +35,7 @@ This writes three files. Commit all of them:
 | File | What it is |
 | --- | --- |
 | `permlang.config.json` | Settings. Starts at `"strictness": "sketch"`: everything is reported, and only a difference between the code and the lock fails, such as new access the lock doesn't record (plus any flow rules, or `"error"` policies, you add later). |
-| `permlang.lock.json` | What every function can reach today (network hosts, files, database tables, environment variables, processes), and what your workflows and `package.json` scripts grant (token permissions, secrets, Actions, install hooks). It also records which files were checked (`src` here), and the settings. |
+| `permlang.lock.json` | What every function can reach today (network hosts, files, database tables, environment variables, processes), and what your workflows and `package.json` scripts grant (token permissions, secrets, Actions, install hooks). It also records which files were checked (`src` here, and any files it imports from elsewhere), the settings, and the code PermLang can't check (packages with no adapter, imports with no types). |
 | `.github/workflows/permlang.yml` | Installs your dependencies (for their types), then runs PermLang on every pull request and comments the permission diff. |
 
 ## 3. Review what you have
@@ -50,7 +50,8 @@ Look at four things:
   trusts them. Each gets one warning (PERM006). For each one, either add an
   adapter (see [Adapter manifests](reference.md#adapter-manifests)) or declare it pure. A small
   team adapter file, listed under `"adapters"` in `permlang.config.json`, does
-  either.
+  either. The lock records them, so a pull request that starts using a new one
+  fails until it's reviewed and `permlang lock` records it.
 - **Unverifiable code** (PERM004): `eval`, `new Function`, computed calls on
   `fs` or `globalThis`, `require` of a computed path or of `child_process`,
   `data:` imports, calls into your own JavaScript through a hand-written `.d.ts`.

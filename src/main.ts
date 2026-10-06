@@ -23,7 +23,7 @@ import {
   type Strictness,
   type UnmappedPolicy,
 } from "./check.js";
-import { addedDependencies, type DependencyChange, type PackageJson } from "./deps.js";
+import { addedDependencies, overriddenDependencies, type DependencyChange, type PackageJson } from "./deps.js";
 import { commentMarker, formatDiffFailure, formatDiffMarkdown, formatDiffText, formatNoLock, SUMMARY_LIMIT, type DiffNotes, type ViaPaths } from "./diff.js";
 import { workflowArgs, workflowFile, workflowTarget } from "./init-workflow.js";
 import { LOCK_VERSION, LockError, buildLock, diffLocks, isConfigKey, keyed, lockDrift, parseLock, serializeLock, type LockFile } from "./lock.js";
@@ -33,6 +33,7 @@ import { FlowRuleError } from "./flows.js";
 import { DEFAULT_CONFIG, SettingsError, readConfig, readTsConfig, settingsEntries, type Origin, type Settings } from "./settings.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
+import { isUncheckedKey, uncheckedEntry } from "./unchecked.js";
 
 const SOURCE_EXTENSIONS = /\.(ts|tsx|mts|cts)$/;
 const ISSUES = "https://github.com/PermLang/PermLang/issues";
@@ -298,7 +299,7 @@ function lock(args: Args): number {
   if (previous && previous.permlang !== LOCK_VERSION) notes.push(`Updated ${path.basename(lockFile)} from lock format ${previous.permlang} to ${LOCK_VERSION}, which also records the check's settings.`);
   const changes = formatDiffText(diffLocks(previous, next), viaPaths(report, path.dirname(lockFile)));
   const keys = Object.keys(next.functions);
-  const functions = keys.filter((k) => !isConfigKey(k)).length;
+  const functions = keys.filter((k) => !isConfigKey(k) && !isUncheckedKey(k)).length;
   const counts = `${plural(functions, "function")}, ${plural(keys.length - functions, "configuration entry", "configuration entries")}`;
   console.log([`Wrote ${path.relative(process.cwd(), lockFile)} (${counts}).`, ...notes, changes].join("\n\n"));
   return 0;
@@ -393,17 +394,29 @@ function analyze(args: Args): Report {
     projectRoot: root,
   };
   const scope = settings.scope;
+  const selected = "project" in scope ? readTsConfig(scope.project).fileNames : scope.paths.flatMap(expand);
   let report: Report;
   try {
-    report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(scope.paths.flatMap(expand), options);
+    report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(selected, options);
   } catch (e) {
     // A flow rule can only be checked against the adapters once they're loaded.
     if (e instanceof FlowRuleError) throw new SettingsError(`${path.relative(process.cwd(), settings.configFile)}: ${e.message}`);
     throw e;
   }
-  // What the check ran on and with is recorded in the lock, like what the code reaches.
-  report.functions.push(...settingsEntries(settings, root));
+  // What the check ran on and with is recorded in the lock, like what the code reaches, and so
+  // are the files it read only because the selected ones import them, and the code it couldn't check.
+  report.functions.push(...settingsEntries(settings, root, importedFiles(report, selected)));
+  const unchecked = uncheckedEntry(report, settings.configFile, root);
+  if (unchecked.actual.length > 0) report.functions.push(unchecked);
   return report;
+}
+
+/** The files analyzed that the paths or the tsconfig.json didn't select: the ones they import. */
+function importedFiles(report: Report, selected: readonly string[]): string[] {
+  // Windows paths differ in case and separator between Node and TypeScript; the file is the same.
+  const key = (file: string) => (process.platform === "win32" ? path.resolve(file).toLowerCase() : path.resolve(file));
+  const chosen = new Set(selected.map(key));
+  return [...new Set(report.units.map((u) => u.file))].filter((file) => !chosen.has(key(file)));
 }
 
 /**
@@ -437,6 +450,8 @@ function settingsFor(args: Args): Settings {
     const targets = args.paths.length > 0 ? args.paths : ["src"];
     const missing = targets.filter((p) => !existsSync(p));
     if (missing.length > 0) throw new UsageError(`Not found: ${missing.map(printable).join(", ")}`);
+    // A check of nothing would pass.
+    if (targets.flatMap(expand).length === 0) throw new UsageError(`No TypeScript files in ${targets.map(printable).join(", ")}.`);
     scope = { paths: targets, given: args.paths.length > 0 };
   }
   return {
@@ -480,10 +495,10 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
 }
 
 /**
- * Packages the change adds to ./package.json, or installs from another source, for review. A
- * package.json that's missing or isn't a JSON object means no dependency section, and adapters
- * that can't be loaded (which fails the analysis, and the comment says so) are left out. The
- * commits were read already, so a failure to read them here is an error.
+ * Packages the change adds to ./package.json, installs from another source, or overrides, for
+ * review. A package.json that's missing or isn't a JSON object means no dependency section, and
+ * adapters that can't be loaded (which fails the analysis, and the comment says so) are left out.
+ * The commits were read already, so a failure to read them here is an error.
  */
 function dependencyChanges(base: string, args: Args): DependencyChange[] {
   const head = parsePackage(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
@@ -492,7 +507,9 @@ function dependencyChanges(base: string, args: Args): DependencyChange[] {
     const file = path.join("node_modules", name, "package.json");
     return existsSync(file) ? parsePackage(readFileSync(file, "utf8")) : undefined;
   };
-  return addedDependencies(parsePackage(fileAt(base, "package.json")?.text), head, dependencyAdapters(args), installed);
+  const before = parsePackage(fileAt(base, "package.json")?.text);
+  const adapters = dependencyAdapters(args);
+  return [...addedDependencies(before, head, adapters, installed), ...overriddenDependencies(before, head, adapters, installed)];
 }
 
 function parsePackage(text: string | undefined): PackageJson | undefined {
