@@ -517,7 +517,10 @@ may *go*: "the Stripe key may only be sent to Stripe".
 host sends back), with or without a scope. `to` lists the network hosts it may
 go to. Anything else, such as `"to": ["fs.write(./public)"]` or `"from": "exec"`,
 is a configuration error, and so is a misspelled setting in a rule: none of them
-could ever match.
+could ever match. A host is written as calls report it, without a scheme, port,
+path, or user: `net(api.stripe.com)`, not `net(https://api.stripe.com)`,
+`net(api.stripe.com:443)`, or `net(api.stripe.com/v1)`, which are configuration
+errors too (an IPv6 address goes in brackets, `net([::1])`).
 
 A function that gets hold of the `from` data, and can send it somewhere `to`
 doesn't allow, is a `PERM009` error. "Somewhere" is:

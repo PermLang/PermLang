@@ -132,7 +132,21 @@ describe("data-flow rules in permlang.config.json", () => {
     [{ from: "fs.write(./out)", to: [] }, /"from" must be data a function can read/],
     [{ from: "db.write(users)", to: [] }, /"from" must be data a function can read/],
     [{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com)"], too: ["net(evil.example)"] }, /flows\[0\] has an unknown setting "too"; a rule has only "from" and "to"\./],
+    // Found in re-verification: calls are matched by host only, so these never matched and
+    // failed the calls they were meant to allow.
+    [{ from: "env(STRIPE_KEY)", to: ["net(https://api.stripe.com)"] }, /flows\[0\]: "net\(https:\/\/api\.stripe\.com\)" names more than a host\. A rule matches the host a call connects to, whatever its scheme, port, or path: write "net\(api\.stripe\.com\)"\./],
+    [{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com/v1)"] }, /"net\(api\.stripe\.com\/v1\)" names more than a host.*write "net\(api\.stripe\.com\)"/],
+    [{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com:443)"] }, /"net\(api\.stripe\.com:443\)" names more than a host.*write "net\(api\.stripe\.com\)"/],
+    [{ from: "env(STRIPE_KEY)", to: ["net(key@api.stripe.com)"] }, /names more than a host.*write "net\(api\.stripe\.com\)"/],
+    [{ from: "env(STRIPE_KEY)", to: ["net(::1)"] }, /"net\(::1\)" names more than a host.*write only the host, such as "net\(api\.stripe\.com\)" or "net\(\[::1\]\)"\./],
+    [{ from: "net(https://api.internal.example/v1)", to: [] }, /flows\[0\]: "net\(https:\/\/api\.internal\.example\/v1\)" names more than a host.*write "net\(api\.internal\.example\)"/],
   ])("rejects %j", (rule, reason) => {
     expect(() => parse([rule])).toThrow(reason);
+  });
+
+  it("takes hosts as calls report them", () => {
+    for (const host of ["api.stripe.com", "API.Stripe.com", "[::1]", "localhost", "127.0.0.1"]) {
+      expect(parse([{ from: "env(STRIPE_KEY)", to: [`net(${host})`] }])[0]!.to).toEqual([{ name: "net", arg: host }]);
+    }
   });
 });

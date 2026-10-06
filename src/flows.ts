@@ -42,13 +42,34 @@ export function parseFlows(raw: unknown, source: string): FlowRule[] {
     if (!SOURCES.includes(from.name)) {
       throw new Error(`${source}: flows[${i}]: "from" must be data a function can read: env, fs.read, db.read, or net, with or without a scope; "${r.from}" isn't.`);
     }
+    hostOnly(from, `flows[${i}]`, source);
     const to = (r.to as string[]).map((t) => {
       const sink = one(t, `flows[${i}]: invalid "to" entry`, source);
       if (sink.name !== "net") throw new Error(`${source}: flows[${i}]: "to" can only list network hosts, such as "net(api.stripe.com)"; "${t}" isn't one.`);
-      return sink;
+      return hostOnly(sink, `flows[${i}]`, source);
     });
     return { from, to };
   });
+}
+
+/**
+ * A `net` scope must be a host as calls report it (detect/shared.ts, hostOf): the host a call
+ * connects to, never its scheme, port, path, or user. `net(https://api.stripe.com)` or
+ * `net(api.stripe.com:443)` could never match, and would fail the calls it was meant to allow.
+ * An IPv6 address is written in brackets, as URLs write it: `net([::1])`.
+ * @throws Error naming the host to write instead.
+ */
+function hostOnly(capability: Capability, where: string, source: string): Capability {
+  const arg = capability.arg;
+  if (capability.name !== "net" || arg === undefined || !/[/:@?#\s\\]/.test(arg.replace(/^\[[^\]]*\]$/, ""))) return capability;
+  let host: string | undefined;
+  try {
+    host = new URL(arg.includes("://") ? arg : `x://${arg}`).hostname || undefined;
+  } catch {
+    host = undefined;
+  }
+  const instead = host ? `write "net(${host})"` : `write only the host, such as "net(api.stripe.com)" or "net([::1])"`;
+  throw new Error(`${source}: ${where}: "${formatCapability(capability)}" names more than a host. A rule matches the host a call connects to, whatever its scheme, port, or path: ${instead}.`);
 }
 
 function one(text: string, what: string, source: string): Capability {
