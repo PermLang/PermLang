@@ -187,7 +187,13 @@
     "src/package-files.ts#folders": [
       "fs.read"
     ],
+    "src/package-files.ts#readManifest": [
+      "fs.read"
+    ],
     "src/package-files.ts#workspaceFolders": [
+      "fs.read"
+    ],
+    "src/package-files.ts#workspacePatterns": [
       "fs.read"
     ],
     "src/project-files.ts#Entry.constructor": [
