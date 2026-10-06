@@ -62,15 +62,29 @@ organized.
    `npm run permlang -- check src`. If PermLang's check on itself reports new
    access, that's expected when the change adds some: declare it in `@perm`,
    then run `npm run permlang -- lock src` and commit `permlang.lock.json`.
+   PermLang's code is also checked by its last release, against a lock of its
+   own (see below): run
+   `npm run permlang:released -- lock src --lock permlang.released.lock.json`
+   too, and commit `permlang.released.lock.json`.
 5. **Update the docs and [CHANGELOG.md](CHANGELOG.md)** when behaviour changes,
    including any new known limit.
 6. **Open a pull request.** Every check must pass before it can merge.
 
-PermLang checks its own pull requests with the pull request's own copy of the
-Action (`uses: ./` in `.github/workflows/permlang.yml`), so a change to PermLang
-can change how its own check runs. Checking with the last release instead is a
-planned follow-up; until then, reviewers read changes to `src/` and `action.yml`
-with that in mind.
+PermLang checks its own pull requests twice
+([`.github/workflows/permlang.yml`](.github/workflows/permlang.yml)):
+
+- with the pull request's own copy of the Action (`uses: ./`), so a change to
+  PermLang is tried on PermLang itself, against `permlang.lock.json`;
+- with the last release, pinned to its commit, against
+  `permlang.released.lock.json`, which that release wrote. A pull request can't
+  change the code that runs this check, so it can't change how its own new
+  access is judged. A change to what PermLang detects changes what the new
+  version sees in this code, but not what the release sees, so this lock only
+  changes when PermLang's own code does.
+
+`npm run permlang:released` runs that release, whichever version the workflow
+pins. When Dependabot moves the pin to a new release, relock with it in the same
+pull request.
 
 ## Versions
 

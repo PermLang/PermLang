@@ -10,6 +10,11 @@ The npm package is `permlang`, owned by the npm user `parkweb`, with the
    The release runs the same tests and stops before publishing if they fail.
 2. On GitHub, create a release with the tag `v<version>`, including the `v`
    (for example `v0.4.1`), on `main`.
+3. Afterwards, Dependabot proposes moving PermLang's own check to the new
+   release (the `released` job in `.github/workflows/permlang.yml`). In that
+   pull request, run
+   `npm run permlang:released -- lock src --lock permlang.released.lock.json`
+   and commit the lock, if the new release sees PermLang's code differently.
 
 The [release workflow](../.github/workflows/release.yml) runs in two jobs:
 

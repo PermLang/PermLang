@@ -55,6 +55,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "permlang": "tsx src/cli.ts",
+    "permlang:released": "node scripts/permlang-released.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
