@@ -208,6 +208,10 @@ PermLang from npm, update it first (`npm install --save-dev permlang@^0.4.0`):
   file that can't be analyzed is unverifiable instead of stopping the run.
   Propagation is linear: a 16,000-function call chain takes about 6 seconds
   instead of 30.
+- **Files on more than one drive.** On Windows, a check given files on more
+  than one drive (through the library's `checkFiles`, or folders on two drives
+  on the command line) left some of them out without a word. Every file given
+  is now checked.
 
 ### Fixed: workflows and `package.json` scripts
 
