@@ -225,6 +225,27 @@ them by what the code says, not by names:
   that could be used as one, since TypeScript doesn't require `implements`. A
   generic type is compared by the members it requires. Members declared as
   function-typed properties (`send: (u: string) => void`) count like methods.
+- **Callable types and collections of functions.** A call through a callable
+  interface or type alias (`interface Runner { (cmd: string): void }`,
+  `type Runner = (cmd: string) => void`), or through the function type of a
+  collection's entries (`ops.get(name)!(arg)` on a
+  `Map<string, (arg: string) => void>`, `handlers.forEach((h) => h(x))` on a
+  `Handler[]`, or a `Map` whose type TypeScript inferred from a function in it),
+  reaches every function written against that type: one whose type comes from
+  it (`const shell: Runner = (cmd) => ...`, an entry of the collection,
+  `ops.set("run", (arg) => ...)`), or a named function put where it's expected
+  (`ops.set("run", shell)`, `const runners: Runner[] = [shell]`). An anonymous
+  function reached this way is named by where it is (`<function at ops.ts:4>`);
+  the code around it is charged with what it does, as before. Unlike classes
+  and interfaces, a function that merely fits the type isn't counted: nearly
+  every function fits a call signature. A function type written for a
+  parameter (`function apply(run: (cmd: string) => void)`, or
+  `jobs: Array<() => void>`) isn't followed this way: a callback runs as part of
+  the code that passes it, which already reaches it. A callable type alias is
+  followed wherever it's used, parameters included, so a function that calls
+  what it's given through one (`function retry(job: Job)`) reaches every
+  function written against that alias, as a call through an interface reaches
+  every implementation.
 - **Objects of functions handed to a call.** A function that passes an object
   holding functions (`app.use({ run(q) {...} })`, or a `const` holding one,
   nested in arrays and objects too) reaches those functions. Handed out by a
@@ -281,12 +302,36 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 | a file in the project | its top-level code runs, and any of its exports can be called: the caller reaches all of them |
 | a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
 | a package with no adapter | listed and warned about (PERM006), like an import of it |
-| a package declared pure, JSON, or another asset | nothing |
+| a package declared pure, or data (see below) | nothing |
 | a specifier that can't be traced, or a file outside the project | unverifiable |
 
 `data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
 every form of import: the code isn't a file in the project. A query or fragment
 doesn't make a script an asset (`./evil.js?x=.css` is still `./evil.js`).
+
+Which files are data depends on what loads them:
+
+- **An ES import** (`import`, `export ... from`, or `import()`, in a file
+  TypeScript emits as an ES module): a stylesheet, an image, JSON, or another
+  asset is data. A bundler loads it as what it is, and Node's ES module loader
+  doesn't run it.
+- **`require()`**, `import x = require()`, and imports in a file TypeScript
+  compiles to CommonJS: only a `.json` file that exists is data. Node runs any
+  other file as JavaScript, and adds `.js` to a path that doesn't exist, so
+  `require("./theme.css")` runs `./theme.css`, or `./theme.css.js`, and
+  `require("./data.json")` runs `./data.json.js` when there's no `./data.json`.
+  Such a `require()` is unverifiable (PERM004), and such an import is one whose
+  types can't be found (PERM007). The extension must be exactly `.json`:
+  `./data.JSON` runs as JavaScript too.
+
+A file is compiled to CommonJS when `"module"` is `commonjs` (or AMD, UMD, or
+unset with a target before ES2015), when it's a `.cts` file, or, with `node16`
+or later, when its `package.json` doesn't say `"type": "module"`. There,
+`import()` stays an ES import. When the check is given paths instead of a
+tsconfig.json, files are read with bundler settings (ES modules), so in a
+project compiled to CommonJS, check with `--project tsconfig.json` to have its
+imports of asset-looking files reported. A `require()` is held to the CommonJS
+rule either way.
 
 ### Known limits
 
@@ -340,6 +385,19 @@ so the list can't go stale.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that
   assigns them is still reported.
+- A function is linked to calls through a callable type or a collection only
+  when it's written against that type (see
+  [how calls are followed](#how-calls-are-followed)). Not linked: a function
+  that only fits the type, and reaches the call some other way (from outside
+  the project, say, or through `any`); a function put in a collection through a
+  parameter of a function type of its own
+  (`function add(job: () => void) { jobs.set("x", job); }`); and a collection
+  with no function type (`new Map()` with no type arguments is a
+  `Map<any, any>`, so calls through it can't be resolved at all). The code that
+  makes the function is charged with what it does either way. A call through an
+  array entry picked by a computed index (`handlers[i]()`) is unverifiable.
+  Matching every function that fits instead would link nearly every function:
+  any function with no parameters fits `() => void`.
 - Implicit calls made inside a library function: `Promise.resolve(x)` calling
   `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
@@ -374,17 +432,41 @@ Other gaps, not yet in fixtures:
   into it are unverifiable, but importing it (which runs its top-level code) isn't
   reported, and neither is reading a property it declares. To have it checked,
   convert it to TypeScript; PermLang doesn't analyze the `.js` even with
-  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe the
-  runtime (`declare global`, a `.d.ts` with no imports or exports) or a package
-  (`declare module "x"`, a folder with its own `package.json`, such as a
-  generated Prisma client) are trusted like a package with no adapter.
+  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe a
+  package (`declare module "x"`, or a `.d.ts` in a folder with its own
+  `package.json`) are trusted like a package with no adapter: listed and warned
+  about (PERM006; see [packages without an adapter](#packages-without-an-adapter)).
+  Declarations that describe the runtime (`declare global`, or a `.d.ts` with no
+  imports or exports) are trusted without being listed, as what the runtime
+  provides: a global function declared there, and defined by a script the page
+  or process loads, isn't checked.
+- A client prisma-client-js generates into a folder of the project's is covered
+  by the Prisma detector, as `@prisma/client` is, and nothing in that folder is
+  listed. PermLang recognizes it by what Prisma writes there (its `index.d.ts`
+  imports Prisma's runtime as `runtime`; Prisma's header isn't enough), and
+  can't tell a real generated client from a forged one: a folder with a
+  `package.json`, a `.d.ts` that imports a `./runtime/` file that way, and
+  JavaScript that does anything else passes as one. Review changes to a
+  generated client's folder as you would any code.
 - `require()` of a package an adapter maps is unverifiable, rather than reaching
   the capabilities the adapter lists; use `import` to have its calls checked.
+- Checked by paths rather than a tsconfig.json, every file is read as an ES
+  module, as a bundler would load it. So in a project compiled to CommonJS, an
+  `import "./theme.css"`, which runs `./theme.css.js` when `./theme.css` doesn't
+  exist, isn't reported; check it with `--project tsconfig.json`. (PermLang
+  can't tell from the files alone: many bundled projects have no
+  `"type": "module"` either.) A `.cts` file, and `require()`, are held to
+  CommonJS's rules either way ([loading modules](#loading-modules)).
 - A file loaded with `require()` or a traced `import()` reaches every export of
   that file, used or not.
 - Interfaces are matched structurally, so a class or object literal that merely
   fits an interface counts as an implementation of it, even if it's never used
-  as one.
+  as one. Matching compares every interface a call goes through with every
+  class and object literal that has a member of that name, once per interface
+  and member, and each such call is linked to every match. That's quick for
+  real code, but grows with the product of the two: a thousand interfaces of
+  one shape, a thousand classes that fit all of them, and a call through each
+  interface take about ten seconds to check.
 - A file that TypeScript itself can't parse (code nested thousands of levels
   deep) is unverifiable when the project's file list includes it. One reached
   only through imports from outside that list still stops the check.
@@ -467,8 +549,8 @@ file along with the paths checked, so changing them fails the check until
 | `PERM003` | error | A function that must declare its permissions has no `@perm`: exported functions at development, every function at production. See [strictness levels](#strictness-levels). |
 | `PERM004` | error | Code whose effects can't be determined statically, such as `eval` or a capability hidden behind `any`. |
 | `PERM005` | error | The code and `permlang.lock.json` differ: the code reaches something the lock doesn't record, or the lock records something the code no longer reaches; a `@perm-unsafe` override is new, gone, or has another reason; the check ran on other files or with other settings than the lock records; the lock is missing (with `--require-lock`, or `--base` when the base commit has it); the change stops checking with the base commit's lock file (with `--base`); or an older PermLang wrote it. See [the lock file](#the-lock-file-and-the-permission-diff). |
-| `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
-| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. Also the global `process` when Node's types are missing (reported as `node:process`). |
+| `PERM006` | warning, by default | A call into a package with no adapter, installed or a folder of the project's with its own `package.json`: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
+| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked, including an import of an asset-looking file where it compiles to `require()` (see [loading modules](#loading-modules)). Also the global `process` when Node's types are missing (reported as `node:process`). |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
 | `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC005` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
@@ -826,6 +908,19 @@ lists these packages with their call counts, and each one gets a warning
 A package that touches nothing PermLang tracks is declared pure with an adapter
 whose `default` is `[]`. [`adapters/pure.json`](../adapters/pure.json) does this for
 Node's pure built-ins and common libraries (zod, date-fns, React, ...).
+
+A folder of the project's with its own `package.json` is a package too: a client
+generated into the project, or a workspace package that an import reaches
+through a link. PermLang reads its `.d.ts` files but not its JavaScript, so a
+call into it is listed and warned about like a call into an installed package,
+named by its `package.json`'s `name` (or by its folder, such as `./src/gen`,
+when it has none), wherever it's imported from. Since that `name` could claim
+to be any package, only your own adapters (in `"adapters"`) cover such a folder:
+a folder named `lodash` isn't pure, and one named `@prisma/client` isn't read as
+Prisma. An adapter of yours covers every folder that takes its package's name,
+so review a new `package.json` in the repository as you would code. The
+exception is a client prisma-client-js generates there, which the Prisma
+detector covers (see [known limits](#known-limits)).
 
 Built-in adapters cover axios, Stripe, nodemailer, `node-fetch`, `undici`, Redis
 (`redis`, `ioredis`), Kafka, Bull/BullMQ, ClickHouse, AI SDKs (`ai`, `openai`,
@@ -1359,8 +1454,8 @@ src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
 src/detect/         direct uses: fetch, fs, env, browser and Node globals, Prisma, Drizzle, SQL, adapter-mapped calls, values, module loads, unverifiable code
-src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes
-src/units.ts        functions, methods, and files that permissions attach to
+src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes, and functions through callable types and collections
+src/units.ts        functions, methods, and files that permissions attach to, and which folders are packages
 src/graph.ts        the call graph and propagation along it
 src/walk.ts         walking syntax trees without recursion, and finding positions in them
 src/load.ts         building the ts-morph project, setting aside files that can't be parsed

@@ -6,6 +6,9 @@
 //   - the declaration a call resolves to, which covers `super()`, literal
 //     computed keys (`api["ping"]()`), and calls through const aliases;
 //   - every implementation a call through an interface or base class may reach;
+//   - every function written against a callable interface or type alias, or a
+//     collection of functions, that a call goes through (`ops.get(name)!()`); an
+//     anonymous one stands for the part of its unit inside it (see check.ts);
 //   - every member a computed key could select (`handlers[kind]()`);
 //   - a class's implicit constructor running its base constructor;
 //   - importing a module, which runs its top-level code;
@@ -51,8 +54,15 @@ export interface GraphContext {
 
 export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] {
   const edges: Edge[] = [];
+  // A call through an interface can have thousands of implementations: find its unit once.
+  const enclosing = new Map<Node, Node>();
+  const unitAround = (node: Node) => {
+    let found = enclosing.get(node);
+    if (!found) enclosing.set(node, (found = enclosingUnitNode(node)));
+    return found;
+  };
   const add = (fromNode: Node, target: Node | undefined, site: Node, text: string) => {
-    const from = ctx.unitOf(enclosingUnitNode(fromNode));
+    const from = ctx.unitOf(unitAround(fromNode));
     const to = target && ctx.unitOf(target);
     if (!from || !to) return;
     const { line, column } = lineAndColumn(sourceFile, site.getStart());
@@ -212,6 +222,7 @@ export function collectEdges(sourceFile: SourceFile, ctx: GraphContext): Edge[] 
     if (declaration) {
       add(call, unitNodeForDeclaration(declaration), call, text);
       for (const impl of ctx.hierarchy.implementations(declaration)) add(call, impl, call, text);
+      for (const fn of ctx.hierarchy.functionsCalledThrough(declaration)) add(call, fn, call, text);
     }
 
     const computed = computedCallee(call);

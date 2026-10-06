@@ -98,6 +98,7 @@
       "fs.read"
     ],
     "src/init-workflow.ts#isOwn": [
+      "exec",
       "fs.read"
     ],
     "src/init-workflow.ts#read": [
@@ -132,7 +133,19 @@
     "src/lock-moves.ts#here": [
       "fs.read"
     ],
+    "src/lock-moves.ts#isPermLang": [
+      "exec",
+      "fs.read"
+    ],
+    "src/lock-moves.ts#locksRead": [
+      "exec",
+      "fs.read"
+    ],
     "src/lock-moves.ts#movedLocks": [
+      "exec",
+      "fs.read"
+    ],
+    "src/lock-moves.ts#permLangSteps": [
       "exec",
       "fs.read"
     ],
