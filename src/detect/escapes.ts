@@ -15,9 +15,12 @@
 //   - A capability module: any value whose type is one (a namespace or default
 //     import, `import cp = require(...)`, the result of `await import(...)` or
 //     `process.getBuiltinModule(...)`, or a module of the project's own that
-//     re-exports one). Named members are looked up the same way. Any other escape
-//     (a computed member, storing it, passing it on as `any` or `unknown`,
-//     enumerating it with `Object.values`) loses track of it, and is unverifiable.
+//     re-exports one). Named members are looked up the same way; one that's called
+//     or constructed returns `any` too, so a result that reaches a capability
+//     (`new (pg as any).Client()`) is unverifiable. Any other escape (a computed
+//     member, storing it, passing it on as `any` or `unknown` or to a generic or
+//     mapped parameter, copying it with a spread, enumerating it with
+//     `Object.values`) loses track of it, and is unverifiable.
 //
 // A cast through `unknown` to a hand-written type (`x as unknown as { exec(): void }`)
 // erases the original type just like `any` does, and is treated the same.
