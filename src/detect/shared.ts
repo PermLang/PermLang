@@ -3,7 +3,6 @@
 import {
   Node,
   SyntaxKind,
-  ts,
   type CallExpression,
   type NewExpression,
   type ObjectLiteralExpression,
@@ -14,6 +13,7 @@ import {
   type Type,
 } from "ts-morph";
 import type { Capability } from "../capability.js";
+import { emitsCommonJs } from "./module-format.js";
 
 export type CallLike = CallExpression | NewExpression | TaggedTemplateExpression;
 
@@ -195,16 +195,6 @@ function exportsWritten(file: SourceFile): boolean {
       : undefined;
     return name !== undefined && isWritten(name);
   }));
-}
-
-/** Whether a file is compiled to CommonJS, where its exports are a plain object. */
-function emitsCommonJs(file: SourceFile): boolean {
-  const format = file.compilerNode.impliedNodeFormat;
-  if (format !== undefined) return format === ts.ModuleKind.CommonJS;
-  const options = file.getProject().getCompilerOptions();
-  const fallback = (options.target ?? ts.ScriptTarget.ES5) >= ts.ScriptTarget.ES2015 ? ts.ModuleKind.ES2015 : ts.ModuleKind.CommonJS;
-  const kind = options.module ?? fallback;
-  return kind === ts.ModuleKind.CommonJS || kind === ts.ModuleKind.AMD || kind === ts.ModuleKind.UMD;
 }
 
 /** Whether one reference to an object writes to it. */
