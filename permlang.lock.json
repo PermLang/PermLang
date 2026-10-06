@@ -131,7 +131,7 @@
     ],
     "src/main.ts#gitRoot": [
       "exec",
-      "fs.write"
+      "fs.read"
     ],
     "src/main.ts#init": [
       "exec",
@@ -182,7 +182,7 @@
     ],
     "src/main.ts#workflowTarget": [
       "exec",
-      "fs.write"
+      "fs.read"
     ],
     "src/package-files.ts#folders": [
       "fs.read"
