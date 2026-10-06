@@ -31,6 +31,9 @@ describe("data-flow rules", () => {
       "error viaExec:89 exec",
       "error viaEval:94 unverifiable",
       "error viaUnsafe:138 unverifiable",
+      "error viaHeaders:151 net(evil.example)",
+      "error viaStore:162 net(evil.example)",
+      "error viaElements:180 net(evil.example)",
       "error viaEmail:7 email.send",
       "error viaUnmapped:12 sneaky-http",
       "error viaUnmappedHelper:21 sneaky-http",
@@ -54,6 +57,14 @@ describe("data-flow rules", () => {
     expect(message("viaField").message).toContain("viaField gets env(STRIPE_KEY) from Keys.stripe and can send to net(evil.example)");
     expect(message("viaCallback").message).toMatch(/^viaCallback gets env\(STRIPE_KEY\) from withKey and can send to net\(evil\.example\)/);
     expect(message("viaClient").message).toMatch(/^viaClient gets env\(STRIPE_KEY\) from StripeClient\.constructor and can send/);
+  });
+
+  // Found in re-verification: a function that returns nothing can still write the key into an
+  // object its caller passes in, and the docs said it couldn't.
+  it("follows the source back through an object the caller passes in", () => {
+    expect(message("viaHeaders").message).toMatch(/^viaHeaders gets env\(STRIPE_KEY\) from authorize and can send to net\(evil\.example\)/);
+    expect(message("viaStore").message).toMatch(/^viaStore gets env\(STRIPE_KEY\) from loadInto and can send to net\(evil\.example\)/);
+    expect(message("viaElements").message).toMatch(/^viaElements gets env\(STRIPE_KEY\) from tagLines and can send/);
   });
 
   it("treats a command, or code that can't be verified, as able to send it anywhere", () => {
@@ -122,11 +133,15 @@ describe("data-flow rules", () => {
     expect(functions).not.toContain("refund");
     // It assigns to a setter that uses the key: a setter returns nothing.
     expect(functions).not.toContain("configure");
+    // It passes an object to one that only reads it (fields, and methods that change nothing).
+    expect(functions).not.toContain("checkoutOrder");
+    // It calls a logger that takes a string.
+    expect(functions).not.toContain("logged");
   });
 
   // Found in review: sketch, which init sets up, turned these into warnings, so a broken rule passed.
   it("fails at every strictness level, sketch included", () => {
-    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(15).fill("error"));
+    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(18).fill("error"));
   });
 
   it("checks nothing without rules", () => {

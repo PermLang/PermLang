@@ -11,11 +11,11 @@
 // follow the value: a key stored somewhere (a module-level constant, an object's field) and
 // read by other code isn't caught.
 
-import { Node, SyntaxKind, type ParameterDeclaration, type SourceFile, type Type } from "ts-morph";
+import { Node, SyntaxKind, ts, type CallExpression, type ParameterDeclaration, type SourceFile, type Type } from "ts-morph";
 import type { AdapterIndex } from "./adapters.js";
 import { BUILTIN_VOCABULARY, CAPABILITY_NAME, UNVERIFIABLE, covers, formatCapability, parsePermList, type Capability } from "./capability.js";
 import type { Diagnostic } from "./check.js";
-import { callText } from "./detect/shared.js";
+import { callText, unwrapExpression } from "./detect/shared.js";
 import { pathTo, type Edge, type Reach } from "./graph.js";
 import { unmappedCalls } from "./unmapped.js";
 import { untypedImportUses } from "./unseen.js";
@@ -236,12 +236,15 @@ function holders(units: Iterable<Unit>, edges: readonly Edge[], rule: FlowRule):
   for (const unit of units) {
     if (unit.uses.some((u) => covers([rule.from], u.capability) || covers([u.capability], rule.from))) has.set(unit, []);
   }
+  // Worked out once per unit: the fixed point below asks again on every pass.
+  const known = new Map<Unit, boolean>();
+  const canHandBack = (unit: Unit) => known.get(unit) ?? known.set(unit, handsBack(unit)).get(unit)!;
   // Fixed point: each pass can only add units, so it ends.
   for (let changed = true; changed; ) {
     changed = false;
     for (const edge of edges) {
       const from = has.get(edge.to);
-      if (from === undefined || has.has(edge.from) || !handsBack(edge.to)) continue;
+      if (from === undefined || has.has(edge.from) || !canHandBack(edge.to)) continue;
       has.set(edge.from, [edge.to.name, ...from]);
       changed = true;
     }
@@ -251,21 +254,140 @@ function holders(units: Iterable<Unit>, edges: readonly Edge[], rule: FlowRule):
 
 /**
  * Whether what a unit has can come back to its caller: through a return value, a callback the
- * caller passed in, the object a constructor builds, or a module's exports. A function that
- * returns nothing (`void`) and takes no callback can't hand anything back, which keeps a caller
- * of `chargeCustomer(): Promise<void>` from being flagged for what it sends elsewhere.
+ * caller passed in, an object the caller passed in that it can write to, the object a
+ * constructor builds, or a module's exports. A function that returns nothing (`void`), takes
+ * no callback, and only reads what it's given can't hand anything back, which keeps a caller
+ * of `chargeCustomer(order): Promise<void>` from being flagged for what it sends elsewhere.
  */
 function handsBack(unit: Unit): boolean {
   const node = unit.node;
-  if (Node.isSetAccessorDeclaration(node)) return false;
+  if (Node.isSetAccessorDeclaration(node)) return node.getParameters().some((p) => writableArgument(p, 0));
   const fn = Node.isVariableDeclaration(node) || Node.isPropertyAssignment(node) || Node.isPropertyDeclaration(node) ? node.getInitializer() : node;
   // A module (its exports) or a constructor (the object it builds), explicit or implicit.
   if (!fn || !(Node.isFunctionDeclaration(fn) || Node.isMethodDeclaration(fn) || Node.isGetAccessorDeclaration(fn) || Node.isArrowFunction(fn) || Node.isFunctionExpression(fn))) {
     return true;
   }
-  if (fn.getParameters().some((p) => p.getType().getCallSignatures().length > 0 || p.getType().getUnionTypes().some((t) => t.getCallSignatures().length > 0))) return true;
+  if (fn.getParameters().some((p) => isCallable(p.getType()) || writableArgument(p, 0))) return true;
   return !returnsNothing(fn.getReturnType());
 }
+
+function isCallable(type: Type): boolean {
+  return type.getCallSignatures().length > 0 || type.getUnionTypes().some((t) => t.getCallSignatures().length > 0);
+}
+
+// --- objects handed back through ------------------------------------------------
+//
+// A function that returns nothing can still hand data back by writing it into an object its
+// caller passes in: `authorize(headers)` setting `headers.authorization`, or `load(store)`
+// calling `store.set(key)`. So a parameter counts unless every use of it only reads: a
+// field's value (`order.total`), a method that changes nothing (`items.join(",")`, with
+// callbacks that only read too), or a test (`if (!order)`). Anything else (an assignment, any
+// other method, passing it on, storing it) could write to it. A primitive can't carry
+// anything back.
+
+/** Methods of the standard library's arrays, maps, sets, strings, and objects that change nothing. */
+const READS_ONLY = new Set([
+  "at", "concat", "entries", "every", "filter", "find", "findIndex", "findLast", "findLastIndex", "flat", "flatMap",
+  "forEach", "get", "has", "includes", "indexOf", "join", "keys", "lastIndexOf", "map", "reduce", "reduceRight",
+  "slice", "some", "toLocaleString", "toReversed", "toSorted", "toSpliced", "toString", "values", "valueOf", "with",
+  "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable",
+]);
+
+const PRIMITIVE = ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.EnumLike |
+  ts.TypeFlags.ESSymbolLike | ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void | ts.TypeFlags.Never;
+
+/** A value that can't hold an object: a primitive, or a union of them. */
+function isPrimitive(type: Type): boolean {
+  return type.isUnion() ? type.getUnionTypes().every(isPrimitive) : (type.getFlags() & PRIMITIVE) !== 0;
+}
+
+/** Whether a function could write data into what's passed as this parameter (or the parts it destructures). */
+function writableArgument(parameter: ParameterDeclaration, depth: number): boolean {
+  // Callbacks inside callbacks inside callbacks: stop looking, and assume the worst.
+  if (depth > 4) return true;
+  const nameNode = parameter.getNameNode();
+  const names = Node.isIdentifier(nameNode) ? [nameNode] : parameter.getDescendantsOfKind(SyntaxKind.BindingElement).map((e) => e.getNameNode()).filter(Node.isIdentifier);
+  const body = parameter.getParent();
+  return names.some((name) => {
+    if (isPrimitive(name.getType())) return false;
+    const symbol = name.getSymbol()?.compilerSymbol;
+    return body.getDescendantsOfKind(SyntaxKind.Identifier).some((id) => id !== name && referenceSymbol(id) === symbol && writesThrough(id, depth));
+  });
+}
+
+/** The symbol of the variable an identifier refers to; for `{ order }` shorthand, the variable's. */
+function referenceSymbol(id: Node) {
+  const parent = id.getParent();
+  return (parent && Node.isShorthandPropertyAssignment(parent) ? parent.getValueSymbol() : id.getSymbol())?.compilerSymbol;
+}
+
+/** Whether one use of an object could write to it. See the section comment. */
+function writesThrough(reference: Node, depth: number): boolean {
+  // The member it reads: `order`, `order.lines`, `order["id"]`, `order!.id`, `order?.lines`.
+  let chain = reference;
+  for (let parent = chain.getParent(); parent; parent = chain.getParent()) {
+    const member = (Node.isPropertyAccessExpression(parent) || Node.isElementAccessExpression(parent)) && parent.getExpression() === chain;
+    if (!member && !Node.isNonNullExpression(parent) && !Node.isParenthesizedExpression(parent)) break;
+    chain = parent;
+  }
+  const parent = chain.getParent()!;
+  if (isWrittenTo(chain)) return chain !== reference || !Node.isBinaryExpression(parent);
+  if (Node.isCallExpression(parent) && parent.getExpression() === chain) return callWrites(chain, parent, depth);
+  // Its value used: harmless when it's a primitive, or only tested.
+  return !isPrimitive(chain.getType()) && !onlyTested(chain, parent);
+}
+
+/** `p.x = v`, `p.x += v`, `delete p.x`, `p.x++`, and the like. (Assigning to the parameter itself only changes the function's copy.) */
+function isWrittenTo(node: Node): boolean {
+  const parent = node.getParent();
+  if (!parent) return false;
+  if (Node.isDeleteExpression(parent)) return true;
+  if (Node.isPrefixUnaryExpression(parent) || Node.isPostfixUnaryExpression(parent)) {
+    return parent.getOperatorToken() === SyntaxKind.PlusPlusToken || parent.getOperatorToken() === SyntaxKind.MinusMinusToken;
+  }
+  if (!Node.isBinaryExpression(parent) || parent.getLeft() !== node) return false;
+  const operator = parent.getOperatorToken().getKind();
+  return operator >= SyntaxKind.FirstAssignment && operator <= SyntaxKind.LastAssignment;
+}
+
+/** A method called on the object, or on one of its members: harmless only for the standard library's that change nothing. */
+function callWrites(callee: Node, call: CallExpression, depth: number): boolean {
+  // Calling the parameter itself: a callback, counted already, or something that could keep what it's given.
+  if (!Node.isPropertyAccessExpression(callee)) return true;
+  if (isPrimitive(callee.getExpression().getType())) return false; // `order.id.toUpperCase()`
+  const declarations = callee.getNameNode().getSymbol()?.getDeclarations() ?? [];
+  const standard = declarations.length > 0 && declarations.every((d) => isStandardLibrary(d.getSourceFile()));
+  if (!standard || !READS_ONLY.has(callee.getName())) return true;
+  // `lines.forEach((line) => { line.note = key; })` writes into the elements.
+  return call.getArguments().some((a) => {
+    const arg = unwrapExpression(a);
+    if (Node.isArrowFunction(arg) || Node.isFunctionExpression(arg)) return arg.getParameters().some((p) => writableArgument(p, depth + 1));
+    return isCallable(arg.getType()) && !isStandardLibrary(arg.getSymbol()?.getDeclarations()[0]?.getSourceFile());
+  });
+}
+
+/** TypeScript's own lib files (lib.es5.d.ts, lib.dom.d.ts, ...). */
+function isStandardLibrary(file: SourceFile | undefined): boolean {
+  return file !== undefined && /[\\/]typescript[\\/]lib[\\/]lib\.[^\\/]*\.d\.ts$/.test(file.getFilePath());
+}
+
+/** Only tested, never kept: `if (order)`, `!order`, `order === other`, `typeof order`, `order && ...`. */
+function onlyTested(value: Node, parent: Node): boolean {
+  if (Node.isIfStatement(parent) || Node.isWhileStatement(parent) || Node.isDoStatement(parent)) return parent.getExpression() === value;
+  if (Node.isConditionalExpression(parent)) return parent.getCondition() === value;
+  if (Node.isTypeOfExpression(parent) || Node.isVoidExpression(parent)) return true;
+  if (Node.isPrefixUnaryExpression(parent)) return parent.getOperatorToken() === SyntaxKind.ExclamationToken;
+  if (!Node.isBinaryExpression(parent)) return false;
+  const operator = parent.getOperatorToken().getKind();
+  if (COMPARISONS.has(operator)) return true;
+  // `order && order.total`: the object itself is only the result when it's null or undefined.
+  return operator === SyntaxKind.AmpersandAmpersandToken && parent.getLeft() === value;
+}
+
+const COMPARISONS = new Set([
+  SyntaxKind.EqualsEqualsEqualsToken, SyntaxKind.ExclamationEqualsEqualsToken, SyntaxKind.EqualsEqualsToken,
+  SyntaxKind.ExclamationEqualsToken, SyntaxKind.InstanceOfKeyword, SyntaxKind.InKeyword,
+]);
 
 function returnsNothing(type: Type): boolean {
   if (type.isUnion()) return type.getUnionTypes().every(returnsNothing);

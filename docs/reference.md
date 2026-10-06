@@ -557,13 +557,22 @@ that has it and can hand it back:
 - by returning a value: a getter such as `stripeKey()`, or a function whose result
   could carry the key, even one that returns only what Stripe sent back;
 - by calling a callback the caller passed in (`withKey((key) => ...)`);
+- by writing it into an object the caller passed in: `authorize(headers)`
+  setting `headers.authorization`, `load(store)` calling `store.set(...)` or
+  `bus.emit(...)`, or a callback writing into a list's elements. Any use of
+  such a parameter counts except reading it: its fields' values
+  (`order.total`), the standard library's methods that change nothing
+  (`items.join(",")`, `lines.map((l) => l.sku)`), and tests (`if (!order)`).
+  Passing it on, storing it, or calling any other method could write to it;
 - as the object a constructor builds (`new StripeClient()`), or what a module
   exports.
 
-A function that calls one that returns nothing (`void`, or `Promise<void>`) and
-takes no callback isn't flagged for what it sends elsewhere: the data can't come
-back to it. So `checkout()` calling `chargeCustomer(): Promise<void>` and then an
-analytics service passes.
+A function that calls one that returns nothing (`void`, or `Promise<void>`),
+takes no callback, and only reads what it's given (or takes only strings,
+numbers, and other primitives) isn't flagged for what it sends elsewhere: the
+data can't come back to it. So `checkout()` calling
+`chargeCustomer(order): Promise<void>` and then an analytics service passes, as
+long as `chargeCustomer` only reads `order`.
 
 A `from` without a scope covers a whole category: `"env"` protects every
 environment variable. Reading the whole environment (`JSON.stringify(process.env)`)
@@ -576,7 +585,12 @@ hold of the data and what they can reach, so:
   module-level constant, or into an object's field by one method and sent by
   another;
 - a function that returns a value is assumed to hand the data back even when its
-  result can't contain it, so a caller that also sends elsewhere is flagged;
+  result can't contain it, so a caller that also sends elsewhere is flagged. So
+  is one that passes on, or calls a method of, an object it's given, even when
+  it writes nothing into it;
+- data written into an object the function reaches some other way (a field of
+  `this`, a variable outside the function) isn't followed: that's data stored
+  somewhere, as above;
 - data that leaves through a thrown error isn't followed;
 - a command inherits the whole environment, so one run by a function that never
   touches the key can still read it. Only commands run by functions that get
