@@ -11,7 +11,7 @@
 // erases the signature, so it does count). Using the alias itself as a value
 // (`f.call(...)`, `urls.map(f)`) is a use of what it holds.
 
-import { Node, SyntaxKind, type Identifier, type SourceFile, type Symbol as MorphSymbol } from "ts-morph";
+import { Node, SyntaxKind, type Identifier, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import type { AdapterIndex } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { callText, resolveAlias, unwrapExpression, type CallLike, type CapabilityUse } from "./shared.js";
@@ -37,7 +37,8 @@ export function valueUses(sourceFile: SourceFile, adapters: AdapterIndex): Value
     const symbol = Node.isShorthandPropertyAssignment(parent) ? parent.getValueSymbol() : id.getSymbol();
     if (!symbol) continue;
     const invoked = invocation(site);
-    const capabilities = heldCapabilities(symbol, adapters, invoked) ?? (constructs ? constructorCapabilities(type, adapters) : []);
+    const capabilities =
+      heldCapabilities(symbol, adapters, invoked) ?? (constructs ? constructorCapabilities(type, adapters) : signatureCapabilities(symbol, type, adapters, invoked));
     if (capabilities.length === 0) continue;
     const node = invoked?.call ?? site;
     const call = invoked ? callText(invoked.call) : `${site.getText().replace(/\s+/g, " ")} as a value`;
@@ -67,6 +68,20 @@ function heldCapabilities(symbol: MorphSymbol, adapters: AdapterIndex, invoked: 
     if (capabilities && capabilities.length > 0) return capabilities;
   }
   return undefined;
+}
+
+/**
+ * A member of a mapped type, such as an extended Prisma client's operations, has no
+ * declaration of its own: what it is comes from its type's call signatures.
+ */
+function signatureCapabilities(symbol: MorphSymbol, type: Type, adapters: AdapterIndex, invoked: Invocation | undefined): Capability[] {
+  if (resolveAlias(symbol).getDeclarations().length > 0) return [];
+  for (const signature of type.getCallSignatures()) {
+    const declaration = signature.getDeclaration();
+    const capabilities = declaration ? capabilitiesOf(declaration, invoked?.args ?? [], adapters, invoked?.reach ?? "value") : [];
+    if (capabilities.length > 0) return capabilities;
+  }
+  return [];
 }
 
 /** The symbol a const alias or an object property holds: `execSync` in `const run = execSync`. */

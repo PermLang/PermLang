@@ -10,6 +10,11 @@
 // name the model. Then the model comes from those types, or from the call site:
 // `client.user.findMany`.
 //
+// A query extension, `$extends({ query: { lead: { findMany({ args, query }) {...} } } })`,
+// gets a `query` function that runs the operation it intercepts: a call of it is that
+// operation, with the arguments given to it. So is `next(params)` in older clients'
+// `$use` middleware, which can run any operation.
+//
 // Prisma is recognized by its own files, never by a name in a path: a project in a
 // folder called prisma-shop isn't Prisma. Its files are the @prisma/client package,
 // the client it generates into node_modules/.prisma/client, and a client generated
@@ -18,7 +23,7 @@
 import { Node, type ImportDeclaration, type SourceFile, type Type } from "ts-morph";
 import { packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
-import { accessor, argumentAccess, modelNamed, relationAccess, scoped, type Model } from "./prisma-args.js";
+import { accessor, argumentAccess, modelNamed, relationAccess, scoped, type Arguments, type Model } from "./prisma-args.js";
 import { argumentsOf, containerName, unwrapExpression, type CallLike } from "./shared.js";
 
 const READS = new Set([
@@ -31,16 +36,30 @@ const WRITES = new Set([
 ]);
 // Raw queries can touch any table, and a "query" can still write (INSERT ... RETURNING).
 const RAW = /^\$(queryRaw|executeRaw|runCommandRaw)/;
+// The types that hand a query extension, or `$use` middleware, the function that runs the
+// intercepted operation: `query` (or `next`).
+const INTERCEPTED = new Set(["DynamicQueryExtensionCbArgs", "DynamicQueryExtensionArgs", "QueryOptionsCbArgs", "ModelQueryOptionsCbArgs", "Middleware"]);
+// Functions an extended client's types give, with no name of their own: an operation, and a
+// fluent API step, which only reads.
+const OPERATION_TYPES = new Set(["DynamicModelExtensionOperationFn", ...INTERCEPTED]);
+const FLUENT_TYPES = new Set(["DynamicModelExtensionFluentApi"]);
 
 const raw: Capability[] = [{ name: "db.read", dynamic: true }, { name: "db.write", dynamic: true }];
 
 /** `declaration` is the resolved signature of `call` (absent when the function is used as a value). */
 export function prismaCapabilities(declaration: Node | undefined, call?: CallLike): Capability[] {
-  if (!declaration || !isPrismaClient(declaration)) return [];
-  const method = memberName(declaration) ?? calledName(call);
-  if (!method) return [];
+  if (!declaration) return [];
+  // A query extension's `query` held in a variable or parameter of the project's: passed
+  // along as a value, or called through `.call` or `.apply`, it runs any operation.
+  if (!isPrismaClient(declaration)) return holdsInterceptedQuery(declaration) ? raw : [];
+  const indirect = call !== undefined && isIndirect(call);
+  const intercepted = interceptedQuery(declaration, indirect ? undefined : call);
+  if (intercepted) return intercepted;
+  const method = memberName(declaration) ?? (indirect ? undefined : calledName(call));
+  if (!method) return unnamedFunction(declaration);
   const container = containerName(declaration) ?? "";
-  const args = call ? argumentsOf(call)[0] : undefined;
+  // A function used as a value, or called through .call/.apply/.bind, gets arguments that can't be read.
+  const args: Arguments = !call || indirect ? "unknown" : argumentsOf(call)[0];
   const near = declaration.getSourceFile();
 
   const delegate = /^(\w+)Delegate$/.exec(container)?.[1];
@@ -50,7 +69,7 @@ export function prismaCapabilities(declaration: Node | undefined, call?: CallLik
   if (fluent) return relationAccess(method, args, modelNamed(fluent, near), declaration) ?? [];
 
   // An extended client: the runtime types, or the call site, name the model.
-  const receiver = receiverOf(call);
+  const receiver = indirect ? undefined : receiverOf(call);
   const typed = receiver && runtimeModel(receiver.getType(), receiver);
   if (typed?.fluent) return relationAccess(method, args, typed.model, receiver!) ?? [];
   if (typed) return forModel(method, typed.model, args);
@@ -58,11 +77,77 @@ export function prismaCapabilities(declaration: Node | undefined, call?: CallLik
   return [];
 }
 
-function forModel(method: string, model: Model, args: Node | undefined): Capability[] {
+function forModel(method: string, model: Model, args: Arguments): Capability[] {
   if (READS.has(method)) return [scoped("db.read", model.table), ...argumentAccess(args, model, "read")];
   if (WRITES.has(method)) return [scoped("db.write", model.table), ...argumentAccess(args, model, "write")];
-  // Anything else on a model (findRaw, aggregateRaw, ...) may do either.
-  return [scoped("db.read", model.table), scoped("db.write", model.table)];
+  // Anything else on a model is a raw query: MongoDB's findRaw and aggregateRaw run a
+  // filter or pipeline that can name other collections ($lookup, $out), like $runCommandRaw.
+  return raw;
+}
+
+/**
+ * A call of the function a query extension (or `$use` middleware) is given to run the
+ * operation it intercepts. Its operation and model come from the object it was taken
+ * from, `{ model: "Lead", operation: "findMany", args, query }`; when they can't be read
+ * (`$allModels`, `$allOperations`, `query` passed along first), it could run any query.
+ * Undefined for anything else.
+ */
+function interceptedQuery(declaration: Node, call: CallLike | undefined): Capability[] | undefined {
+  if (!INTERCEPTED.has(containerName(declaration) ?? "") || declaration.getType().getCallSignatures().length === 0) return undefined;
+  const holder = call && Node.isFunctionTypeNode(declaration) ? queryHolder(call) : undefined;
+  const literal = (key: string) => {
+    const type = holder?.getProperty(key)?.getTypeAtLocation(call!);
+    return type?.isStringLiteral() ? String(type.getLiteralValue()) : undefined;
+  };
+  const model = literal("model");
+  const operation = literal("operation");
+  if (model === undefined || operation === undefined) return raw;
+  // The model's relations are in the generated client, where its argument types are declared.
+  const argsType = holder!.getProperty("args")?.getTypeAtLocation(call!);
+  const near = (argsType?.getAliasSymbol() ?? argsType?.getSymbol())?.getDeclarations()[0]?.getSourceFile();
+  const target = near ? modelNamed(model, near) : { table: accessor(model), payload: undefined };
+  return forModel(operation, target, argumentsOf(call!)[0]);
+}
+
+/**
+ * The object a query extension's `query` was taken from: the parameter destructured in
+ * `findMany({ args, query })` (or `{ query: run }`), or `params` in `params.query(...)`.
+ */
+function queryHolder(call: CallLike): Type | undefined {
+  if (Node.isTaggedTemplateExpression(call)) return undefined;
+  const callee = unwrapExpression(call.getExpression());
+  if (Node.isPropertyAccessExpression(callee)) return callee.getName() === "query" ? unwrapExpression(callee.getExpression()).getType() : undefined;
+  const binding = Node.isIdentifier(callee) ? callee.getSymbol()?.getDeclarations()[0] : undefined;
+  if (!binding || !Node.isBindingElement(binding)) return undefined;
+  if ((binding.getPropertyNameNode()?.getText() ?? binding.getName()) !== "query") return undefined;
+  const owner = binding.getParentOrThrow().getParentOrThrow();
+  return Node.isParameterDeclaration(owner) || Node.isVariableDeclaration(owner) ? owner.getType() : undefined;
+}
+
+/** A variable, parameter, or destructured name of the project's that holds a query extension's `query`. */
+function holdsInterceptedQuery(declaration: Node): boolean {
+  if (!Node.isBindingElement(declaration) && !Node.isParameterDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return false;
+  return declaration.getType().getCallSignatures().some((s) => {
+    const d = s.getDeclaration();
+    return d !== undefined && INTERCEPTED.has(containerName(d) ?? "") && isPrismaClient(d);
+  });
+}
+
+/**
+ * A function Prisma's types give with no name of its own, reached where its name can't be
+ * read: an extended client's operation passed along or called through an alias, which
+ * could be any operation of any model, or a fluent API step, which reads one.
+ */
+function unnamedFunction(declaration: Node): Capability[] {
+  const container = containerName(declaration) ?? "";
+  if (FLUENT_TYPES.has(container)) return [{ name: "db.read", dynamic: true }];
+  return OPERATION_TYPES.has(container) ? raw : [];
+}
+
+/** `f.call(...)`, `f.apply(...)`, `f.bind(...)`, or `Reflect.apply(f, ...)`: a call that isn't of `f` with its own arguments. */
+function isIndirect(call: CallLike): boolean {
+  const name = calledName(call);
+  return name === "call" || name === "apply" || name === "bind";
 }
 
 /** Whether a declaration belongs to a Prisma client. Prisma's API is all types, so code with a body never does. */
