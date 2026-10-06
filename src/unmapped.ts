@@ -45,13 +45,40 @@ export interface UnmappedUse extends UnmappedPackage {
 }
 
 /** A package a call reaches: installed, or a folder of the project's (with that folder). */
-interface Called {
+export interface Called {
   name: string;
   folder?: string;
 }
 
 export function unmappedPackages(sourceFiles: readonly SourceFile[], adapters: AdapterIndex, packages: PackageFolders): UnmappedUse[] {
   const found = new Map<string, UnmappedUse & { fileSet: Set<string> }>();
+  for (const { node, package: pkg } of unmappedCalls(sourceFiles, adapters, packages)) {
+    const sourceFile = node.getSourceFile();
+    const existing = found.get(pkg.name);
+    if (existing) {
+      existing.calls++;
+      existing.fileSet.add(sourceFile.getFilePath());
+      continue;
+    }
+    found.set(pkg.name, {
+      package: pkg.name,
+      calls: 1,
+      file: sourceFile.getFilePath(),
+      line: lineAndColumn(sourceFile, node.getStart()).line,
+      node,
+      files: 1,
+      fileSet: new Set([sourceFile.getFilePath()]),
+      ...(pkg.folder !== undefined ? { folder: pkg.folder } : {}),
+    });
+  }
+  return [...found.values()]
+    .map(({ fileSet, ...u }) => ({ ...u, files: fileSet.size }))
+    .sort((a, b) => b.calls - a.calls || a.package.localeCompare(b.package));
+}
+
+/** Every call into a package with no adapter, in file order. (Flow rules need each one; see flows.ts.) */
+export function unmappedCalls(sourceFiles: readonly SourceFile[], adapters: AdapterIndex, packages: PackageFolders): { node: CallLike; package: Called }[] {
+  const out: { node: CallLike; package: Called }[] = [];
   const prisma = new Map<string, boolean>();
   // A folder that holds a client prisma-client-js generated (one of its files imports Prisma's runtime).
   const isPrismaClient = (folder: string, project: Project) => {
@@ -66,29 +93,10 @@ export function unmappedPackages(sourceFiles: readonly SourceFile[], adapters: A
     forEachDescendant(sourceFile, (node) => {
       if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
       const pkg = untypedPackageLoad(node, adapters) ?? calledPackage(node, packages, isPrismaClient);
-      if (pkg === undefined || isCovered(pkg, adapters)) return;
-
-      const existing = found.get(pkg.name);
-      if (existing) {
-        existing.calls++;
-        existing.fileSet.add(sourceFile.getFilePath());
-        return;
-      }
-      found.set(pkg.name, {
-        package: pkg.name,
-        calls: 1,
-        file: sourceFile.getFilePath(),
-        line: lineAndColumn(sourceFile, node.getStart()).line,
-        node,
-        files: 1,
-        fileSet: new Set([sourceFile.getFilePath()]),
-        ...(pkg.folder !== undefined ? { folder: pkg.folder } : {}),
-      });
+      if (pkg !== undefined && !isCovered(pkg, adapters)) out.push({ node, package: pkg });
     });
   }
-  return [...found.values()]
-    .map(({ fileSet, ...u }) => ({ ...u, files: fileSet.size }))
-    .sort((a, b) => b.calls - a.calls || a.package.localeCompare(b.package));
+  return out;
 }
 
 /** Whether something covers what a package does: an adapter, or built-in detection; for a folder of the project's, a team's adapter. */

