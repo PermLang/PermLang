@@ -31,7 +31,7 @@ import {
   isAnnotated,
   isInNodeModules,
   isUnitNode,
-  ownDeclarationFiles,
+  PackageFolders,
   readModuleAnnotation,
   unitNodeForDeclaration,
   type Unit,
@@ -204,10 +204,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   clearResolutionCache();
   const loaded = loadAdapters(options.adapters ?? []);
   if (loaded.errors.length > 0) throw new AdapterError(loaded.errors);
-  const adapters = new AdapterIndex(loaded.adapters);
+  const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
+  // Folders with their own package.json: the project's own, and packages in its folders.
+  const packages = new PackageFolders(sourceFiles);
+  const adapters = new AdapterIndex(loaded.adapters, (declaration) => packages.localPackage(declaration)?.name);
   const strictness = options.strictness ?? "development";
 
-  const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
   const units = new Map<Node, Unit>();
   const diagnostics: Diagnostic[] = [];
 
@@ -235,9 +237,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   //    (Importing it isn't reported: there would be no way to accept that import.)
   const exported = groupBy([...units.values()].filter((u) => u.exported), (u) => u.node.getSourceFile());
   const declared = new Map<Node, Unit>();
-  const isOwnDeclarationFile = ownDeclarationFiles(sourceFiles);
   const declaredUnit = (node: Node): Unit | undefined => {
-    if (Node.isSourceFile(node) || !node.getSourceFile().isDeclarationFile() || !isOwnDeclarationFile(node.getSourceFile())) return undefined;
+    if (Node.isSourceFile(node) || !node.getSourceFile().isDeclarationFile() || !packages.isOwn(node.getSourceFile())) return undefined;
     if (unitNodeForDeclaration(node) !== node) return undefined; // not a value the project declares (an ambient package, a type)
     if (!declared.has(node)) declared.set(node, createDeclaredUnit(node));
     return declared.get(node);
@@ -276,11 +277,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   unsafe.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
 
   // Packages with no adapter: listed always; a diagnostic unless trusted.
-  const unmappedUses = unmappedPackages(sourceFiles, adapters);
+  const unmappedUses = unmappedPackages(sourceFiles, adapters, packages);
   const policy = options.unmapped ?? "warn";
   if (policy !== "trust") {
     for (const u of unmappedUses) {
       const unit = units.get(enclosingUnitNode(u.node))!;
+      const counts = `${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}`;
       diagnostics.push({
         severity: policy === "error" ? "error" : "warning",
         code: "PERM006",
@@ -290,8 +292,15 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         function: unit.name,
         capability: u.package,
         call: "",
-        message: `${unit.name} calls into ${u.package} (${u.calls} call${u.calls === 1 ? "" : "s"} in ${u.files} file${u.files === 1 ? "" : "s"}), which has no adapter, so what it touches isn't checked.`,
-        fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see docs/reference.md).`,
+        ...(u.folder === undefined
+          ? {
+              message: `${unit.name} calls into ${u.package} (${counts}), which has no adapter, so what it touches isn't checked.`,
+              fix: `add an adapter manifest for ${u.package}, or declare it pure with "default": [] (see docs/reference.md).`,
+            }
+          : {
+              message: `${unit.name} calls into ${u.package} (${counts}), the package in ${relativeFolder(u.file, u.folder)}, which has no adapter, so what its JavaScript touches isn't checked.`,
+              fix: `add an adapter manifest for ${u.package} to "adapters" in permlang.config.json, or declare it pure with "default": [] (see docs/reference.md). Built-in adapters don't cover a folder in the repository.`,
+            }),
       });
     }
   }
@@ -602,6 +611,12 @@ function annotationFix(unit: Unit, key: string): string {
     return named ? `add /** @perm ${key} */ above class ${named}.` : `add a constructor to the class, with /** @perm ${key} */.`;
   }
   return `add /** @perm ${key} */ to ${unit.name}.`;
+}
+
+/** A folder as an import from `file` would name it: `./gen`, `../lib/client`. */
+function relativeFolder(file: string, folder: string): string {
+  const relative = path.relative(path.dirname(file), folder).replaceAll("\\", "/");
+  return relative.startsWith("../") || relative === ".." ? relative : `./${relative}`;
 }
 
 /** How to give an import whose types can't be found its types. */

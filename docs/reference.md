@@ -398,10 +398,21 @@ Other gaps, not yet in fixtures:
   into it are unverifiable, but importing it (which runs its top-level code) isn't
   reported, and neither is reading a property it declares. To have it checked,
   convert it to TypeScript; PermLang doesn't analyze the `.js` even with
-  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe the
-  runtime (`declare global`, a `.d.ts` with no imports or exports) or a package
-  (`declare module "x"`, a folder with its own `package.json`, such as a
-  generated Prisma client) are trusted like a package with no adapter.
+  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe a
+  package (`declare module "x"`, or a `.d.ts` in a folder with its own
+  `package.json`) are trusted like a package with no adapter: listed and warned
+  about (PERM006; see [packages without an adapter](#packages-without-an-adapter)).
+  Declarations that describe the runtime (`declare global`, or a `.d.ts` with no
+  imports or exports) are trusted without being listed, as what the runtime
+  provides: a global function declared there, and defined by a script the page
+  or process loads, isn't checked.
+- A client prisma-client-js generates into a folder of the project's is covered
+  by the Prisma detector, as `@prisma/client` is, and isn't listed. PermLang
+  recognizes it by what Prisma writes there (its `.d.ts` imports Prisma's runtime
+  as `runtime`), and can't tell a real generated client from a forged one: a
+  folder with a `package.json`, a `.d.ts` that imports a `./runtime/` file, and
+  JavaScript that does anything else passes as one. Review changes to a
+  generated client's folder as you would any code.
 - `require()` of a package an adapter maps is unverifiable, rather than reaching
   the capabilities the adapter lists; use `import` to have its calls checked.
 - Checked by paths rather than a tsconfig.json, every file is read as an ES
@@ -849,6 +860,19 @@ lists these packages with their call counts, and each one gets a warning
 A package that touches nothing PermLang tracks is declared pure with an adapter
 whose `default` is `[]`. [`adapters/pure.json`](../adapters/pure.json) does this for
 Node's pure built-ins and common libraries (zod, date-fns, React, ...).
+
+A folder of the project's with its own `package.json` is a package too: a client
+generated into the project, or a workspace package that an import reaches
+through a link. PermLang reads its `.d.ts` files but not its JavaScript, so a
+call into it is listed and warned about like a call into an installed package,
+named by its `package.json`'s `name` (or by its folder, such as `./src/gen`,
+when it has none), wherever it's imported from. Since that `name` could claim
+to be any package, only your own adapters (in `"adapters"`) cover such a folder:
+a folder named `lodash` isn't pure, and one named `@prisma/client` isn't read as
+Prisma. An adapter of yours covers every folder that takes its package's name,
+so review a new `package.json` in the repository as you would code. The
+exception is a client prisma-client-js generates there, which the Prisma
+detector covers (see [known limits](#known-limits)).
 
 Built-in adapters cover axios, Stripe, nodemailer, `node-fetch`, `undici`, Redis
 (`redis`, `ioredis`), Kafka, Bull/BullMQ, ClickHouse, AI SDKs (`ai`, `openai`,
