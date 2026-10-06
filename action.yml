@@ -223,6 +223,7 @@ runs:
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         ARGS: ${{ inputs.args }}
         STRICTNESS: ${{ inputs.strictness }}
+        CHECK_EXIT: ${{ steps.check.outputs.exit-code }}
       run: |
         # Failures here are warnings, except one: a comment that can't be updated would go on
         # showing an earlier push's diff as if it were current.
@@ -249,6 +250,16 @@ runs:
         if [ ! -s "$body" ]; then
           echo "::warning::No permission diff to post."
           exit 0
+        fi
+        # A check that stopped with an error (exit code 2, such as for an option it doesn't take
+        # that diff does) compared nothing, whatever the diff shows: the comment says so first,
+        # after its marker and heading.
+        if [ "$CHECK_EXIT" = 2 ] && [ "$no_lock" != true ]; then
+          stopped="> **PermLang's check stopped with an error**, so it compared nothing, and the pull request fails until that's fixed. The job log has the details. The diff below may not be what the check would find."
+          for file in "$body" "$summary"; do
+            [ -s "$file" ] || continue
+            { head -n 2 "$file"; printf '\n%s\n%s\n' '> [!CAUTION]' "$stopped"; tail -n +3 "$file"; } > "$file.tmp" && mv "$file.tmp" "$file"
+          done
         fi
         if [ -s "$summary" ]; then
           cat "$summary" >> "$GITHUB_STEP_SUMMARY"

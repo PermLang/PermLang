@@ -284,6 +284,19 @@ describe.skipIf(!bash)("the Action's comment", () => {
     expect(existsSync(path.join(temp, "gh.log"))).toBe(false);
   });
 
+  // `args: src --head HEAD~1` made the check stop with a usage error, while diff took --head and
+  // the comment said "No permission changes" (the second verification, B).
+  it("says first when the check itself stopped with an error", () => {
+    fakeGh({});
+    const { code, summary } = run("Comment the permission diff", env({ ARGS: "src --head HEAD", CHECK_EXIT: "2" }));
+    expect(code).toBe(0);
+    expect(sent("posted")).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n\n> \[!CAUTION\]\n> \*\*PermLang's check stopped with an error\*\*, so it compared nothing/);
+    expect(summary).toContain("PermLang's check stopped with an error");
+    rmSync(path.join(temp, "posted.json"));
+    run("Comment the permission diff", env({ CHECK_EXIT: "1" }));
+    expect(sent("posted")).not.toContain("stopped with an error");
+  });
+
   it("says when the pull request deletes the lock, instead of leaving quietly", () => {
     fakeGh({});
     rmSync(path.join(work, "permlang.lock.json"));
