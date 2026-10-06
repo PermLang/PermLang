@@ -508,15 +508,17 @@ may *go*: "the Stripe key may only be sent to Stripe".
 {
   "flows": [
     { "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] },
-    { "from": "db.read(customers)", "to": ["net(api.hubspot.com)"] }
+    { "from": "db.read(customers)", "to": ["net(api.hubspot.com)", "email.send"] }
   ]
 }
 ```
 
 `from` is data a function reads: `env`, `fs.read`, `db.read`, or `net` (what a
-host sends back), with or without a scope. `to` lists the network hosts it may
-go to. Anything else, such as `"to": ["fs.write(./public)"]` or `"from": "exec"`,
-is a configuration error, and so is a misspelled setting in a rule: none of them
+host sends back), with or without a scope. `to` lists where it may go: network
+hosts, and app capabilities from [adapters](#adapter-manifests), such as
+`email.send`. Anything else, such as `"to": ["fs.write(./public)"]` or
+`"from": "exec"`, is a configuration error, and so is a misspelled setting in a
+rule, or an app capability no adapter defines (`"email.sent"`): none of them
 could ever match. A host is written as calls report it, without a scheme, port,
 path, or user: `net(api.stripe.com)`, not `net(https://api.stripe.com)`,
 `net(api.stripe.com:443)`, or `net(api.stripe.com/v1)`, which are configuration
@@ -526,10 +528,17 @@ A function that gets hold of the `from` data, and can send it somewhere `to`
 doesn't allow, is a `PERM009` error. "Somewhere" is:
 
 - a host `to` doesn't list, or a host that can't be determined (`fetch(url)`);
+- an app capability `to` doesn't list: an adapter's action, such as sending an
+  email with nodemailer (`email.send`), takes the data wherever that action goes;
 - a command (`exec`), or code that can't be verified (`eval`, say): either one
   could send it anywhere, so no rule can allow it. That includes code in a
   function marked `@perm-unsafe`: the tag accepts it for annotations, not for
-  where data goes.
+  where data goes;
+- a call into a package with no adapter, or into an import whose types can't be
+  found: PermLang can't see what it does with what it's given, so it could send
+  it anywhere too. This holds whatever `"unmapped"` is set to. To fix it, add an
+  [adapter](#adapter-manifests) for the package (one that declares it pure with
+  `"default": []`, if it sends nothing), or install its types.
 
 It's an error at every strictness level, sketch included: a rule is something you
 asked for.

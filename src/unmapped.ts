@@ -35,32 +35,40 @@ export interface UnmappedUse extends UnmappedPackage {
 
 export function unmappedPackages(sourceFiles: readonly SourceFile[], adapters: AdapterIndex): UnmappedUse[] {
   const found = new Map<string, UnmappedUse & { fileSet: Set<string> }>();
-  for (const sourceFile of sourceFiles) {
-    forEachDescendant(sourceFile, (node) => {
-      if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
-      const pkg = untypedPackageLoad(node, adapters) ?? calledPackage(node);
-      if (pkg === undefined || HANDLED.has(pkg) || adapters.hasPackage(pkg)) return;
-
-      const existing = found.get(pkg);
-      if (existing) {
-        existing.calls++;
-        existing.fileSet.add(sourceFile.getFilePath());
-        return;
-      }
-      found.set(pkg, {
-        package: pkg,
-        calls: 1,
-        file: sourceFile.getFilePath(),
-        line: lineAndColumn(sourceFile, node.getStart()).line,
-        node,
-        files: 1,
-        fileSet: new Set([sourceFile.getFilePath()]),
-      });
+  for (const { node, package: pkg } of unmappedCalls(sourceFiles, adapters)) {
+    const sourceFile = node.getSourceFile();
+    const existing = found.get(pkg);
+    if (existing) {
+      existing.calls++;
+      existing.fileSet.add(sourceFile.getFilePath());
+      continue;
+    }
+    found.set(pkg, {
+      package: pkg,
+      calls: 1,
+      file: sourceFile.getFilePath(),
+      line: lineAndColumn(sourceFile, node.getStart()).line,
+      node,
+      files: 1,
+      fileSet: new Set([sourceFile.getFilePath()]),
     });
   }
   return [...found.values()]
     .map(({ fileSet, ...u }) => ({ ...u, files: fileSet.size }))
     .sort((a, b) => b.calls - a.calls || a.package.localeCompare(b.package));
+}
+
+/** Every call into a package with no adapter, in file order. (Flow rules need each one; see flows.ts.) */
+export function unmappedCalls(sourceFiles: readonly SourceFile[], adapters: AdapterIndex): { node: CallLike; package: string }[] {
+  const out: { node: CallLike; package: string }[] = [];
+  for (const sourceFile of sourceFiles) {
+    forEachDescendant(sourceFile, (node) => {
+      if (!Node.isCallExpression(node) && !Node.isNewExpression(node) && !Node.isTaggedTemplateExpression(node)) return;
+      const pkg = untypedPackageLoad(node, adapters) ?? calledPackage(node);
+      if (pkg !== undefined && !HANDLED.has(pkg) && !adapters.hasPackage(pkg)) out.push({ node, package: pkg });
+    });
+  }
+  return out;
 }
 
 /** The package a call's declaration belongs to, if it's third-party code. */

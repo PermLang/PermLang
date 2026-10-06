@@ -14,7 +14,7 @@ import { buildLock, lockDrift, type LockFile } from "./lock.js";
 import { moduleComments, strayPermTags, type AnnotationError } from "./annotations.js";
 import { projectFiles } from "./project-files.js";
 import { findTools, handlerReach } from "./tools.js";
-import { flowDiagnostics, type FlowRule } from "./flows.js";
+import { checkFlowTargets, flowDiagnostics, opaqueUses, type FlowRule } from "./flows.js";
 import { failureReason, projectOfFiles, projectOfTsConfig, unparsedReason } from "./load.js";
 import { clearResolutionCache, resolveAlias } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
@@ -197,7 +197,7 @@ export function checkTsConfig(tsConfigFilePath: string, options: CheckOptions = 
 }
 
 /**
- * @throws AdapterError when an adapter manifest is invalid.
+ * @throws AdapterError when an adapter manifest is invalid, and FlowRuleError when a flow rule lists an app capability no adapter defines.
  * @perm fs.read
  */
 export function checkProject(project: Project, options: CheckOptions = {}): Report {
@@ -205,6 +205,7 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   const loaded = loadAdapters(options.adapters ?? []);
   if (loaded.errors.length > 0) throw new AdapterError(loaded.errors);
   const adapters = new AdapterIndex(loaded.adapters);
+  if (options.flows) checkFlowTargets(options.flows, adapters.vocabulary);
   const strictness = options.strictness ?? "development";
 
   const sourceFiles = project.getSourceFiles().filter((sf) => !sf.isDeclarationFile() && !isInNodeModules(sf));
@@ -354,7 +355,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
   }
 
   // Data-flow rules: a function that reads protected data and can send it elsewhere.
-  if (options.flows && options.flows.length > 0) diagnostics.push(...flowDiagnostics(units.values(), edges, unvouched, options.flows));
+  // A package PermLang can't see into could send the data anywhere, so these rules also follow
+  // calls into packages with no adapter or no types. Only these rules: @perm and the lock don't.
+  if (options.flows && options.flows.length > 0) {
+    const flowReach = propagate(all, edges, { vouched: false, extraUses: opaqueUses(sourceFiles, adapters, (node) => units.get(node)) });
+    diagnostics.push(...flowDiagnostics(units.values(), edges, flowReach, options.flows));
+  }
 
   // Sketch relaxes the annotation rules only. What the configuration asks for explicitly (flow
   // rules, and "error" for unmapped packages or AI tools) fails at every level.

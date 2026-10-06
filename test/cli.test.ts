@@ -295,6 +295,13 @@ describe("data-flow rules", () => {
     expect(code).toBe(2);
     expect(out).toContain('flows[0]: "to" must be a list of capabilities');
   });
+
+  it("rejects an app capability no adapter defines, once the adapters are loaded", () => {
+    writeFileSync(path.join(dir, "permlang.config.json"), JSON.stringify({ flows: [{ from: "env(API_KEY)", to: ["email.sent"] }] }));
+    const { code, out } = permlang("check", "my lib", "--no-lock");
+    expect(code).toBe(2);
+    expect(out).toContain('permlang.config.json: flows[0]: "to" lists email.sent, which no adapter defines, so it could never match.');
+  });
 });
 
 describe("tools given to AI models", () => {

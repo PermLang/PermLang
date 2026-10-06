@@ -26,6 +26,7 @@ import { addedDependencies, type DependencyChange, type PackageJson } from "./de
 import { commentMarker, formatDiffFailure, formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
 import { LOCK_VERSION, LockError, buildLock, diffLocks, isConfigKey, keyed, lockDrift, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { formatAnnotations, formatText, printable, toJson, toSarif } from "./report.js";
+import { FlowRuleError } from "./flows.js";
 import { DEFAULT_CONFIG, SettingsError, readConfig, readTsConfig, settingsEntries, type Origin, type Settings } from "./settings.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
@@ -545,7 +546,14 @@ function analyze(args: Args): Report {
     projectRoot: root,
   };
   const scope = settings.scope;
-  const report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(scope.paths.flatMap(expand), options);
+  let report: Report;
+  try {
+    report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(scope.paths.flatMap(expand), options);
+  } catch (e) {
+    // A flow rule can only be checked against the adapters once they're loaded.
+    if (e instanceof FlowRuleError) throw new SettingsError(`${path.relative(process.cwd(), settings.configFile)}: ${e.message}`);
+    throw e;
+  }
   // What the check ran on and with is recorded in the lock, like what the code reaches.
   report.functions.push(...settingsEntries(settings, root));
   return report;

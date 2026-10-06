@@ -37,23 +37,10 @@ export function unseenFrom(start: Unit, edgesFrom: ReadonlyMap<Unit, readonly Ed
 }
 
 function unseenIn(sourceFile: SourceFile): { node: Node; reason: string }[] {
-  const out: { node: Node; reason: string }[] = [];
-  // Names bound by imports whose types can't be found, and every use of them.
-  const specifiers = new Set(unresolvedImports([sourceFile]).map((u) => u.specifier));
-  const reasonFor = (specifier: string) => `it calls into ${specifier}, whose types can't be found`;
-  const bound = new Map<unknown, string>();
-  for (const { node, specifierNode } of moduleReferences(sourceFile)) {
-    const specifier = specifierNode.getLiteralValue();
-    if (!specifiers.has(specifier)) continue;
-    if (Node.isCallExpression(node)) out.push({ node, reason: reasonFor(specifier) });
-    for (const name of boundNames(node)) bound.set(name.getSymbolOrThrow().compilerSymbol, reasonFor(specifier));
-  }
-  if (bound.size > 0) {
-    for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
-      const reason = bound.get(id.getSymbol()?.compilerSymbol);
-      if (reason !== undefined && !id.getFirstAncestor((a) => Node.isImportDeclaration(a) || Node.isImportEqualsDeclaration(a))) out.push({ node: id, reason });
-    }
-  }
+  const out: { node: Node; reason: string }[] = untypedImportUses(sourceFile).map(({ node, specifier }) => ({
+    node,
+    reason: `it calls into ${specifier}, whose types can't be found`,
+  }));
   // Names TypeScript can't find at all.
   for (const d of sourceFile.getProject().getProgram().getSemanticDiagnostics(sourceFile)) {
     const start = d.getStart();
@@ -61,6 +48,29 @@ function unseenIn(sourceFile: SourceFile): { node: Node; reason: string }[] {
     // These diagnostics are on the name itself.
     const node = sourceFile.getDescendantAtPos(start)!;
     out.push({ node, reason: `it uses ${node.getText()}, which has no declaration` });
+  }
+  return out;
+}
+
+/**
+ * Uses of imports whose types can't be found: a dynamic `import("x")`, and every use of a name
+ * an import binds. (Flow rules count them too; see flows.ts.)
+ */
+export function untypedImportUses(sourceFile: SourceFile): { node: Node; specifier: string }[] {
+  const out: { node: Node; specifier: string }[] = [];
+  const specifiers = new Set(unresolvedImports([sourceFile]).map((u) => u.specifier));
+  const bound = new Map<unknown, string>();
+  for (const { node, specifierNode } of moduleReferences(sourceFile)) {
+    const specifier = specifierNode.getLiteralValue();
+    if (!specifiers.has(specifier)) continue;
+    if (Node.isCallExpression(node)) out.push({ node, specifier });
+    for (const name of boundNames(node)) bound.set(name.getSymbolOrThrow().compilerSymbol, specifier);
+  }
+  if (bound.size > 0) {
+    for (const id of sourceFile.getDescendantsOfKind(SyntaxKind.Identifier)) {
+      const specifier = bound.get(id.getSymbol()?.compilerSymbol);
+      if (specifier !== undefined && !id.getFirstAncestor((a) => Node.isImportDeclaration(a) || Node.isImportEqualsDeclaration(a))) out.push({ node: id, specifier });
+    }
   }
   return out;
 }

@@ -1,29 +1,44 @@
 // Data-flow rules: where a secret or sensitive data may be sent.
 //
-//   "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)"] }]
+//   "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)", "email.send"] }]
 //
-// A function that gets hold of the source, and can send to a host the rule doesn't list
-// (itself or through what it calls, including a host that can't be determined), or can
-// run a command or code that can't be verified, is a PERM009 error. A function gets hold
-// of the source by reading it, or by calling something that has it and can hand it back.
-// This doesn't follow the value: a key stored somewhere (a module-level constant, an
-// object's field) and read by other code isn't caught.
+// A function that gets hold of the source, and can send it somewhere the rule doesn't list
+// (itself or through what it calls), is a PERM009 error. Somewhere is a host (including one
+// that can't be determined), or an app capability from an adapter (`email.send`). A command,
+// code that can't be verified, and a package PermLang can't see into (no adapter, or no
+// types) could send it anywhere, so no rule allows them. A function gets hold of the source
+// by reading it, or by calling something that has it and can hand it back. This doesn't
+// follow the value: a key stored somewhere (a module-level constant, an object's field) and
+// read by other code isn't caught.
 
-import { Node, type Type } from "ts-morph";
-import { BUILTIN_VOCABULARY, UNVERIFIABLE, covers, formatCapability, parsePermList, type Capability } from "./capability.js";
+import { Node, SyntaxKind, type ParameterDeclaration, type SourceFile, type Type } from "ts-morph";
+import type { AdapterIndex } from "./adapters.js";
+import { BUILTIN_VOCABULARY, CAPABILITY_NAME, UNVERIFIABLE, covers, formatCapability, parsePermList, type Capability } from "./capability.js";
 import type { Diagnostic } from "./check.js";
+import { callText } from "./detect/shared.js";
 import { pathTo, type Edge, type Reach } from "./graph.js";
-import type { Unit } from "./units.js";
+import { unmappedCalls } from "./unmapped.js";
+import { untypedImportUses } from "./unseen.js";
+import { enclosingUnitNode, type Unit, type Use } from "./units.js";
+import { lineAndColumn } from "./walk.js";
 
 export interface FlowRule {
   /** What's protected, such as env(STRIPE_KEY) or db.read(customers). */
   from: Capability;
-  /** Where it may go: network hosts. */
+  /** Where it may go: network hosts, and app capabilities from adapters (`email.send`). */
   to: Capability[];
 }
 
+/** A flow rule that can't be checked as written. The CLI reports it as a configuration error. */
+export class FlowRuleError extends Error {}
+
 /** What a rule can protect: data a function reads. Writes and commands aren't data. */
 const SOURCES = ["env", "fs.read", "db.read", "net"];
+
+// Calls whose destination can't be seen, counted for flow rules only (see opaqueUses). The
+// names can't be capabilities (a `-` isn't allowed in one), so they can't clash with an adapter's.
+const NO_ADAPTER = "no-adapter";
+const NO_TYPES = "no-types";
 
 /**
  * Validates the `flows` setting from permlang.config.json.
@@ -44,12 +59,31 @@ export function parseFlows(raw: unknown, source: string): FlowRule[] {
     }
     hostOnly(from, `flows[${i}]`, source);
     const to = (r.to as string[]).map((t) => {
-      const sink = one(t, `flows[${i}]: invalid "to" entry`, source);
-      if (sink.name !== "net") throw new Error(`${source}: flows[${i}]: "to" can only list network hosts, such as "net(api.stripe.com)"; "${t}" isn't one.`);
+      // An app capability's name is checked against the adapters later (checkFlowTargets): they aren't loaded yet.
+      const name = /^\s*([^()\s]+)/.exec(t)?.[1];
+      const sink = one(t, `flows[${i}]: invalid "to" entry`, source, name !== undefined && CAPABILITY_NAME.test(name) ? name : undefined);
+      if (sink.name !== "net" && (BUILTIN_VOCABULARY.has(sink.name) || sink.name === UNVERIFIABLE)) {
+        throw new Error(`${source}: flows[${i}]: "to" can only list network hosts, such as "net(api.stripe.com)", and app capabilities from adapters, such as "email.send"; "${t}" isn't one.`);
+      }
       return hostOnly(sink, `flows[${i}]`, source);
     });
     return { from, to };
   });
+}
+
+/**
+ * Checks that the app capabilities rules list in `to` are ones the adapters define: a
+ * misspelled one could never match, and would fail the calls it was meant to allow.
+ * @throws FlowRuleError naming the first one that isn't.
+ */
+export function checkFlowTargets(rules: readonly FlowRule[], vocabulary: ReadonlySet<string>): void {
+  const defined = [...vocabulary].filter((name) => !BUILTIN_VOCABULARY.has(name)).sort();
+  for (const [i, rule] of rules.entries()) {
+    const unknown = rule.to.find((t) => !vocabulary.has(t.name));
+    if (unknown === undefined) continue;
+    const listed = defined.length > 0 ? `Adapters define: ${defined.join(", ")}.` : "No adapter defines any.";
+    throw new FlowRuleError(`flows[${i}]: "to" lists ${formatCapability(unknown)}, which no adapter defines, so it could never match. ${listed}`);
+  }
 }
 
 /**
@@ -72,8 +106,9 @@ function hostOnly(capability: Capability, where: string, source: string): Capabi
   throw new Error(`${source}: ${where}: "${formatCapability(capability)}" names more than a host. A rule matches the host a call connects to, whatever its scheme, port, or path: ${instead}.`);
 }
 
-function one(text: string, what: string, source: string): Capability {
-  const { capabilities, errors } = parsePermList(text, BUILTIN_VOCABULARY);
+function one(text: string, what: string, source: string, appCapability?: string): Capability {
+  const vocabulary = appCapability === undefined ? BUILTIN_VOCABULARY : new Set([...BUILTIN_VOCABULARY, appCapability]);
+  const { capabilities, errors } = parsePermList(text, vocabulary);
   if (errors.length > 0 || capabilities.length !== 1) throw new Error(`${source}: ${what} "${text}"${errors[0] ? `: ${errors[0].reason}` : ""}.`);
   return capabilities[0]!;
 }
@@ -89,13 +124,10 @@ export function flowDiagnostics(units: Iterable<Unit>, edges: readonly Edge[], r
     for (const [unit, via] of holders(all, edges, rule)) {
       const got = via.length === 0 ? `reads ${source}` : `gets ${source} from ${via.join(" → ")}`;
       for (const [key, p] of reach.get(unit)!) {
-        const anywhere = key === "exec" || key === UNVERIFIABLE;
-        if (!anywhere && (p.capability.name !== "net" || covers(rule.to, p.capability))) continue;
+        const sink = sinkOf(key, p.capability, rule, source, allowed);
+        if (!sink) continue;
         const site = p.edge ?? p.use;
         const path = pathTo(reach, unit, key);
-        const through = path.join(" → ");
-        const doing = key === "exec" ? "can run commands" : "runs code that can't be verified";
-        const sink = p.capability.arg === undefined ? `${key} (a host that can't be determined)` : key;
         out.push({
           severity: "error",
           code: "PERM009",
@@ -103,22 +135,95 @@ export function flowDiagnostics(units: Iterable<Unit>, edges: readonly Edge[], r
           line: site.line,
           column: site.column,
           function: unit.name,
-          capability: key,
+          capability: sink.capability,
           call: site.call,
           path,
-          message: anywhere
-            ? `${unit.name} ${got} and ${doing}, through ${through}, which could send it anywhere: the flow rule for ${source} ${allowed}.`
-            : `${unit.name} ${got} and can send to ${sink}, through ${through}, which the flow rule for ${source} doesn't allow.`,
-          fix: anywhere
-            ? `keep ${source} away from that call: no rule can allow it, since ${key === "exec" ? "a command" : "code that can't be verified"} could send it anywhere.`
-            : p.capability.arg === undefined
-              ? `keep ${source} away from that call, or make its host fixed so the rule can allow it.`
-              : `keep ${source} away from that call, or add ${key} to the rule's "to" in permlang.config.json.`,
+          message: `${unit.name} ${got} and ${sink.does}, through ${path.join(" → ")}, ${sink.why}.`,
+          fix: sink.fix,
         });
       }
     }
   }
   return out;
+}
+
+/** Where a capability a holder reaches could take the data, when the rule doesn't allow it. */
+interface Sink {
+  /** What the holder can do, as in "viaEmail reads env(KEY) and ___". */
+  does: string;
+  /** Why the rule fails, after the path to it. */
+  why: string;
+  fix: string;
+  /** For the diagnostic: the capability, or the package that can't be seen into. */
+  capability: string;
+}
+
+/** Undefined when the capability takes the data nowhere the rule cares about: a read, a write, or a destination it allows. */
+function sinkOf(key: string, capability: Capability, rule: FlowRule, source: string, allowed: string): Sink | undefined {
+  const keep = `keep ${source} away from that call`;
+  const anywhere = `the flow rule for ${source} ${allowed}`;
+  const notAllowed = `which the flow rule for ${source} doesn't allow`;
+  const listIt = `${keep}, or add ${key} to the rule's "to" in permlang.config.json.`;
+  switch (capability.name) {
+    case "exec":
+      return { does: "can run commands", why: `which could send it anywhere: ${anywhere}`, fix: `${keep}: no rule can allow it, since a command could send it anywhere.`, capability: key };
+    case UNVERIFIABLE:
+      return { does: "runs code that can't be verified", why: `which could send it anywhere: ${anywhere}`, fix: `${keep}: no rule can allow it, since code that can't be verified could send it anywhere.`, capability: key };
+    case NO_ADAPTER:
+      return {
+        does: `calls into ${capability.arg}, which has no adapter`,
+        why: `so it could send it anywhere: ${anywhere}`,
+        fix: `add an adapter manifest for ${capability.arg}, so PermLang knows where it sends data (see docs/reference.md#adapter-manifests), or ${keep}.`,
+        capability: capability.arg!,
+      };
+    case NO_TYPES:
+      return {
+        does: `calls into ${capability.arg}, whose types can't be found`,
+        why: `so it could send it anywhere: ${anywhere}`,
+        fix: `install the types for ${capability.arg}, so PermLang can see what it calls, or ${keep}.`,
+        capability: capability.arg!,
+      };
+    case "net":
+      if (covers(rule.to, capability)) return undefined;
+      return capability.arg === undefined
+        ? { does: `can send to ${key} (a host that can't be determined)`, why: notAllowed, fix: `${keep}, or make its host fixed so the rule can allow it.`, capability: key }
+        : { does: `can send to ${key}`, why: notAllowed, fix: listIt, capability: key };
+    default:
+      // An app capability from an adapter (email.send, payments.refund) takes the data wherever that action goes.
+      if (BUILTIN_VOCABULARY.has(capability.name) || covers(rule.to, capability)) return undefined;
+      return { does: `can reach ${key}`, why: notAllowed, fix: listIt, capability: key };
+  }
+}
+
+/**
+ * Calls whose destination can't be seen, as uses for flow rules only: calls into a package
+ * with no adapter (what PERM006 warns about), and uses of an import whose types can't be found
+ * (PERM007). Either could send what it's given anywhere. They aren't capabilities a function
+ * declares, so they're kept out of what @perm, the lock, and AI tools see.
+ */
+export function opaqueUses(sourceFiles: readonly SourceFile[], adapters: AdapterIndex, unitOf: (node: Node) => Unit | undefined): Map<Unit, Use[]> {
+  const out = new Map<Unit, Use[]>();
+  const add = (node: Node, capability: Capability, call: string) => {
+    const unit = unitOf(enclosingUnitNode(node));
+    if (!unit) return;
+    const { line, column } = lineAndColumn(node.getSourceFile(), node.getStart());
+    const uses = out.get(unit) ?? [];
+    uses.push({ verb: "calls", capability, call, line, column });
+    out.set(unit, uses);
+  };
+  for (const { node, package: pkg } of unmappedCalls(sourceFiles, adapters)) add(node, { name: NO_ADAPTER, arg: pkg }, callText(node));
+  for (const sourceFile of sourceFiles) {
+    for (const { node, specifier } of untypedImportUses(sourceFile)) add(node, { name: NO_TYPES, arg: specifier }, siteText(node));
+  }
+  return out;
+}
+
+/** A name as messages show it: the call it's the callee of (`post(...)`, `ns.post(...)`), else the name. */
+function siteText(name: Node): string {
+  let callee = name;
+  for (let parent = callee.getParent(); parent && Node.isPropertyAccessExpression(parent) && parent.getExpression() === callee; parent = callee.getParent()) callee = parent;
+  const call = callee.getParent();
+  return call && (Node.isCallExpression(call) || Node.isNewExpression(call)) && call.getExpression() === callee ? callText(call) : name.getText();
 }
 
 /**
