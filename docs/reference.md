@@ -853,6 +853,12 @@ lists these packages with their call counts, and each one gets a warning
 | `error` | One error per package: every package must be mapped or declared pure. |
 | `trust` | No diagnostic. The report still lists them. |
 
+The same policy applies to imports whose types can't be found (PERM007). Whatever
+the policy, the lock records each package with no adapter and each import with
+no types, so a new one fails the check until `permlang lock` records it, and the
+permission diff lists it under **New code PermLang can't check** (see
+[what the lock records](#what-the-lock-records)).
+
 A package that touches nothing PermLang tracks is declared pure with an adapter
 whose `default` is `[]`. [`adapters/pure.json`](../adapters/pure.json) does this for
 Node's pure built-ins and common libraries (zod, date-fns, React, ...).
@@ -933,6 +939,14 @@ ran on and with which settings. Commit it. From then on:
   tsconfig.json. New and changed `@perm-unsafe` reasons are listed with the old
   reason.
 
+  **New code PermLang can't check** lists each import whose types can't be found
+  (PERM007, such as a `.js` or `.cjs` file next to the code) and each package the
+  code calls with no adapter (PERM006, including one vendored into a
+  `node_modules` folder inside the project) that the base's lock doesn't record,
+  with where it's first imported or called. What that code does isn't in the
+  diff, so it needs a reviewer's eye: it fails the check until `permlang lock`
+  records it, whatever the `"unmapped"` policy.
+
   The diff also lists **new dependencies**: packages the change adds to
   `./package.json`, in `dependencies`, `devDependencies`, `optionalDependencies`,
   or `peerDependencies`. For each one, it says what PermLang sees (checked by an
@@ -958,7 +972,8 @@ If the diff can't be computed at all (the base commit can't be read, say),
 `--format json` is for tools, and includes `unrecorded` (where the code and the
 lock file differ, or `null`), `unsafeChanged`, `analysisError` (or `null`),
 `lockDeleted`, `baseLockMissing`, and `dependencies` (each with its `section`, and
-`change`: `added` or `source`).
+`change`: `added` or `source`). Changes in the code PermLang can't check are among
+`functions`, under the key `permlang.config.json#<unchecked>`.
 
 The text output of `check`, `lock`, and `diff` escapes line breaks and control
 characters in anything from the code (`\n`, `\u001b`), so a string in the code
@@ -982,6 +997,7 @@ checking other files from the same folder (like the fixtures here), pass
       "permlang.tools(warn)",
       "permlang.unmapped(warn)"
     ],
+    "permlang.config.json#<unchecked>": ["unchecked.package(kafkajs)"],
     "src/leads.ts#handleLead": ["db.write(lead)", "email.send"]
   },
   "unsafe": { "src/render.ts#compile": "template compiler; trusted input" }
@@ -1032,6 +1048,17 @@ A tsconfig.json that can't be parsed, extends a file that isn't there, lists a
 file in `"files"` that isn't there, or selects no files at all is an error (exit
 code 2), and so are paths that hold no TypeScript files: a check of nothing
 would pass.
+
+The code PermLang can't check is an entry of its own, next to the settings,
+keyed `permlang.config.json#<unchecked>`:
+
+| Capability | What it records |
+| --- | --- |
+| `unchecked.import(src/telemetry.cjs)`, `unchecked.import(left-pad)` | Each import whose types can't be found (PERM007): a relative one by the path of the file it names, from the lock's folder (so `./x.cjs` in two folders is two entries), anything else as written. |
+| `unchecked.package(leftpad2)` | Each package the code calls that has no adapter (PERM006). |
+
+A new one fails the check, at the line that imports or calls it, until `permlang
+lock` records it; so does one the lock records that the code no longer has.
 
 So narrowing `include`, lowering `strictness`, trusting packages with no adapter,
 adding an adapter that declares a package pure, dropping a flow rule, or checking

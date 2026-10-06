@@ -29,6 +29,7 @@ import { formatAnnotations, formatText, printable, toJson, toSarif } from "./rep
 import { DEFAULT_CONFIG, SettingsError, readConfig, readTsConfig, settingsEntries, type Origin, type Settings } from "./settings.js";
 import { checkSpecs, formatSpecResults } from "./spec/check.js";
 import { parseSpecs, type Spec, type SpecError } from "./spec/parse.js";
+import { isUncheckedKey, uncheckedEntry } from "./unchecked.js";
 
 const USAGE = `Usage:
   permlang --version                     print the version
@@ -450,7 +451,7 @@ function lock(args: Args): number {
   if (previous && previous.permlang !== LOCK_VERSION) notes.push(`Updated ${path.basename(lockFile)} from lock format ${previous.permlang} to ${LOCK_VERSION}, which also records the check's settings.`);
   const changes = formatDiffText(diffLocks(previous, next), viaPaths(report, path.dirname(lockFile)));
   const keys = Object.keys(next.functions);
-  const functions = keys.filter((k) => !isConfigKey(k)).length;
+  const functions = keys.filter((k) => !isConfigKey(k) && !isUncheckedKey(k)).length;
   const counts = `${plural(functions, "function")}, ${plural(keys.length - functions, "configuration entry", "configuration entries")}`;
   console.log([`Wrote ${path.relative(process.cwd(), lockFile)} (${counts}).`, ...notes, changes].join("\n\n"));
   return 0;
@@ -548,8 +549,10 @@ function analyze(args: Args): Report {
   const selected = "project" in scope ? readTsConfig(scope.project).fileNames : scope.paths.flatMap(expand);
   const report = "project" in scope ? checkTsConfig(scope.project, options) : checkFiles(selected, options);
   // What the check ran on and with is recorded in the lock, like what the code reaches, and so
-  // are the files it read only because the selected ones import them.
+  // are the files it read only because the selected ones import them, and the code it couldn't check.
   report.functions.push(...settingsEntries(settings, root, importedFiles(report, selected)));
+  const unchecked = uncheckedEntry(report, settings.configFile, root);
+  if (unchecked.actual.length > 0) report.functions.push(unchecked);
   return report;
 }
 

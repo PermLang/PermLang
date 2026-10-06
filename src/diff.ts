@@ -8,6 +8,7 @@ import type { DependencyChange } from "./deps.js";
 import { isConfigKey, type FunctionChange, type LockDiff } from "./lock.js";
 import { printable } from "./report.js";
 import { isSetting, isSingleValued, settingKind, value as settingValue } from "./settings.js";
+import { isUncheckedKey, uncheckedCode, uncheckedWhat } from "./unchecked.js";
 
 /** For each lock key, each capability's path: units on the way, then the call. */
 export type ViaPaths = Record<string, Record<string, string[]>>;
@@ -80,11 +81,13 @@ interface Block {
 
 export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNotes = {}, limit = COMMENT_LIMIT): string {
   const lock = code(notes.lockFile ?? "permlang.lock.json");
-  const { settings, access } = split(diff);
+  const { settings, access, unchecked } = split(diff);
   const gaining = access.filter((f) => f.added.length > 0);
   const losing = access.filter((f) => f.removed.length > 0);
   const preapproved = lockOnly(notes);
-  const changed = gaining.length + losing.length + settings.length + diff.unsafeAdded.length + diff.unsafeRemoved.length + diff.unsafeChanged.length > 0;
+  const uncheckedNew = unchecked.flatMap((f) => f.added);
+  const uncheckedGone = unchecked.flatMap((f) => f.removed);
+  const changed = gaining.length + losing.length + settings.length + unchecked.length + diff.unsafeAdded.length + diff.unsafeRemoved.length + diff.unsafeChanged.length > 0;
 
   const top = [notes.marker ?? COMMENT_MARKER, "### PermLang permission diff", ""];
   for (const alert of alerts(notes, lock)) top.push(alert, "");
@@ -99,6 +102,7 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
       gaining.length > 0 ? `**${plural(gaining.length, "function")} ${gaining.length === 1 ? "gains" : "gain"} access**` : "",
       losing.length > 0 ? `${plural(losing.length, "function")} ${losing.length === 1 ? "loses" : "lose"} access` : "",
       settings.length > 0 ? "**Check settings changed**" : "",
+      uncheckedNew.length > 0 ? "**New code PermLang can't check**" : "",
       diff.unsafeAdded.length > 0 ? `**${plural(diff.unsafeAdded.length, "new <code>@perm-unsafe</code> override")}**` : "",
       diff.unsafeChanged.length > 0 ? `**${plural(diff.unsafeChanged.length, "changed <code>@perm-unsafe</code> reason")}**` : "",
       diff.unsafeRemoved.length > 0 ? plural(diff.unsafeRemoved.length, "removed <code>@perm-unsafe</code> override") : "",
@@ -128,6 +132,14 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
     blocks.push({ head: ["| New access | Where it happens | Now reachable from |", "| --- | --- | --- |"], rows, tail: [""] });
   }
 
+  if (uncheckedNew.length > 0) {
+    blocks.push({
+      head: ["**New code PermLang can't check.** It has no types, or no adapter, so what it does isn't in this diff: review it.", ""],
+      rows: uncheckedNew.map((c) => `- ${code(`+ ${uncheckedCode(c).target}`)}: ${uncheckedWhat(c)}${plain(uncheckedAt(c, via))}`),
+      tail: [""],
+    });
+  }
+
   if (diff.unsafeAdded.length > 0 || diff.unsafeChanged.length > 0) {
     const rows = [
       ...diff.unsafeAdded.map((u) => `- ${code(u.key)}: ${plain(clip(u.reason))}`),
@@ -149,12 +161,13 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
     blocks.push({ head: [`**${dependencyHeading(deps)}**`, "", "| Package | What PermLang sees | Install scripts |", "| --- | --- | --- |"], rows: deps.map(dependencyRow), tail: [""] });
   }
 
-  if (losing.length > 0 || diff.unsafeRemoved.length > 0) {
+  if (losing.length > 0 || diff.unsafeRemoved.length > 0 || uncheckedGone.length > 0) {
     blocks.push({
       head: ["<details><summary>Removed access</summary>", ""],
       rows: [
         ...losing.map((f) => `- ${code(f.name)} (${plain(f.file)}): ${f.removed.map((c) => code(`- ${c}`)).join(", ")}`),
         ...diff.unsafeRemoved.map((u) => `- ${code(u.key)}: <code>@perm-unsafe</code> removed`),
+        ...uncheckedGone.map((c) => `- ${code(`- ${uncheckedCode(c).target}`)}: no longer ${uncheckedWhat(c)}`),
       ],
       tail: ["", "</details>", ""],
     });
@@ -297,10 +310,17 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   if (notes.baseMissing) out.push(`There's no ${lock} at the base commit, so everything is listed as new.`);
   const header = out.length;
 
-  const { settings, access } = split(diff);
+  const { settings, access, unchecked } = split(diff);
   if (settings.length > 0) {
     const rows = settings.flatMap((s) => [...s.added.map((c) => `  + ${printable(s.file)}: ${printable(c)}`), ...s.removed.map((c) => `  - ${printable(s.file)}: ${printable(c)}`)]);
     out.push(["Check settings changed:", ...rows].join("\n"));
+  }
+  if (unchecked.length > 0) {
+    const rows = unchecked.flatMap((f) => [
+      ...f.added.map((c) => `  + ${printable(uncheckedCode(c).target)}: ${uncheckedWhat(c)}${printable(uncheckedAt(c, via))}`),
+      ...f.removed.map((c) => `  - ${printable(uncheckedCode(c).target)}: no longer ${uncheckedWhat(c)}`),
+    ]);
+    out.push(["New code PermLang can't check:", ...rows].join("\n"));
   }
   for (const f of access) {
     const head = `${printable(f.file)} ${printable(f.name)}${f.status === "added" ? " (new)" : f.status === "removed" ? " (removed)" : ""}`;
@@ -342,12 +362,25 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
 
 // --- helpers -------------------------------------------------------------------
 
-/** Settings changes (in configuration entries), apart from changes in what code and configuration reach. */
-function split(diff: LockDiff): { settings: FunctionChange[]; access: FunctionChange[] } {
+/**
+ * Settings changes (in configuration entries), and changes in the code PermLang can't check
+ * (unchecked.ts), apart from changes in what code and configuration reach.
+ */
+function split(diff: LockDiff): { settings: FunctionChange[]; access: FunctionChange[]; unchecked: FunctionChange[] } {
   const settings: FunctionChange[] = [];
   const access: FunctionChange[] = [];
-  for (const f of diff.functions) (isConfigKey(f.key) && [...f.added, ...f.removed].every(isSetting) ? settings : access).push(f);
-  return { settings, access };
+  const unchecked: FunctionChange[] = [];
+  for (const f of diff.functions) {
+    if (isUncheckedKey(f.key)) unchecked.push(f);
+    else (isConfigKey(f.key) && [...f.added, ...f.removed].every(isSetting) ? settings : access).push(f);
+  }
+  return { settings, access, unchecked };
+}
+
+/** Where code PermLang can't check is first imported or called, from its entry's `via`: ", in src/app.ts:3". */
+function uncheckedAt(capability: string, via: ViaPaths): string {
+  const where = Object.entries(via).find(([key]) => isUncheckedKey(key))?.[1][capability]?.[0];
+  return where === undefined ? "" : `, ${uncheckedCode(capability).kind === "import" ? "in" : "called in"} ${where}`;
 }
 
 /** Whether the code and the working tree's lock differ at all. */

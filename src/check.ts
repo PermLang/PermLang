@@ -17,7 +17,7 @@ import { findTools, handlerReach } from "./tools.js";
 import { flowDiagnostics, type FlowRule } from "./flows.js";
 import { failureReason, projectOfFiles, projectOfTsConfig, unparsedReason } from "./load.js";
 import { clearResolutionCache, resolveAlias } from "./detect/shared.js";
-import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
+import { isRelative, unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
 import { unseenFrom } from "./unseen.js";
 import { forEachDescendant, lineAndColumn } from "./walk.js";
 import { collectEdges, holderOf, pathTo, propagate, type Edge, type GraphContext, type Reach } from "./graph.js";
@@ -82,8 +82,11 @@ export interface FunctionReport {
   actual: string[];
   /** For each actual capability: the units on the way to it, then the call that uses it. */
   via: Record<string, string[]>;
-  /** For each actual capability: where in this function it's reached (a direct use, or the call leading to it). */
-  sites: Record<string, { line: number; column: number }>;
+  /**
+   * For each actual capability: where in this function it's reached (a direct use, or the call
+   * leading to it); in another file than `file` for the entry of code PermLang can't check.
+   */
+  sites: Record<string, { line: number; column: number; file?: string }>;
   /** A configuration file (a workflow, an Action, package.json) rather than code; see project-files.ts. */
   kind?: "config";
 }
@@ -117,6 +120,8 @@ export interface Report {
   unmapped: UnmappedPackage[];
   /** Imported modules whose types can't be found, so nothing called from them is checked. */
   unresolved: string[];
+  /** Where each of them is imported: the first import of each module (see unresolvedImports). */
+  unresolvedImports?: { specifier: string; file: string; line: number }[];
   /** Every function analyzed, including those that reach nothing (which `functions` leaves out). */
   units: {
     file: string;
@@ -313,7 +318,9 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         message: `imports ${u.specifier}, whose types can't be found, so nothing called from it is checked.`,
         fix: /^node:|^(fs|child_process|http|https|net|path|os|crypto)$/.test(u.specifier)
           ? "install @types/node."
-          : `install its types (the package itself, or @types/${u.specifier.replace(/^@/, "").replace("/", "__")}).`,
+          : isRelative(u.specifier)
+            ? "convert it to TypeScript, so PermLang can check it."
+            : `install its types (the package itself, or @types/${u.specifier.replace(/^@/, "").replace("/", "__")}).`,
       });
     }
   }
@@ -361,7 +368,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
     diagnostics: checked,
     unsafe,
     unmapped,
-    unresolved: unresolved.map((u) => u.specifier).sort(),
+    unresolved: [...new Set(unresolved.map((u) => u.specifier))].sort(),
+    unresolvedImports: unresolved.map(({ specifier, file, line }) => ({ specifier, file, line })),
     units: [...units.values()].map((u) => ({
       file: u.file,
       name: u.name,
