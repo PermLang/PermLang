@@ -15,7 +15,7 @@ import { DEFAULT_LOCK, parseArgs, type Args } from "./args.js";
 import { YamlFile, type Value } from "./yaml-nodes.js";
 
 /** A workflow or Action file, or undefined when it doesn't exist. */
-type Reader = (file: string) => string | undefined;
+export type Reader = (file: string) => string | undefined;
 
 /**
  * The lock files the base commit's workflows check with that this change no longer reads, when
@@ -42,9 +42,15 @@ export function movedLocks(base: string, lockFile: string | undefined): string[]
   return [...read].filter((lock) => !stillRead.has(lock) && gitText(root, "cat-file", "-e", `${base}:${lock}`) !== undefined).sort();
 }
 
-/** The lock files the PermLang steps in these workflows read, from the repository root; steps whose lock can't be told are left out. */
-export function locksRead(files: readonly string[], read: Reader): Set<string> {
-  const locks = new Set<string>();
+/** A step that runs the PermLang Action, with its `working-directory` and `args` as written (undefined when not set). */
+export interface PermLangStep {
+  workingDirectory?: string;
+  args?: string;
+}
+
+/** The steps in these workflows that run the PermLang Action. */
+export function permLangSteps(files: readonly string[], read: Reader): PermLangStep[] {
+  const found: PermLangStep[] = [];
   for (const file of files) {
     const yaml = parse(read(file));
     if (!yaml) continue;
@@ -52,24 +58,34 @@ export function locksRead(files: readonly string[], read: Reader): Set<string> {
       for (const job of yaml.fields(jobs)) {
         for (const steps of yaml.get(job.value, "steps")) {
           for (const step of yaml.items(steps)) {
-            const lock = stepLock(yaml, step, read);
-            if (lock !== undefined) locks.add(lock);
+            const uses = scalar(yaml, yaml.get(step, "uses"));
+            if (uses === undefined || !isPermLang(uses, read)) continue;
+            const inputs = yaml.get(step, "with");
+            const input = (name: string) => scalar(yaml, inputs.flatMap((w) => yaml.get(w, name)));
+            const [workingDirectory, args] = [input("working-directory"), input("args")];
+            found.push({ ...(workingDirectory !== undefined ? { workingDirectory } : {}), ...(args !== undefined ? { args } : {}) });
           }
         }
       }
     }
   }
+  return found;
+}
+
+/** The lock files the PermLang steps in these workflows read, from the repository root; steps whose lock can't be told are left out. */
+export function locksRead(files: readonly string[], read: Reader): Set<string> {
+  const locks = new Set<string>();
+  for (const step of permLangSteps(files, read)) {
+    const lock = stepLock(step);
+    if (lock !== undefined) locks.add(lock);
+  }
   return locks;
 }
 
-/** The lock a PermLang step reads; undefined for another step, or one whose inputs come from an expression. */
-function stepLock(yaml: YamlFile, step: Value, read: Reader): string | undefined {
-  const uses = scalar(yaml, yaml.get(step, "uses"));
-  if (uses === undefined || !isPermLang(uses, read)) return undefined;
-  const inputs = yaml.get(step, "with");
-  const input = (name: string) => scalar(yaml, inputs.flatMap((w) => yaml.get(w, name)));
-  const workingDirectory = input("working-directory") ?? ".";
-  const argText = input("args") ?? "";
+/** The lock a PermLang step reads; undefined when its inputs come from an expression, or don't parse. */
+function stepLock(step: PermLangStep): string | undefined {
+  const workingDirectory = step.workingDirectory ?? ".";
+  const argText = step.args ?? "";
   if (`${workingDirectory}${argText}`.includes("${{")) return undefined;
   let args: Args;
   try {

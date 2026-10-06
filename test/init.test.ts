@@ -2,10 +2,11 @@
 // temporary directory.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parse } from "yaml";
 import { runCli } from "./run-cli.js";
 
 let dir: string;
@@ -168,5 +169,99 @@ describe("permlang init", () => {
     const { code, out } = permlang("check", "src");
     expect(code).toBe(1);
     expect(out).toMatch(/PERM005: ping can now reach net\(data-broker\.io\)/);
+  });
+});
+
+// The workflow init writes, as the second verification found it: options left out, so the first
+// pull request failed or the gate stopped comparing; dependencies installed where the project
+// isn't; names YAML read as something else; and two folders sharing one workflow file.
+describe("permlang init --workflow", () => {
+  /** The PermLang step's inputs, and the workflow's name, as GitHub reads the file. */
+  const read = (file: string) => {
+    const workflow = parse(readFileSync(path.join(dir, ".github", "workflows", file), "utf8")) as {
+      name: string;
+      jobs: { permissions: { steps: { uses?: string; run?: string; "working-directory"?: string; with?: Record<string, string> }[] } };
+    };
+    const steps = workflow.jobs.permissions.steps;
+    return { name: workflow.name, inputs: steps.find((s) => s.uses?.startsWith("PermLang/"))!.with ?? {}, install: steps.filter((s) => s.run && /install|npm ci/.test(s.run) && !s.run.includes("corepack")).at(-1)! };
+  };
+  /** The check the Action runs, with the workflow's args split on spaces as it splits them. */
+  const actionCheck = (inputs: Record<string, string>) => runCli(["check", ...(inputs.args ?? "").split(/\s+/).filter(Boolean)], { cwd: path.join(dir, inputs["working-directory"] ?? ".") });
+
+  it("passes --lock, --config, --adapter, and --unmapped on in the workflow's args, so the first pull request passes", () => {
+    git("init", "-q");
+    writeFileSync(path.join(dir, "acme.json"), JSON.stringify({ permlang: 1, package: "acme", functions: {} }));
+    const { code, out } = permlang("init", "src", "--lock", "perm.lock.json", "--config", "cfg.json", "--adapter", "acme.json", "--unmapped", "trust", "--workflow");
+    expect(code).toBe(0);
+    expect(out).toContain("Wrote perm.lock.json");
+    const { inputs } = read("permlang.yml");
+    expect(inputs.args).toBe("src --config cfg.json --adapter acme.json --unmapped trust --lock perm.lock.json");
+    expect(actionCheck(inputs)).toMatchObject({ code: 0 });
+  });
+
+  it("writes paths relative to the folder it runs in, and refuses ones the Action can't read", () => {
+    git("init", "-q");
+    permlang("init", path.join(dir, "src"), "--workflow");
+    expect(read("permlang.yml").inputs.args).toBe("src");
+    rmSync(path.join(dir, ".github"), { recursive: true });
+    for (const lock of ["../outside.json", path.join(tmpdir(), "elsewhere.json")]) {
+      const { code, out } = permlang("init", "src", "--lock", lock, "--workflow");
+      expect(code).toBe(2);
+      expect(out).toMatch(/outside the repository/);
+    }
+    const { code, out } = permlang("init", "src", "--config", "${{secrets.X}}.json", "--workflow");
+    expect(code).toBe(2);
+    expect(out).toMatch(/GitHub reads it as an expression/);
+  });
+
+  it("quotes names YAML would read as something else", () => {
+    git("init", "-q");
+    for (const folder of ["packages/@acme/api", "#x", "[a]", "my app", "1e3"]) {
+      mkdirSync(path.join(dir, folder, "src"), { recursive: true });
+      writeFileSync(path.join(dir, folder, "src", "app.ts"), "export function ok() { return 1; }\n");
+      expect(runCli(["init", "src", "--workflow"], { cwd: path.join(dir, folder) }).code).toBe(0);
+    }
+    const files = readdirSync(path.join(dir, ".github", "workflows"));
+    const folders = files.map((f) => read(f).inputs["working-directory"]).sort();
+    expect(folders).toEqual(["#x", "1e3", "[a]", "my app", "packages/@acme/api"]);
+    expect(files.map((f) => read(f).name)).toContain("PermLang (packages/@acme/api)");
+  });
+
+  it("gives two folders that would share a workflow file one each", () => {
+    git("init", "-q");
+    for (const folder of ["packages/web", "packages_web"]) {
+      mkdirSync(path.join(dir, folder, "src"), { recursive: true });
+      writeFileSync(path.join(dir, folder, "src", "app.ts"), "export function ok() { return 1; }\n");
+      const { code, out } = runCli(["init", "src", "--workflow"], { cwd: path.join(dir, folder) });
+      expect(code).toBe(0);
+      expect(out).toMatch(/Wrote .*\.github\/workflows\/permlang-packages-web/);
+    }
+    const files = readdirSync(path.join(dir, ".github", "workflows")).sort();
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => read(f).inputs["working-directory"]).sort()).toEqual(["packages/web", "packages_web"]);
+    // Run again, each finds its own.
+    expect(runCli(["init", "src", "--workflow"], { cwd: path.join(dir, "packages_web") }).out).toMatch(/Kept .*permlang-packages-web/);
+    expect(readdirSync(path.join(dir, ".github", "workflows"))).toHaveLength(2);
+  });
+
+  it("installs dependencies where the nearest lockfile is", () => {
+    git("init", "-q");
+    const backend = path.join(dir, "backend");
+    mkdirSync(path.join(backend, "src"), { recursive: true });
+    writeFileSync(path.join(backend, "src", "app.ts"), "export function ok() { return 1; }\n");
+    writeFileSync(path.join(backend, "package.json"), "{}\n");
+    writeFileSync(path.join(backend, "package-lock.json"), "{}\n");
+    expect(runCli(["init", "src", "--workflow"], { cwd: backend }).code).toBe(0);
+    expect(read("permlang-backend.yml").install).toEqual({ run: "npm ci --ignore-scripts --no-audit --no-fund", "working-directory": "backend" });
+    // With no lockfile, where the nearest package.json is.
+    rmSync(path.join(dir, ".github"), { recursive: true });
+    rmSync(path.join(backend, "package-lock.json"));
+    runCli(["init", "src", "--workflow"], { cwd: backend });
+    expect(read("permlang-backend.yml").install).toEqual({ run: "npm install --ignore-scripts --no-audit --no-fund", "working-directory": "backend" });
+  });
+
+  it("counts functions and configuration entries apart", () => {
+    const { out } = permlang("init", "src", "--workflow");
+    expect(out).toMatch(/Wrote permlang\.lock\.json: 1 function reaches something, across 1 file, and 2 configuration entries record the settings and project files\./);
   });
 });

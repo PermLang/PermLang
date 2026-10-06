@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
 import { COMMANDS, DEFAULT_LOCK, USAGE, UsageError, parseArgs, type Args, type Command } from "./args.js";
@@ -25,6 +25,7 @@ import {
 } from "./check.js";
 import { addedDependencies, type DependencyChange, type PackageJson } from "./deps.js";
 import { commentMarker, formatDiffFailure, formatDiffMarkdown, formatDiffText, formatNoLock, SUMMARY_LIMIT, type DiffNotes, type ViaPaths } from "./diff.js";
+import { workflowArgs, workflowFile, workflowTarget } from "./init-workflow.js";
 import { LOCK_VERSION, LockError, buildLock, diffLocks, isConfigKey, keyed, lockDrift, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { movedLocks } from "./lock-moves.js";
 import { formatAnnotations, formatText, printable, toJson, toSarif } from "./report.js";
@@ -116,7 +117,7 @@ function init(args: Args): number {
   const done: string[] = [];
   // Settled before anything is written, so a path the Action can't use leaves nothing behind.
   const workflow = args.workflow ? workflowTarget() : undefined;
-  const selection = args.workflow ? workflowSelection(args) : "";
+  const actionArgs = workflow ? workflowArgs(args, workflow) : "";
   const configFile = args.config ?? DEFAULT_CONFIG;
   if (existsSync(configFile)) {
     done.push(`Kept ${configFile}.`);
@@ -131,11 +132,11 @@ function init(args: Args): number {
   }
 
   if (workflow) {
-    if (existsSync(workflow.file)) {
+    if (workflow.exists) {
       done.push(`Kept ${workflow.shown}.`);
     } else {
       mkdirSync(path.dirname(workflow.file), { recursive: true });
-      writeFileSync(workflow.file, workflowFile(selection, workflow));
+      writeFileSync(workflow.file, workflowFile(actionArgs, workflow));
       done.push(`Wrote ${workflow.shown}: checks every pull request and comments the permission diff.`);
     }
   }
@@ -152,9 +153,12 @@ function init(args: Args): number {
     const report = analyze({ ...args, strictness: undefined });
     const lock = buildLock(report, path.dirname(lockFile));
     writeFileSync(lockFile, serializeLock(lock));
-    const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-    const reaching = Object.keys(lock.functions).length;
-    done.push(`Wrote ${lockName}: ${count(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${count(report.files, "file")}.`);
+    // Configuration entries (the settings, workflows, package.json scripts) aren't functions.
+    const keys = Object.keys(lock.functions);
+    const reaching = keys.filter((k) => !isConfigKey(k)).length;
+    const config = keys.length - reaching;
+    const entries = config > 0 ? `, and ${plural(config, "configuration entry", "configuration entries")} ${config === 1 ? "records" : "record"} the settings and project files` : "";
+    done.push(`Wrote ${lockName}: ${plural(reaching, "function")} ${reaching === 1 ? "reaches" : "reach"} something, across ${plural(report.files, "file")}${entries}.`);
     unmapped = report.unmapped.length;
   }
 
@@ -167,116 +171,6 @@ function init(args: Args): number {
   ];
   console.log([...done, "", "Next steps:", ...steps.map((s) => `  - ${s}`)].join("\n"));
   return 0;
-}
-
-interface WorkflowTarget {
-  /** The repository root, where install steps run. */
-  root: string;
-  file: string;
-  /** `file` as shown to the user, relative to where init runs. */
-  shown: string;
-  /** Where the project is, relative to the root, when init runs in a subfolder (a monorepo package). */
-  workingDirectory?: string;
-}
-
-/** GitHub only runs workflows from .github/workflows at the repository root. */
-function workflowTarget(): WorkflowTarget {
-  const cwd = realpathSync.native(process.cwd());
-  const root = gitRoot() ?? cwd;
-  const sub = path.relative(root, cwd).replaceAll("\\", "/");
-  const name = sub ? `permlang-${sub.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.yml` : "permlang.yml";
-  const file = path.join(root, ".github", "workflows", name);
-  return { root, file, shown: path.relative(cwd, file).replaceAll("\\", "/"), ...(sub ? { workingDirectory: sub } : {}) };
-}
-
-function gitRoot(): string | undefined {
-  try {
-    const root = execFileSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return root ? realpathSync.native(root) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The repository's default branch, from the remote's HEAD; `main` when that isn't known. */
-function defaultBranch(): string {
-  try {
-    const ref = execFileSync("git", ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const branch = ref.replace(/^origin\//, "");
-    if (branch) return /^[\w./-]+$/.test(branch) ? branch : JSON.stringify(branch);
-  } catch {
-    // No remote, or its HEAD isn't known locally.
-  }
-  return "main";
-}
-
-/**
- * The Action's `args` for the files init checked. Paths use forward slashes, since the Action runs on
- * Linux, and can't contain spaces, since the Action splits `args` on them.
- */
-function workflowSelection(args: Args): string {
-  const paths = (args.project ? [args.project] : args.paths).map((p) => path.posix.normalize(p.replaceAll("\\", "/")).replace(/(.)\/$/, "$1"));
-  const spaced = paths.find((p) => /\s/.test(p));
-  if (spaced !== undefined) {
-    throw new UsageError(`The GitHub Action can't pass a path with spaces in it ("${spaced}"). Rename it, or list the files in a tsconfig.json and use --project.`);
-  }
-  return args.project ? `--project ${paths[0]}` : paths.join(" ");
-}
-
-/**
- * How to install the project's dependencies in CI, from the lockfile at the repository root. PermLang
- * reads code through the TypeScript compiler: without the dependencies' types (`@types/node` above
- * all), file, process, and environment access are invisible. Install scripts are skipped; they aren't
- * needed for types.
- */
-function installSteps(root: string): string[] {
-  const at = (file: string) => path.join(root, file);
-  // pnpm and Yarn come through Corepack, which Node 25 and later no longer ship.
-  const corepack = ["      - run: npm install --global corepack@latest", "      - run: corepack enable"];
-  if (existsSync(at("pnpm-lock.yaml"))) return [...corepack, "      - run: pnpm install --frozen-lockfile --ignore-scripts"];
-  if (existsSync(at("yarn.lock"))) {
-    // Yarn 2 and later (a .yarnrc.yml, or a lockfile with __metadata) skip install scripts with --mode=skip-build.
-    const modern = existsSync(at(".yarnrc.yml")) || readFileSync(at("yarn.lock"), "utf8").includes("__metadata:");
-    return [...corepack, modern ? "      - run: yarn install --immutable --mode=skip-build" : "      - run: yarn install --frozen-lockfile --ignore-scripts"];
-  }
-  if (existsSync(at("package-lock.json"))) return ["      - run: npm ci --ignore-scripts --no-audit --no-fund"];
-  return ["      - run: npm install --ignore-scripts --no-audit --no-fund"];
-}
-
-/** A workflow that runs the PermLang Action on the same files init checked. */
-function workflowFile(selection: string, target: WorkflowTarget): string {
-  const inputs = [
-    ...(target.workingDirectory ? [`          working-directory: ${target.workingDirectory}`] : []),
-    ...(selection ? [`          args: ${selection}`] : []),
-  ];
-  return [
-    target.workingDirectory ? `name: PermLang (${target.workingDirectory})` : "name: PermLang",
-    "",
-    "on:",
-    "  pull_request:",
-    "  merge_group:",
-    "  push:",
-    `    branches: [${defaultBranch()}]`,
-    "",
-    "permissions:",
-    "  contents: read",
-    "  pull-requests: write",
-    "",
-    "jobs:",
-    "  permissions:",
-    "    runs-on: ubuntu-latest",
-    "    steps:",
-    "      - uses: actions/checkout@v7",
-    "      - uses: actions/setup-node@v7",
-    "        with:",
-    "          node-version: lts/*",
-    "      # PermLang needs your dependencies' types (@types/node above all) to see file, process,",
-    "      # and environment access. If you generate code, such as `prisma generate`, add it here too.",
-    ...installSteps(target.root),
-    "      - uses: PermLang/permlang@v0",
-    ...(inputs.length > 0 ? ["        with:", ...inputs] : []),
-    "",
-  ].join("\n");
 }
 
 function check(args: Args): number {
