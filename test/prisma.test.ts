@@ -7,11 +7,14 @@
 // and some first-party code lives under src/prisma/, because a path that merely
 // mentions Prisma once made PermLang treat Stripe and axios calls as database writes.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Node, Project, SyntaxKind } from "ts-morph";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { checkTsConfig, type Report } from "../src/check.js";
+import { prismaCapabilities } from "../src/detect/prisma.js";
+import { removeTemporary } from "./temporary.js";
 
 // --- the schema and its generated client --------------------------------------------
 
@@ -67,7 +70,7 @@ export interface Prisma__${name}Client<T> extends Promise<T> {
 
 function typeMap(ns: string): string {
   const operations = (m: string) =>
-    `findMany: { args: ${ns}${m}FindManyArgs }; findUnique: { args: ${ns}${m}FindUniqueArgs }; create: { args: ${ns}${m}CreateArgs }; update: { args: ${ns}${m}UpdateArgs }; findRaw: { args: object }`;
+    `findMany: { args: ${ns}${m}FindManyArgs }; findUnique: { args: ${ns}${m}FindUniqueArgs }; create: { args: ${ns}${m}CreateArgs }; update: { args: ${ns}${m}UpdateArgs }; findRaw: { args: object }; count: { args: object }`;
   const models = MODELS.map((m) => `${m}: { payload: ${ns}$${m}Payload<ExtArgs>; operations: { ${operations(m)} } }`);
   return `export type TypeMap<ExtArgs = {}> = { meta: { modelProps: ${MODELS.map((m) => `"${accessor(m)}"`).join(" | ")} }; model: { ${models.join("; ")} } };
 // $use middleware, as clients before Prisma 6 declare it: \`next\` runs the operation.
@@ -281,6 +284,8 @@ const ext = prisma.$extends({});
 /** @perm env(NONE) */ export function extendedValue() { return [{}].map(ext.lead.findMany); }
 /** @perm env(NONE) */ export function extendedCall() { return ext.lead.create.call(ext.lead, {}); }
 /** @perm env(NONE) */ export function extendedAlias() { const find = ext.lead.findMany; return find({ include: { owner: true } }); }
+/** @perm env(NONE) */ export function extendedFluentValue() { const lead = ext.lead.findUnique({ where: { id: 1 } }); return [{}].map(lead.owner); }
+/** @perm env(NONE) */ export function extendedFluentAlias() { const owner = ext.lead.findUnique({ where: { id: 1 } }).owner; return owner(); }
 // A member read straight off a cast is looked up on the client's own type.
 /** @perm env(NONE) */ export function castClient() { return (prisma as any).lead.delete({ where: { owner: { email: "x" } } }); }
 /** @perm env(NONE) */ export function castModel() { return (prisma.apiKey as any).delete({ where: { id: 1 } }); }
@@ -326,10 +331,32 @@ const prisma = new PrismaClient();
 const logging: Prisma.Middleware = async (params, next) => next(params);
 /** @perm env(NONE) */ export function installTyped() { prisma.$use(logging); }
 /** @perm env(NONE) */ export function typedParameter(mw: Prisma.Middleware) { return [mw]; }
+// \`next\` handed to a function of the project's, whose own type says nothing of Prisma.
+/** @perm env(NONE) */ export function installForwarding() { prisma.$use(async (params, next) => forward(next, params)); }
+function forward(run: (params: Prisma.MiddlewareParams) => Promise<unknown>, params: Prisma.MiddlewareParams) { return run(params); }
+export function installByCall(mw: Prisma.Middleware) { prisma.$use.call(prisma, mw); }
 `,
   "src/extensions-all.ts": `
 import { PrismaClient } from "@prisma/client";
 export const all = new PrismaClient().$extends({ query: { $allOperations({ args, query }) { return query(args); } } });
+`,
+  // More ways of getting at \`query\` in a query extension's callback.
+  "src/extensions-more.ts": `
+import { PrismaClient } from "@prisma/client";
+export const more = new PrismaClient().$extends({
+  query: {
+    lead: {
+      // An operation whose arguments' type isn't one of the client's aliases: its relations can't be found.
+      count({ query }) { return query({ where: { owner: { email: "x" } } }); },
+      // Destructured from the parameter in the body.
+      findMany(params) { const { args, query } = params; return query({ ...args, include: { tags: true } }); },
+      // Held under another name: what it runs can't be read.
+      update({ args, query }) { const ops = { run: query }; return ops.run(args); },
+      create({ args, query }) { return (args ? query : query)(args); },
+      findUnique({ args, query }) { const { run } = { run: query }; return run(args); },
+    },
+  },
+});
 `,
   // prisma-client-js with a custom output folder, which copies the runtime next to it.
   "src/custom-client.ts": `
@@ -442,7 +469,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  rmSync(path.dirname(root), { recursive: true, force: true, maxRetries: 5 });
+  // Windows can hold the folder open for a while after a check (a virus scanner, say).
+  removeTemporary(path.dirname(root));
 });
 
 /** What a function reaches, sorted. */
@@ -565,6 +593,9 @@ describe("related tables", () => {
     ["extendedValue", ["db.read", "db.write"]],
     ["extendedCall", ["db.read", "db.write"]],
     ["extendedAlias", ["db.read", "db.write"]],
+    // A fluent step passed along could follow its relation with any arguments.
+    ["extendedFluentValue", ["db.read", "db.read(lead)"]],
+    ["extendedFluentAlias", ["db.read", "db.read(lead)"]],
     ["castClient", ["db.read(user)", "db.write(lead)"]],
     ["castModel", ["db.write(apiKey)"]],
     ["castThroughUnknown", ["db.write(user)"]],
@@ -587,6 +618,27 @@ describe("related tables", () => {
   it("works the same with the prisma-client generator's files", () => {
     expect(actual("src/modern-client.ts", "write")).toEqual(["db.write(profile)", "db.write(user)"]);
   });
+
+  // The value-use detector passes no call for `fn.call(thisArg, args)` today. Given that call,
+  // the Prisma detector must still not read `thisArg` as the method's arguments.
+  it("reads no arguments from a .call(...) it's handed", () => {
+    const project = new Project({ tsConfigFilePath: path.join(root, "tsconfig.json") });
+    const callOf = (file: string, callee: string) =>
+      project.getSourceFileOrThrow(path.join(root, file)).getDescendantsOfKind(SyntaxKind.CallExpression).find((c) => c.getExpression().getText() === callee)!;
+    const reach = (file: string, callee: string) => {
+      const call = callOf(file, callee);
+      const access = call.getExpression();
+      if (!Node.isPropertyAccessExpression(access)) throw new Error(callee);
+      const declaration = access.getExpression().getType().getCallSignatures()[0]!.getDeclaration();
+      return prismaCapabilities(declaration, call).map((c) => (c.arg === undefined ? c.name : `${c.name}(${c.arg})`)).sort();
+    };
+    // A model's method: its table, and arguments that could reach any (not `prisma.lead`'s).
+    expect(reach("src/default-client.ts", "prisma.lead.update.call")).toEqual(["db.read", "db.write", "db.write(lead)"]);
+    // An extended client's operation, which names no model then.
+    expect(reach("src/default-client.ts", "ext.lead.create.call")).toEqual(["db.read", "db.write"]);
+    // The client's own method, which touches no table.
+    expect(reach("src/middleware.ts", "prisma.$use.call")).toEqual([]);
+  });
 });
 
 describe("query extensions", () => {
@@ -606,9 +658,22 @@ describe("query extensions", () => {
     expect(actual("src/extensions.ts", name)).toEqual(expected);
   });
 
+  it.each([
+    // Its relations aren't known, so a relation it names could be any table.
+    ["<anonymous>.count", ["db.read", "db.read(lead)"]],
+    ["<anonymous>.findMany", ["db.read", "db.read(lead)", "db.read(tag)"]],
+    ["<anonymous>.update", ["db.read", "db.write"]],
+    ["<anonymous>.create", ["db.read", "db.write"]],
+    ["<anonymous>.findUnique", ["db.read", "db.write"]],
+  ])("%s, taken from its arguments another way", (name, expected) => {
+    expect(actual("src/extensions-more.ts", name)).toEqual(expected);
+  });
+
   it("treats older clients' $use middleware calling next() as any query", () => {
     expect(actual("src/middleware.ts", "install")).toEqual(["db.read", "db.write"]);
     expect(actual("src/middleware.ts", "installTyped")).toEqual(["db.read", "db.write"]);
+    // next() passed along to a function of the project's could run any query there.
+    expect(actual("src/middleware.ts", "installForwarding")).toEqual(["db.read", "db.write"]);
     // A middleware passed around as a value runs nothing by itself.
     expect(actual("src/middleware.ts", "typedParameter")).toEqual([]);
   });

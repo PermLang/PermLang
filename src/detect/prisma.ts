@@ -20,7 +20,7 @@
 // the client it generates into node_modules/.prisma/client, and a client generated
 // into a custom `output` folder, which Prisma marks (isGeneratedClient).
 
-import { Node, SyntaxKind, type ImportDeclaration, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
+import { Node, SyntaxKind, type CallExpression, type ImportDeclaration, type SourceFile, type Symbol as MorphSymbol, type Type } from "ts-morph";
 import { packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { descendantsOfKind } from "../walk.js";
@@ -47,9 +47,8 @@ const FLUENT_TYPES = new Set(["DynamicModelExtensionFluentApi"]);
 
 const raw: Capability[] = [{ name: "db.read", dynamic: true }, { name: "db.write", dynamic: true }];
 
-/** `declaration` is the resolved signature of `call` (absent when the function is used as a value). */
-export function prismaCapabilities(declaration: Node | undefined, call?: CallLike): Capability[] {
-  if (!declaration) return [];
+/** `declaration` is the resolved signature of `call`, which is absent when the function is used as a value. */
+export function prismaCapabilities(declaration: Node, call?: CallLike): Capability[] {
   // A query extension's `query` held in a variable or parameter of the project's: passed
   // along as a value, or called through `.call` or `.apply`, it runs any operation.
   if (!isPrismaClient(declaration)) return holdsInterceptedQuery(declaration) ? raw : [];
@@ -68,6 +67,9 @@ export function prismaCapabilities(declaration: Node | undefined, call?: CallLik
   if (RAW.test(method)) return raw;
   const fluent = /^Prisma__(\w+)Client$/.exec(container)?.[1];
   if (fluent) return relationAccess(method, args, modelNamed(fluent, near), declaration) ?? [];
+  // An extended client's fluent step is a relation in its model's payload: passed along, it
+  // could follow that relation with any arguments.
+  if (/^\$\w+Payload$/.test(container)) return [{ name: "db.read", dynamic: true }];
 
   // An extended client: the runtime types, or the call site, name the model.
   const receiver = indirect ? undefined : receiverOf(call);
@@ -95,7 +97,7 @@ function forModel(method: string, model: Model, args: Arguments): Capability[] {
  */
 function interceptedQuery(declaration: Node, call: CallLike | undefined): Capability[] | undefined {
   if (!isQueryRunner(declaration)) return undefined;
-  const holder = call && Node.isFunctionTypeNode(declaration) ? queryHolder(call) : undefined;
+  const holder = Node.isCallExpression(call) && Node.isFunctionTypeNode(declaration) ? queryHolder(call) : undefined;
   const literal = (key: string) => {
     const type = holder?.getProperty(key)?.getTypeAtLocation(call!);
     return type?.isStringLiteral() ? String(type.getLiteralValue()) : undefined;
@@ -105,7 +107,7 @@ function interceptedQuery(declaration: Node, call: CallLike | undefined): Capabi
   if (model === undefined || operation === undefined) return raw;
   // The model's relations are in the generated client, where its argument types are declared.
   const argsType = holder!.getProperty("args")?.getTypeAtLocation(call!);
-  const near = (argsType?.getAliasSymbol() ?? argsType?.getSymbol())?.getDeclarations()[0]?.getSourceFile();
+  const near = argsType?.getAliasSymbol()?.getDeclarations()[0]?.getSourceFile();
   const target = near ? modelNamed(model, near) : { table: accessor(model), payload: undefined };
   return forModel(operation, target, argumentsOf(call!)[0]);
 }
@@ -114,15 +116,14 @@ function interceptedQuery(declaration: Node, call: CallLike | undefined): Capabi
  * The object a query extension's `query` was taken from: the parameter destructured in
  * `findMany({ args, query })` (or `{ query: run }`), or `params` in `params.query(...)`.
  */
-function queryHolder(call: CallLike): Type | undefined {
-  if (Node.isTaggedTemplateExpression(call)) return undefined;
+function queryHolder(call: CallExpression): Type | undefined {
   const callee = unwrapExpression(call.getExpression());
   if (Node.isPropertyAccessExpression(callee)) return callee.getName() === "query" ? unwrapExpression(callee.getExpression()).getType() : undefined;
   const binding = Node.isIdentifier(callee) ? callee.getSymbol()?.getDeclarations()[0] : undefined;
   if (!binding || !Node.isBindingElement(binding)) return undefined;
   if ((binding.getPropertyNameNode()?.getText() ?? binding.getName()) !== "query") return undefined;
-  const owner = binding.getParentOrThrow().getParentOrThrow();
-  return Node.isParameterDeclaration(owner) || Node.isVariableDeclaration(owner) ? owner.getType() : undefined;
+  // The pattern's type is the type of what's destructured: a parameter's, or a variable's initializer's.
+  return binding.getParentOrThrow().getType();
 }
 
 /**
@@ -194,10 +195,8 @@ function holdsModels(type: Type, at: Node): boolean {
   if (!parts.some((t) => fromPrisma(t.getAliasSymbol()) || fromPrisma(t.getSymbol())) && !type.getProperties().some(fromPrisma)) return false;
   return type.getNonNullableType().getProperties().some((p) => {
     const member = p.getTypeAtLocation(at);
-    return [member, ...(member.isIntersection() ? member.getIntersectionTypes() : [])].some((t) => {
-      const named = t.getAliasSymbol() ?? t.getSymbol();
-      return named !== undefined && /(Delegate|DynamicModelExtensionThis)$/.test(named.getName()) && named.getDeclarations().some((d) => isPrismaClient(d));
-    });
+    const named = member.getAliasSymbol() ?? member.getSymbol();
+    return named !== undefined && /(Delegate|DynamicModelExtensionThis)$/.test(named.getName()) && named.getDeclarations().some((d) => isPrismaClient(d));
   });
 }
 
