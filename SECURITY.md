@@ -29,8 +29,9 @@ rather stay anonymous.
 
 - **A bypass:** code that reaches the network, files, a database, environment
   variables, or processes without PermLang reporting it, when it isn't one of the
-  documented [known limits](docs/reference.md#known-limits). This is the most
-  important kind of report.
+  documented [known limits](docs/reference.md#known-limits). So is a pull request
+  that adds access, or loosens the check, without the check failing or the
+  comment showing it. This is the most important kind of report.
 - **A problem in PermLang itself**, for example in the GitHub Action or the
   pull-request comment it posts.
 
