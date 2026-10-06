@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseArgs } from "../src/args.js";
 import { runCli } from "./run-cli.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
@@ -102,6 +103,8 @@ describe("permlang diff --head", () => {
     const { code, out } = permlang("diff", "HEAD", "my lib", "--head", "HEAD");
     expect(code).toBe(0);
     expect(out).toContain("No permission changes");
+    // Comparing two commits, nothing is said about the working tree's workflows, but the field is there.
+    expect(JSON.parse(permlang("diff", "HEAD", "my lib", "--head", "HEAD", "--json").out)).toMatchObject({ head: "HEAD", lockMoved: [], lockDeleted: false });
   });
 
   it("says so when the lock doesn't exist at that commit", () => {
@@ -308,6 +311,76 @@ describe("options a command doesn't take", () => {
     const { code, out } = permlang("diff", "HEAD", "--workflow", "--format", "markdown");
     expect(code).toBe(2);
     expect(out).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n\n> \[!CAUTION\]\n> \*\*PermLang couldn't compute the permission diff\*\*.*diff doesn't take --workflow/);
+  });
+
+  it("prints the no-lock notice, which the Action recognizes, when neither commit has a lock file", () => {
+    git("commit", "-q", "--allow-empty", "-m", "empty");
+    const { code, out } = permlang("diff", "HEAD", "my lib", "--format", "markdown");
+    expect(code).toBe(2);
+    expect(out).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n\nThere's no <code>permlang\.lock\.json<\/code> in this pull request or at its base commit/);
+    expect(out).toContain("<!-- permlang-status: no-lock -->\nNo permlang.lock.json. Run `permlang lock` first.");
+    // In text there's only the error.
+    expect(permlang("diff", "HEAD", "my lib")).toEqual({ code: 2, out: "No permlang.lock.json. Run `permlang lock` first.\n" });
+  });
+});
+
+describe("each option", () => {
+  it("sets what it names, and repeats where it can", () => {
+    const diff = ["HEAD", "src", "--project", "a.json", "--config", "c.json", "--adapter", "x.json", "--adapter", "y.json", "--strictness", "sketch", "--unmapped", "trust", "--lock", "l.json"];
+    const flags = ["--no-lock", "--require-lock", "--json", "--github-annotations", "--sarif", "s.sarif", "--head", "h", "--format", "markdown", "--summary", "s.md"];
+    expect(parseArgs("diff", [...diff, ...flags])).toEqual({
+      paths: ["HEAD", "src"],
+      project: "a.json",
+      config: "c.json",
+      adapters: ["x.json", "y.json"],
+      strictness: "sketch",
+      unmapped: "trust",
+      lock: "l.json",
+      noLock: true,
+      requireLock: true,
+      json: true,
+      githubAnnotations: true,
+      sarif: "s.sarif",
+      head: "h",
+      format: "markdown",
+      summary: "s.md",
+      workflow: false,
+      specs: [],
+    });
+    expect(parseArgs("check", ["-p", "t.json", "--base", "b"])).toMatchObject({ project: "t.json", base: "b", paths: [] });
+    expect(parseArgs("spec", ["--spec", "a.perm", "--spec", "b.perm"]).specs).toEqual(["a.perm", "b.perm"]);
+    expect(parseArgs("init", ["--workflow"]).workflow).toBe(true);
+  });
+
+  it("-p is --project", () => {
+    write("tsconfig.app.json", JSON.stringify({ include: ["my lib"] }));
+    expect(permlang("check", "-p", "tsconfig.app.json", "--no-lock", "--json").out).toBe(permlang("check", "--project", "tsconfig.app.json", "--no-lock", "--json").out);
+  });
+});
+
+// The Action puts the diff in the job summary uncut, where GitHub takes far more than in a comment.
+describe("permlang diff --summary", () => {
+  it("also writes the markdown diff, uncut, to the file it names", () => {
+    permlang("lock", "my lib");
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    const many = Array.from({ length: 600 }, (_, i) => `export async function f${i}() {\n  return fetch("https://host-${i}-${"x".repeat(60)}.example/");\n}\n`).join("");
+    writeFileSync(path.join(dir, "my lib", "app.ts"), many);
+    const { code, out } = permlang("diff", "HEAD", "my lib", "--format", "markdown", "--summary", "summary.md");
+    expect(code).toBe(0);
+    expect(out).toMatch(/Cut short/);
+    const summary = readFileSync(path.join(dir, "summary.md"), "utf8");
+    expect(summary).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n/);
+    expect(summary).not.toMatch(/Cut short/);
+    expect(summary.split("\n").filter((l) => l.startsWith("| <code>+ net("))).toHaveLength(600);
+    // Whatever the output format.
+    expect(permlang("diff", "HEAD", "my lib", "--json", "--summary", "summary2.md").code).toBe(0);
+    expect(readFileSync(path.join(dir, "summary2.md"), "utf8")).toBe(summary);
+  });
+
+  it("is an option of diff alone, and needs a file", () => {
+    expect(permlang("check", "my lib", "--summary", "s.md")).toMatchObject({ code: 2, out: expect.stringMatching(/^check doesn't take --summary: it's an option of diff\./) });
+    expect(permlang("diff", "HEAD", "--summary")).toMatchObject({ code: 2, out: expect.stringMatching(/^--summary needs a value\./) });
   });
 });
 
