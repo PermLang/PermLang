@@ -377,7 +377,7 @@ export function nodeRequestHost(args: readonly Node[], index: number): string | 
   const input = args[index] && unwrapExpression(args[index]);
   if (!input) return undefined;
   if (Node.isObjectLiteralExpression(input)) {
-    if (redirects(input, REDIRECTING_OPTIONS)) return undefined;
+    if (redirects(input, REDIRECTING_OPTIONS) || agentRedirects(input)) return undefined;
     const hostname = propertyValue(input, "hostname");
     // Without a hostname or host, Node connects to localhost; the reference treats that as unknown.
     return hostname === "absent" ? optionHost(input, "host") : hostname === "unknown" ? undefined : hostName(hostname);
@@ -385,29 +385,111 @@ export function nodeRequestHost(args: readonly Node[], index: number): string | 
   const host = hostOf(input);
   const options = args[index + 1] && unwrapExpression(args[index + 1]);
   // No options, or a callback, leaves the URL's host; options that aren't written out could replace it.
-  if (!options || options.getType().getCallSignatures().length > 0) return host;
+  if (!options || isCallback(options)) return host;
   if (!Node.isObjectLiteralExpression(options)) return undefined;
-  if (redirects(options, REDIRECTING_OPTIONS)) return undefined;
+  if (redirects(options, REDIRECTING_OPTIONS) || agentRedirects(options)) return undefined;
   const hostname = propertyValue(options, "hostname");
   return hostname === "absent" ? host : hostname === "unknown" ? undefined : hostName(hostname);
 }
 
+// What a socket's options can connect to instead of a host: a local socket, or an open one.
+const SOCKET_REDIRECTS = ["path", "socket", ...REDIRECTING_OPTIONS];
+
 /**
  * Where Node's net.connect and tls.connect connect: an options object's `host` (its `hostname`
- * is ignored, and a `path` is a local socket), or `connect(port, host)`.
+ * is ignored, and a `path` is a local socket), or `connect(port, host)`. tls.connect also takes
+ * `connect(port, host, options)` and merges the options over the host, so their `host` wins;
+ * net ignores them. Options that set (or may set) a different host leave it unknown either way.
  */
 export function nodeSocketHost(args: readonly Node[], index: number): string | undefined {
   const first = args[index] && unwrapExpression(args[index]);
   if (!first) return undefined;
   if (Node.isObjectLiteralExpression(first)) {
-    return redirects(first, ["path", "socket", ...REDIRECTING_OPTIONS]) ? undefined : optionHost(first, "host");
+    return redirects(first, SOCKET_REDIRECTS) ? undefined : optionHost(first, "host");
   }
   const type = first.getType();
   if (!type.isNumber() && !type.isNumberLiteral()) return undefined; // a socket path, or options that can't be read
+  const written = args[index + 1];
+  const host = written && !isCallback(unwrapExpression(written)) ? hostName(written) : undefined;
   const options = args[index + 2] && unwrapExpression(args[index + 2]);
-  if (options && (!Node.isObjectLiteralExpression(options) || redirects(options, ["path", "socket", ...REDIRECTING_OPTIONS]))) return undefined;
-  const host = args[index + 1];
-  return host ? hostName(host) : undefined;
+  // A callback (`connect(port, host, onConnect)`) isn't options.
+  if (!options || isCallback(options)) return host;
+  if (!Node.isObjectLiteralExpression(options) || redirects(options, SOCKET_REDIRECTS)) return undefined;
+  return sameHost(options, host);
+}
+
+/**
+ * Where Node's http2.connect(authority, options) connects: the authority's host, unless the
+ * options set another. Node passes them on to net.connect or tls.connect, where their `host`
+ * wins over the authority's, and a `path`, `socket`, `lookup`, or `createConnection` goes
+ * somewhere else. Options that aren't written out could do any of that.
+ */
+export function nodeSessionHost(args: readonly Node[], index: number): string | undefined {
+  const host = hostOf(args[index]);
+  const options = args[index + 1] && unwrapExpression(args[index + 1]);
+  if (!options || isCallback(options)) return host;
+  if (!Node.isObjectLiteralExpression(options) || redirects(options, SOCKET_REDIRECTS)) return undefined;
+  return sameHost(options, host);
+}
+
+/** `host`, if options merged over it leave it: they don't set `host`, or set the same one. */
+function sameHost(options: ObjectLiteralExpression, host: string | undefined): string | undefined {
+  const value = propertyValue(options, "host");
+  if (value === "absent") return host;
+  return value !== "unknown" && hostName(value) === host ? host : undefined;
+}
+
+/** A function given where options could be: a callback. */
+function isCallback(node: Node): boolean {
+  return node.getType().getCallSignatures().length > 0;
+}
+
+/**
+ * Whether an http(s) request's `agent` option could connect somewhere other than its host. An
+ * agent makes the connection, so only none (`false`, `undefined`, or absent) or a written-out
+ * `new http.Agent({...})` / `new https.Agent({...})` without a spread or a redirecting option
+ * leaves the host as written; any other agent (a variable, a subclass) could have its own
+ * `lookup` or `createConnection`.
+ */
+function agentRedirects(options: ObjectLiteralExpression): boolean {
+  const agent = propertyValue(options, "agent");
+  if (agent === "absent") return false;
+  if (agent === "unknown") return true;
+  const value = Node.isShorthandPropertyAssignment(agent) ? agent : unwrapExpression(agent);
+  if (value.getKind() === SyntaxKind.FalseKeyword || (Node.isIdentifier(value) && value.getText() === "undefined")) return false;
+  const construct = agentConstruction(value);
+  if (!construct) return true;
+  const [config] = construct.getArguments();
+  const literal = config && unwrapExpression(config);
+  return literal !== undefined && (!Node.isObjectLiteralExpression(literal) || redirects(literal, REDIRECTING_OPTIONS));
+}
+
+/**
+ * The `new http.Agent(...)` or `new https.Agent(...)` an agent option is: written in place, or
+ * held by a `const` the program never changes (`const agent = new https.Agent({ keepAlive: true })`;
+ * see isWritten). Undefined for anything else, a subclass included.
+ */
+function agentConstruction(value: Node): NewExpression | undefined {
+  let construct = value;
+  if (Node.isIdentifier(value) || Node.isShorthandPropertyAssignment(value)) {
+    // In `{ agent }`, the name is also the value.
+    const declaration = (Node.isShorthandPropertyAssignment(value) ? value.getValueSymbol() : value.getSymbol())?.getDeclarations()[0];
+    const name = Node.isVariableDeclaration(declaration) && isConst(declaration) ? declaration.getNameNode() : undefined;
+    const initializer = declaration && Node.isVariableDeclaration(declaration) ? declaration.getInitializer() : undefined;
+    if (!Node.isIdentifier(name) || !initializer || isWritten(name)) return undefined;
+    construct = unwrapExpression(initializer);
+  }
+  return Node.isNewExpression(construct) && isNodeAgent(construct) ? construct : undefined;
+}
+
+/** `new http.Agent(...)` or `new https.Agent(...)`: Node's own agent class, not a subclass. */
+function isNodeAgent(construct: NewExpression): boolean {
+  const declarations = construct.getType().getSymbol()?.getDeclarations() ?? [];
+  return declarations.length > 0 && declarations.every((d) => {
+    if (!Node.isClassDeclaration(d) || d.getName() !== "Agent") return false;
+    const module = d.getFirstAncestor((a) => Node.isModuleDeclaration(a) && Node.isStringLiteral(a.getNameNode()));
+    return Node.isModuleDeclaration(module) && /^(node:)?https?$/.test(module.getNameNode().getText().slice(1, -1));
+  });
 }
 
 /** Whether an options object sets, or may set, any of `keys`. */

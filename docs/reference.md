@@ -67,13 +67,28 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     and ignores a `url` option; after a URL, an options `hostname` replaces the
     URL's host but a `host` doesn't (Node's URL parsing sets `hostname`); `net`
     and `tls` connect to `host` (or `connect(port, host)`) and ignore
-    `hostname`. Other libraries' options must name one host in all of `url`,
-    `hostname`, and `host`. A spread, an accessor, a computed key, or a
+    `hostname`. `tls.connect(port, host, options)` merges the options over the
+    host argument, so their `host` wins: options that set a different one (or
+    may, with a spread or computed key) need bare `net`. `http2.connect(url,
+    options)` hands its options to `net` or `tls` the same way, so a `host`,
+    `path`, `socket`, `lookup`, or `createConnection` there, or options that
+    aren't written out, need bare `net`. An `http` / `https` request's `agent`
+    makes the connection, so any agent other than none (`false`, `undefined`) or
+    Node's own `new http.Agent({...})` / `new https.Agent({...})` without a
+    spread or redirecting option (written in place, or held by a `const` the
+    program never changes) needs bare `net`: a subclass or an agent passed in
+    could connect anywhere. `fetch`'s `dispatcher` option (Node's undici agent)
+    does the same, so options that set one, may set one, or aren't written out
+    where they're used need bare `net`; ordinary written-out options (`method`,
+    `headers`, `body`, ...) keep the URL's host. Other libraries' options must
+    name one host in all of `url`, `hostname`, and `host`. A spread, an
+    accessor, a computed key, or a
     `socketPath`, `lookup`, or `createConnection` option (or a `path` for `net`
     and `tls`) could send the connection anywhere, so it needs bare `net`. So do
     options that aren't written out where they're used (a variable, even one that
     may be `undefined`), and a first argument to `net.connect` or `tls.connect`
-    that isn't a port number or written-out options.
+    that isn't a port number or written-out options. A callback where options
+    could be (`net.connect(port, host, onConnect)`) isn't options.
   - `fs.read` / `fs.write`: `readFile` and `createReadStream` with a writing
     `flag` / `flags` option (`"w"`, `"a+"`, or one that can't be read) write the
     file, and used as values they could be called with any flags, as `open` can.
@@ -380,6 +395,13 @@ Other gaps, not yet in fixtures:
 - Third-party packages without an adapter: what they touch is trusted. They are
   listed in every report and warned about (PERM006; see below).
 - A `ProcessEnv` received as a parameter typed as a plain object.
+- A library client's options that route a request through something else
+  aren't read: axios's `proxy`, `httpAgent`, and `httpsAgent`, node-fetch's
+  `agent`, or a `dispatcher` given to the `undici` package's own `request()` or
+  `fetch()`. The host is taken from the URL. (Node's `http`, `https`, `http2`,
+  `tls`, and the global `fetch` read theirs; see `net` above.) An `http.Agent`
+  held by a `const` is trusted unless the program writes to that `const` where
+  it's named; one passed to a function that changes it isn't followed.
 - The browser loading a resource for the page (an image's `src`, a script or
   stylesheet element, a CSS `url()`) or leaving it (`location.href = url`,
   `window.open(url)`, a form submission), which reaches the network without a
