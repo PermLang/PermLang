@@ -271,6 +271,10 @@ const PURE_CALLS = new Set([
   "ABS", "ROUND", "FLOOR", "CEIL", "CEILING", "MOD", "POWER", "SQRT", "CAST", "TO_CHAR", "TO_DATE",
   "TO_TIMESTAMP", "DATE", "JSON_BUILD_OBJECT", "JSONB_BUILD_OBJECT", "JSON_AGG", "JSONB_AGG",
   "ARRAY_AGG", "STRING_AGG", "GROUP_CONCAT", "ROW_NUMBER", "RANK", "DENSE_RANK",
+  // Built-in clocks and generators, common in column defaults: Postgres's, MySQL's, SQLite's.
+  "GEN_RANDOM_UUID", "RANDOM", "RAND", "UUID", "CLOCK_TIMESTAMP", "STATEMENT_TIMESTAMP",
+  "TRANSACTION_TIMESTAMP", "CURRENT_TIMESTAMP", "UTC_TIMESTAMP", "UNIXEPOCH", "DATETIME", "STRFTIME",
+  "JULIANDAY",
   // Syntax that takes parentheses.
   "IN", "EXISTS", "ANY", "ALL", "SOME", "VALUES", "ARRAY", "ROW", "OVER", "FILTER", "CONFLICT",
 ]);

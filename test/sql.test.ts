@@ -69,6 +69,9 @@ describe("sqlTables: understood statements", () => {
     ["SELECT $1::numeric(10,2), amount::varchar(255) FROM leads", { read: ["leads"], write: [] }],
     ["SELECT data['name'], data['a']['b'] FROM leads", { read: ["leads"], write: [] }],
     ["SELECT * FROM leads WHERE id = :id AND tag = @tag", { read: ["leads"], write: [] }],
+    // Built-in clocks and generators, which drizzle column defaults put into inserts.
+    ["SELECT gen_random_uuid(), random(), clock_timestamp(), current_timestamp(3)", { read: [], write: [] }],
+    ["SELECT uuid(), rand(), utc_timestamp(), unixepoch(), datetime('now'), strftime('%s', 'now'), julianday('now')", { read: [], write: [] }],
   ])("%s", (sql, expected) => {
     expect(sqlTables(sql)).toEqual(expected);
   });

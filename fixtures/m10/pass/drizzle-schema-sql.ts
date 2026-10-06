@@ -7,6 +7,9 @@ const leads = pgTable("leads", {
   id: text("id").$defaultFn(() => "generated"),
   touched: text("touched").$onUpdateFn(() => String(Date.now())),
   slug: text("slug").default(sql`gen_random_uuid()`),
+  // SQL with no table in it, which the insert or update then holds.
+  uid: text("uid").$defaultFn(() => sql`gen_random_uuid()`),
+  seen: text("seen").$onUpdate(() => sql`current_timestamp`),
 });
 const db = drizzle("postgres://localhost/app");
 
