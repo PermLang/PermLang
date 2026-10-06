@@ -44,18 +44,20 @@ export function projectOfFiles(files: readonly string[], compilerOptions: ts.Com
 }
 
 /**
- * The project a tsconfig.json describes.
+ * The project a tsconfig.json describes, and every file it imports. With "noResolve", TypeScript
+ * leaves imported files out of its program, but they still run: the check resolves them anyway.
  * @perm fs.read
  */
 export function projectOfTsConfig(tsConfigFilePath: string): Project {
   const blank = new Set<string>();
   const fileSystem = blanking(blank);
+  const compilerOptions: ts.CompilerOptions = { noResolve: false };
   try {
-    return new Project({ tsConfigFilePath, fileSystem });
+    return new Project({ tsConfigFilePath, compilerOptions, fileSystem });
   } catch (error) {
     if (!(error instanceof RangeError)) throw error;
   }
-  const project = new Project({ tsConfigFilePath, fileSystem, skipAddingFilesFromTsConfig: true, skipFileDependencyResolution: true });
+  const project = new Project({ tsConfigFilePath, compilerOptions, fileSystem, skipAddingFilesFromTsConfig: true, skipFileDependencyResolution: true });
   const parsed = ts.getParsedCommandLineOfConfigFile(tsConfigFilePath, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} });
   // (The tsconfig was read already, so it can be parsed.)
   for (const file of parsed!.fileNames) add(project, file, blank);

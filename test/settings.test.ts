@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { describeScope, isSetting, readConfig, readTsConfig, settingPhrase, settingsEntries, SettingsError, type Settings } from "../src/settings.js";
+import { describeScope, isSetting, isSingleValued, readConfig, readTsConfig, settingPhrase, settingsEntries, SettingsError, type Settings } from "../src/settings.js";
 
 let dir: string;
 let cwd: string;
@@ -37,6 +37,10 @@ const settings = (s: Partial<Settings> = {}): Settings => ({
   ...s,
 });
 const entry = (s: Settings, name = "<permlang.config.json>") => settingsEntries(s, dir).find((e) => e.name === name)!;
+// The options TypeScript works out from the others, recorded in every tsconfig.json entry.
+const COMPUTED = /^tsconfig\.(?:target|module|moduleResolution|moduleDetection|esModuleInterop|allowSyntheticDefaultImports|resolvePackageJsonExports|resolvePackageJsonImports|useDefineForClassFields)\(/;
+/** What a tsconfig.json entry records apart from those. */
+const chosen = (e: { actual: string[] }) => e.actual.filter((c) => !COMPUTED.test(c));
 
 describe("permlang.config.json", () => {
   it("rejects a setting it doesn't know, naming it", () => {
@@ -89,18 +93,18 @@ describe("the tsconfig.json entry", () => {
     write("config/base.json", JSON.stringify({ include: ["../src", "../lib/"], exclude: ["../src/legacy"] }));
     write("tsconfig.json", JSON.stringify({ extends: "./config/base.json", files: ["./types.d.ts"] }));
     write("types.d.ts", "export {};\n");
-    expect(project().actual).toEqual(["tsconfig.exclude(src/legacy)", "tsconfig.files(types.d.ts)", "tsconfig.include(lib)", "tsconfig.include(src)"]);
+    expect(chosen(project())).toEqual(["tsconfig.exclude(src/legacy)", "tsconfig.files(types.d.ts)", "tsconfig.include(lib)", "tsconfig.include(src)"]);
   });
 
   it("records the defaults: everything included, and the output folder excluded", () => {
     write("tsconfig.json", JSON.stringify({ compilerOptions: { outDir: "dist" } }));
-    expect(project().actual).toEqual(["tsconfig.exclude(dist)", "tsconfig.include(**/*)"]);
+    expect(chosen(project())).toEqual(["tsconfig.exclude(dist)", "tsconfig.include(**/*)"]);
     expect(project().via["tsconfig.include(**/*)"]).toEqual(["default"]);
   });
 
   it("records the options that decide what imports and globals resolve to", () => {
     write("tsconfig.json", JSON.stringify({ include: ["src"], compilerOptions: { baseUrl: ".", paths: { "node:child_process": ["./stub.d.ts"] }, types: [], allowJs: true, lib: ["es2022"] } }));
-    expect(project().actual).toEqual([
+    expect(chosen(project())).toEqual([
       "tsconfig.allowJs(true)",
       "tsconfig.baseUrl(.)",
       "tsconfig.include(src)",
@@ -153,7 +157,7 @@ describe("more settings", () => {
     write("tsconfig.json", JSON.stringify({ include: [], files: ["a.ts", "./a.ts", 5] }));
     write("a.ts", "export {};\n");
     write("5", "export {};\n");
-    expect(project().actual).toEqual(["tsconfig.files(5)", "tsconfig.files(a.ts)", "tsconfig.include(none)"]);
+    expect(chosen(project())).toEqual(["tsconfig.files(5)", "tsconfig.files(a.ts)", "tsconfig.include(none)"]);
   });
 
   it("records the other options that decide what resolves", () => {
@@ -173,10 +177,9 @@ describe("more settings", () => {
         },
       }),
     );
-    expect(project().actual).toEqual([
+    expect(chosen(project())).toEqual([
       "tsconfig.customConditions(worker)",
       "tsconfig.include(src)",
-      "tsconfig.moduleResolution(Bundler)",
       "tsconfig.moduleSuffixes(.ios)",
       "tsconfig.moduleSuffixes(none)",
       "tsconfig.noLib(true)",
@@ -186,6 +189,81 @@ describe("more settings", () => {
       "tsconfig.typeRoots(types)",
       "tsconfig.types(node)",
     ]);
+    expect(project().actual).toContain("tsconfig.moduleResolution(Bundler)");
+  });
+
+  it("records the options TypeScript works out from the others, as it works them out", () => {
+    write("tsconfig.json", "{}");
+    const defaults = project();
+    expect(defaults.actual.filter((c) => COMPUTED.test(c))).toEqual([
+      "tsconfig.allowSyntheticDefaultImports(false)",
+      "tsconfig.esModuleInterop(false)",
+      "tsconfig.module(CommonJS)",
+      "tsconfig.moduleDetection(Auto)",
+      "tsconfig.moduleResolution(Node10)",
+      "tsconfig.resolvePackageJsonExports(false)",
+      "tsconfig.resolvePackageJsonImports(false)",
+      "tsconfig.target(ES5)",
+      "tsconfig.useDefineForClassFields(false)",
+    ]);
+    expect(defaults.via["tsconfig.module(CommonJS)"]).toEqual(["default"]);
+    // `module` alone decides the rest.
+    write("tsconfig.json", JSON.stringify({ compilerOptions: { module: "nodenext" } }));
+    const node = project();
+    expect(node.actual.filter((c) => COMPUTED.test(c))).toEqual([
+      "tsconfig.allowSyntheticDefaultImports(true)",
+      "tsconfig.esModuleInterop(true)",
+      "tsconfig.module(NodeNext)",
+      "tsconfig.moduleDetection(Force)",
+      "tsconfig.moduleResolution(NodeNext)",
+      "tsconfig.resolvePackageJsonExports(true)",
+      "tsconfig.resolvePackageJsonImports(true)",
+      "tsconfig.target(ESNext)",
+      "tsconfig.useDefineForClassFields(true)",
+    ]);
+    expect(node.via["tsconfig.module(NodeNext)"]).toEqual(["tsconfig.json"]);
+    expect(node.via["tsconfig.esModuleInterop(true)"]).toEqual(["default"]);
+  });
+
+  it("records the options that are off unless set, once they're set", () => {
+    write("tsconfig.json", "{}");
+    expect(chosen(project())).toEqual(["tsconfig.include(**/*)"]);
+    const options = {
+      checkJs: true,
+      preserveSymlinks: true,
+      allowArbitraryExtensions: true,
+      libReplacement: false,
+      importHelpers: true,
+      jsx: "react",
+      jsxFactory: "h",
+      jsxFragmentFactory: "Fragment",
+      reactNamespace: "R",
+      noResolve: true,
+    };
+    write("tsconfig.json", JSON.stringify({ compilerOptions: options }));
+    expect(chosen(project())).toEqual([
+      "tsconfig.allowArbitraryExtensions(true)",
+      "tsconfig.allowJs(true)",
+      "tsconfig.importHelpers(true)",
+      "tsconfig.include(**/*)",
+      "tsconfig.jsx(react)",
+      "tsconfig.jsxFactory(h)",
+      "tsconfig.jsxFragmentFactory(Fragment)",
+      "tsconfig.libReplacement(false)",
+      "tsconfig.preserveSymlinks(true)",
+      "tsconfig.reactNamespace(R)",
+    ]);
+    write("tsconfig.json", JSON.stringify({ compilerOptions: { jsx: "react-jsxdev", jsxImportSource: "preact" } }));
+    expect(chosen(project())).toEqual(["tsconfig.include(**/*)", "tsconfig.jsx(react-jsxdev)", "tsconfig.jsxImportSource(preact)"]);
+  });
+
+  it("pairs an old and a new value for each option that holds one", () => {
+    expect(isSingleValued("tsconfig.allowSyntheticDefaultImports(true)")).toBe(true);
+    expect(isSingleValued("tsconfig.jsxImportSource(preact)")).toBe(true);
+    expect(isSingleValued("tsconfig.include(src)")).toBe(false);
+    expect(isSingleValued("tsconfig.types(node)")).toBe(false);
+    expect(isSingleValued("permlang.strictness(sketch)")).toBe(true);
+    expect(isSingleValued("permlang.imported(lib/db.ts)")).toBe(false);
   });
 
   it("describes flow rules and checked files", () => {

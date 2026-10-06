@@ -336,6 +336,13 @@ so the list can't go stale.
     of the project's own, as in `run.call(cp)`) is unverifiable (PERM004).
     Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
     checked through that parameter like the module itself.
+  - A default import of a capability module that the compiler options give no
+    default export (`import cp from "node:child_process"` with
+    `allowSyntheticDefaultImports` off, as under `"module": "commonjs"` without
+    `esModuleInterop`) is typed `any` by TypeScript, but bundlers and Node still
+    hand over the module. A named member (`cp.execSync(...)`) is looked up on the
+    module, and any other use (destructuring it, passing it on, exporting it) is
+    unverifiable.
   - `const f: any = fetch` counts as using `fetch`, and `declare const require: any`
     and `(require as any)(...)` are still `require`.
 
@@ -351,7 +358,10 @@ so the list can't go stale.
   `use(modules[0])`) isn't followed either. Imports
   whose types can't be found, including packages shimmed with
   `declare module "x";`, are reported (PERM007), whether reached by `import`,
-  `import x = require()`, or a literal `import()`.
+  `import x = require()`, or a literal `import()`. A default import of a
+  package with no adapter that the compiler options give no default export (see
+  above) is `any` too, so calls on it aren't listed as calls into the package
+  (PERM006); TypeScript itself reports the import as an error (TS1192, TS1259).
 - `Proxy` traps, which can return a capability function for any property. A
   handler's traps are entry points (or charged to the function creating the
   `Proxy`), but a call through the `Proxy` isn't linked to them.
@@ -419,9 +429,18 @@ Other gaps, not yet in fixtures:
 - New dependencies are described with the pull request's own adapters. An
   adapter the pull request adds or changes is itself a settings change, which
   fails the check and is listed in the comment.
-- Of tsconfig.json's compiler options, only those that decide which files are
-  read and what imports and globals resolve to are recorded (see
-  [what the lock records](#what-the-lock-records)).
+- Of tsconfig.json's compiler options, only those listed under
+  [what the lock records](#what-the-lock-records) are recorded. The others
+  check types more or less strictly, or control emit, output paths, builds, and
+  editors; none of them changes which files are read, what an import or a name
+  resolves to, or what a default import or JSX element is. (Type-checking
+  options can still narrow or widen a type, such as `strictNullChecks` adding
+  `undefined`, but not which declaration a call resolves to.)
+- JSX isn't modeled beyond the components it names: the function every element
+  calls (`jsxImportSource`'s `jsx-runtime`, or `jsxFactory`), and that module's
+  top-level code, aren't charged to the code with the JSX. The lock records
+  those options, so a pull request that changes them shows, but a per-file
+  `/** @jsxImportSource ... */` or `/** @jsx ... */` comment doesn't.
 - If the Action can't look up the account its token belongs to, it assumes
   `github-actions[bot]`; with another kind of token, it then adds a new comment
   on each push instead of updating one.
@@ -989,9 +1008,26 @@ the `--config` file), whether or not it exists:
 When the files come from a TypeScript project, its config is an entry too: its
 `include`, `exclude`, and `files` after following `extends` (TypeScript's
 defaults when they aren't set: everything included, the output folders
-excluded), and the compiler options that decide what imports and globals resolve
-to: `baseUrl`, `paths`, `rootDirs`, `typeRoots`, `types`, `lib`, `noLib`,
-`allowJs`, `moduleResolution`, `customConditions`, and `moduleSuffixes`.
+excluded), and the compiler options that decide which files are read, what an
+import or a global resolves to, and what a default import or a JSX element is:
+
+- Always, with the value TypeScript uses, whether set or worked out from the
+  others (`module` decides `moduleResolution`, and both decide whether a default
+  import of a CommonJS module is the module): `target`, `module`,
+  `moduleResolution`, `moduleDetection`, `esModuleInterop`,
+  `allowSyntheticDefaultImports`, `resolvePackageJsonExports`,
+  `resolvePackageJsonImports`, and `useDefineForClassFields`. A change that
+  turns default imports off reads
+  `tsconfig.json now has allowSyntheticDefaultImports false, but permlang.lock.json records allowSyntheticDefaultImports true`.
+- When set: `baseUrl`, `paths`, `rootDirs`, `typeRoots`, `types`, `lib`,
+  `customConditions`, `moduleSuffixes`, `libReplacement`, `jsx`, `jsxFactory`,
+  `jsxFragmentFactory`, `jsxImportSource`, and `reactNamespace`.
+- When on: `noLib`, `allowJs` (or `checkJs`, which turns it on),
+  `preserveSymlinks`, `allowArbitraryExtensions`, and `importHelpers`.
+
+`noResolve` isn't recorded, because the check doesn't use it: it follows
+imports whether or not TypeScript is told to, since the imported code still runs.
+
 A tsconfig.json that can't be parsed, extends a file that isn't there, lists a
 file in `"files"` that isn't there, or selects no files at all is an error (exit
 code 2), and so are paths that hold no TypeScript files: a check of nothing
