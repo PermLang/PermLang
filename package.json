@@ -1,6 +1,6 @@
 {
   "name": "permlang",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Build-time permission checker for TypeScript and AI agents. Fails the pull request when code starts reaching a new server, file, secret, database table, risky MCP tool, or CI permission.",
   "keywords": [
     "permissions",
