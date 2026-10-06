@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { checkTsConfig, type CheckOptions, type Report } from "../src/check.js";
 import { publishedPackages } from "./ai-packages.js";
+import { removeTemporary } from "./temporary.js";
 
 const typeRoots = [path.resolve("node_modules/@types")];
 
@@ -254,7 +255,7 @@ beforeAll(() => {
   for (const [name, code] of Object.entries(sources)) writeFileSync(path.join(dir, `${name}.ts`), code + "\n");
 }, 60_000);
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTemporary(dir));
 
 describe("tools given to AI models", () => {
   it("finds tool registrations across frameworks, with their names", () => {
@@ -571,7 +572,7 @@ export const moreTools = generateText({ prompt: "hi", tools: more });
     writeFileSync(path.join(project, "frameworks.d.ts"), frameworks);
     writeFileSync(path.join(project, "edges.ts"), source);
     report = checkTsConfig(path.join(project, "tsconfig.json"), { strictness: "sketch" });
-    rmSync(project, { recursive: true, force: true });
+    removeTemporary(project);
   }, 60_000);
 
   it("follows a function given as the tool, and skips holes and tools made or typed by the framework", () => {
@@ -1034,7 +1035,7 @@ export default class Anthropic {
     for (const [name, code] of Object.entries(sources)) writeFileSync(path.join(project, `${name}.ts`), code + "\n");
   }, 60_000);
 
-  afterAll(() => rmSync(project, { recursive: true, force: true }));
+  afterAll(() => removeTemporary(project));
 
   it("finds OpenAI Agents tools through @openai/agents' re-exports, including built-in tools that run here", () => {
     expect(reaches(check(), "agents")).toEqual({

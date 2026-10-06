@@ -1,7 +1,7 @@
 // Engine behaviour that needs a project of its own: package boundaries for declaration
 // files, reusing a ts-morph Project, very long call chains, and very deep expressions.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import { checkFiles, checkProject, checkTsConfig, type Report } from "../src/che
 import { holderOf, pathTo, propagate, type Edge } from "../src/graph.js";
 import type { Unit } from "../src/units.js";
 import { lineAndColumn } from "../src/walk.js";
+import { removeTemporary } from "./temporary.js";
 
 const typeRoots = [fileURLToPath(new URL("../node_modules/@types", import.meta.url))];
 const dirs: string[] = [];
@@ -32,7 +33,7 @@ function project(files: Record<string, string>): string {
 }
 
 afterAll(() => {
-  for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs) removeTemporary(dir);
 });
 
 const errors = (report: Report, file: string) =>

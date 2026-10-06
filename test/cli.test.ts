@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/args.js";
 import { runCli } from "./run-cli.js";
+import { removeTemporary } from "./temporary.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 
@@ -31,7 +32,7 @@ beforeEach(() => {
   git("config", "user.name", "Test");
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => removeTemporary(dir));
 
 describe("permlang diff", () => {
   it("analyzes the given paths, not ./src", () => {

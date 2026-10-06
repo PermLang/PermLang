@@ -2,7 +2,7 @@
 // scripts. AI agents edit these as readily as code, and a new `permissions: write-all`, secret,
 // or postinstall hook is a bigger change than most functions, so each is recorded and reviewed.
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { expressionsIn, literalOf, secretsRead } from "../src/ci-expressions.js"
 import { buildLock } from "../src/lock.js";
 import { projectFiles } from "../src/project-files.js";
 import { YamlFile } from "../src/yaml-nodes.js";
+import { removeTemporary } from "./temporary.js";
 
 const PIN = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -21,7 +22,7 @@ let dir: string;
 // A throwaway repository per test, from file names and contents.
 const repos: string[] = [];
 afterAll(() => {
-  for (const r of repos) rmSync(r, { recursive: true, force: true });
+  for (const r of repos) removeTemporary(r);
 });
 function repo(files: Record<string, string>): string {
   const root = mkdtempSync(path.join(tmpdir(), "permlang-config-"));
@@ -89,7 +90,7 @@ beforeAll(() => {
   );
 }, 30_000);
 
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(() => removeTemporary(dir));
 
 const entry = (name: string) => projectFiles(dir).find((f) => f.name === name)!;
 
@@ -181,7 +182,7 @@ describe("project configuration: Actions in the repository, and Docker images", 
     );
     writeFileSync(path.join(repo, "package.json"), "{ not json");
   });
-  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+  afterAll(() => removeTemporary(repo));
 
   it("records composite Actions under .github/actions; an image is pinned only by its digest", () => {
     const action = projectFiles(repo).find((f) => f.name === "<action.yml>")!;
@@ -1074,7 +1075,7 @@ describe("project configuration: a workflow GitHub wouldn't run as written", () 
     repo = mkdtempSync(path.join(tmpdir(), "permlang-project-invalid-"));
     mkdirSync(path.join(repo, ".github", "workflows"), { recursive: true });
   });
-  afterAll(() => rmSync(repo, { recursive: true, force: true }));
+  afterAll(() => removeTemporary(repo));
   const read = (text: string) => {
     writeFileSync(path.join(repo, ".github", "workflows", "w.yml"), text);
     return projectFiles(repo).find((f) => f.name === "<w.yml>")?.actual;

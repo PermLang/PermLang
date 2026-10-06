@@ -5,7 +5,7 @@
 // and workflow files the review gate relies on.
 
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
@@ -19,6 +19,7 @@ import { COMMENT_LIMIT, formatDiffMarkdown } from "../src/diff.js";
 import { diffLocks, LockError, parseLock, serializeLock, type LockFile } from "../src/lock.js";
 import { projectFiles } from "../src/project-files.js";
 import { formatAnnotations, printable, toSarif } from "../src/report.js";
+import { removeTemporary } from "./temporary.js";
 
 /** Anything at all, mixed with the characters that escaping and parsing have to handle. */
 const hostile = fc.oneof(
@@ -573,7 +574,7 @@ describe("project configuration", () => {
     dir = mkdtempSync(path.join(tmpdir(), "permlang-properties-"));
     mkdirSync(path.join(dir, ".github", "workflows"), { recursive: true });
   });
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => removeTemporary(dir));
   const inventory = (file: string, text: string) => {
     writeFileSync(path.join(dir, file), text);
     return projectFiles(dir).find((e) => e.name === `<${path.basename(file)}>`);

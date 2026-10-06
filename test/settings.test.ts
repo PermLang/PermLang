@@ -2,11 +2,12 @@
 // that loosens permlang.config.json, adds an adapter, or narrows tsconfig.json changes the lock,
 // so the check fails until `permlang lock` records it (found in the code review, G2, G5, O5).
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { describeScope, isSetting, isSingleValued, readConfig, readTsConfig, settingPhrase, settingsEntries, SettingsError, type Settings } from "../src/settings.js";
+import { removeTemporary } from "./temporary.js";
 
 let dir: string;
 let cwd: string;
@@ -19,7 +20,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   process.chdir(cwd);
-  rmSync(dir, { recursive: true, force: true });
+  removeTemporary(dir);
 });
 
 const write = (file: string, text: string) => {
