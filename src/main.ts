@@ -22,7 +22,7 @@ import {
   type Strictness,
   type UnmappedPolicy,
 } from "./check.js";
-import { addedDependencies, type DependencyChange, type PackageJson } from "./deps.js";
+import { addedDependencies, overriddenDependencies, type DependencyChange, type PackageJson } from "./deps.js";
 import { commentMarker, formatDiffFailure, formatDiffMarkdown, formatDiffText, type DiffNotes, type ViaPaths } from "./diff.js";
 import { LOCK_VERSION, LockError, buildLock, diffLocks, isConfigKey, keyed, lockDrift, parseLock, serializeLock, type LockFile } from "./lock.js";
 import { formatAnnotations, formatText, printable, toJson, toSarif } from "./report.js";
@@ -640,8 +640,8 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
 }
 
 /**
- * Packages the change adds to ./package.json, or installs from another source, for review. A
- * package.json that's missing or isn't a JSON object means no dependency section, and adapters
+ * Packages the change adds to ./package.json, installs from another source, or overrides, for
+ * review. A package.json that's missing or isn't a JSON object means no dependency section, and adapters
  * that can't be loaded (which fails the analysis, and the comment says so) are left out. The
  * commits were read already, so a failure to read them here is an error.
  */
@@ -652,7 +652,9 @@ function dependencyChanges(base: string, args: Args): DependencyChange[] {
     const file = path.join("node_modules", name, "package.json");
     return existsSync(file) ? parsePackage(readFileSync(file, "utf8")) : undefined;
   };
-  return addedDependencies(parsePackage(fileAt(base, "package.json")?.text), head, dependencyAdapters(args), installed);
+  const before = parsePackage(fileAt(base, "package.json")?.text);
+  const adapters = dependencyAdapters(args);
+  return [...addedDependencies(before, head, adapters, installed), ...overriddenDependencies(before, head, adapters, installed)];
 }
 
 function parsePackage(text: string | undefined): PackageJson | undefined {

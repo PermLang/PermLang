@@ -204,7 +204,7 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
 - **Data-flow rules (PERM009).** Where a secret or sensitive data may be sent.
   See [data-flow rules](#data-flow-rules).
 - **New dependencies** in the permission diff, with what PermLang sees of each
-  and its install scripts.
+  and its install scripts, and overrides that replace a package's code.
 - **Strictness levels, a lock file, a permission diff for pull requests, a
   GitHub Action with line annotations and code scanning, and SARIF output.** See
   below.
@@ -429,6 +429,14 @@ Other gaps, not yet in fixtures:
 - New dependencies are described with the pull request's own adapters. An
   adapter the pull request adds or changes is itself a settings change, which
   fails the check and is listed in the comment.
+- Of what package.json can change about installed code, the diff lists new
+  dependencies, ones from another source, and overrides (`overrides`,
+  `resolutions`, `pnpm.overrides`). It doesn't read `pnpm.packageExtensions`
+  (which adds dependencies to a package), patches applied at install
+  (`pnpm.patchedDependencies`, patch-package's `patches/` folder), or settings
+  outside package.json (`.npmrc`, `.yarnrc.yml`, `pnpm-workspace.yaml`). A
+  dependency or override doesn't fail the check by itself either: calls into a
+  package with no adapter do (see [code PermLang can't check](#what-the-lock-records)).
 - Of tsconfig.json's compiler options, only those listed under
   [what the lock records](#what-the-lock-records) are recorded. The others
   check types more or less strictly, or control emit, output paths, builds, and
@@ -955,9 +963,17 @@ ran on and with which settings. Commit it. From then on:
   it's installed. It also lists a package already there that the change now
   installs from somewhere other than the registry: an alias
   (`"lodash": "npm:evil-lodash@1.0.0"`), a URL, git, or a local folder or tarball.
-  Its name, and so its adapter, stay the same while its code changes. These are
-  there for review: they don't fail the check, although calls into a package with
-  no adapter get a `PERM006` warning.
+  Its name, and so its adapter, stay the same while its code changes. And it lists
+  each override that's new or says something else now, since an override replaces
+  a package's code wherever it is in the dependency tree, without touching its
+  dependency entry: npm's `overrides` (nested ones too, shown as
+  `react > lodash.merge`), Yarn's (and pnpm's) `resolutions`, and `pnpm.overrides`.
+  One that installs from another source says so, like a dependency that does; one
+  that pins a registry version says **Overridden**. When the code reaches the same
+  access, the comment says "No permission changes. The dependencies changed,
+  though: review them below." These are there for review: they don't fail the
+  check by themselves, but once the code calls into a package with no adapter,
+  it's recorded as code PermLang can't check (above), which does.
 
 `--format markdown` produces the pull-request comment. Text from the code is
 escaped so it can't change the comment: it can't break out of code formatting or
@@ -972,7 +988,7 @@ If the diff can't be computed at all (the base commit can't be read, say),
 `--format json` is for tools, and includes `unrecorded` (where the code and the
 lock file differ, or `null`), `unsafeChanged`, `analysisError` (or `null`),
 `lockDeleted`, `baseLockMissing`, and `dependencies` (each with its `section`, and
-`change`: `added` or `source`). Changes in the code PermLang can't check are among
+`change`: `added`, `source`, or `override`, which also names its `target` package). Changes in the code PermLang can't check are among
 `functions`, under the key `permlang.config.json#<unchecked>`.
 
 The text output of `check`, `lock`, and `diff` escapes line breaks and control

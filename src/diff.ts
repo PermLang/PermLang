@@ -4,7 +4,7 @@
 // that makes the diff incomplete (code that couldn't be analyzed, a deleted lock,
 // a lock that doesn't match the code) is said at the top, never left out.
 
-import type { DependencyChange } from "./deps.js";
+import { isOtherSource, type DependencyChange } from "./deps.js";
 import { isConfigKey, type FunctionChange, type LockDiff } from "./lock.js";
 import { printable } from "./report.js";
 import { isSetting, isSingleValued, settingKind, value as settingValue } from "./settings.js";
@@ -65,7 +65,15 @@ const KNOWN: Record<DependencyChange["known"], string> = {
   unknown: "**Not checked**: no adapter",
 };
 
-const SECTION: Record<DependencyChange["section"], string> = { dependencies: "", devDependencies: "dev", optionalDependencies: "optional", peerDependencies: "peer" };
+const SECTION: Record<DependencyChange["section"], string> = {
+  dependencies: "",
+  devDependencies: "dev",
+  optionalDependencies: "optional",
+  peerDependencies: "peer",
+  overrides: "overrides",
+  resolutions: "resolutions",
+  "pnpm.overrides": "pnpm.overrides",
+};
 
 /** At most this many functions are named in one table cell. */
 const MAX_NAMED = 20;
@@ -96,13 +104,16 @@ export function formatDiffMarkdown(diff: LockDiff, via: ViaPaths, notes: DiffNot
   if (!changed) {
     // Only a complete diff, of code that matches its lock, can say that nothing changed.
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
-    top.push(complete ? "No permission changes." : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.", "");
+    // Dependencies don't change what the lock records, but they can change what the code runs.
+    const deps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
+    top.push(complete ? `No permission changes.${deps}` : notes.analysisError ? "The lock files show no permission changes, but the code wasn't analyzed." : "The base and the code reach the same access.", "");
   } else {
     const counts = [
       gaining.length > 0 ? `**${plural(gaining.length, "function")} ${gaining.length === 1 ? "gains" : "gain"} access**` : "",
       losing.length > 0 ? `${plural(losing.length, "function")} ${losing.length === 1 ? "loses" : "lose"} access` : "",
       settings.length > 0 ? "**Check settings changed**" : "",
       uncheckedNew.length > 0 ? "**New code PermLang can't check**" : "",
+      uncheckedGone.length > 0 && uncheckedNew.length === 0 ? "Less code PermLang can't check" : "",
       diff.unsafeAdded.length > 0 ? `**${plural(diff.unsafeAdded.length, "new <code>@perm-unsafe</code> override")}**` : "",
       diff.unsafeChanged.length > 0 ? `**${plural(diff.unsafeChanged.length, "changed <code>@perm-unsafe</code> reason")}**` : "",
       diff.unsafeRemoved.length > 0 ? plural(diff.unsafeRemoved.length, "removed <code>@perm-unsafe</code> override") : "",
@@ -239,10 +250,20 @@ function settingRows(changes: readonly FunctionChange[], via: ViaPaths): string[
   return rows;
 }
 
-/** A new package, or one now installed from another source, with what PermLang knows about it and the scripts that run on install. */
+/**
+ * A new package, one now installed from another source, or a new or changed override, with what
+ * PermLang knows about it and the scripts that run on install.
+ */
 function dependencyRow(d: DependencyChange): string {
   const scripts = d.installScripts === undefined ? "<sub>not installed here</sub>" : d.installScripts.length === 0 ? "none" : d.installScripts.map((x) => code(x)).join("<br>");
   const section = SECTION[d.section] ? ` <sub>(${SECTION[d.section]})</sub>` : "";
+  if (d.change === "override") {
+    const was = d.previous === undefined ? "" : `${plain(d.previous)} `;
+    const sees = isOtherSource(d.version)
+      ? `**Now installed from another source**, by an override: an adapter for ${code(d.target!)} may not describe this code`
+      : `**Overridden**: installed at this version wherever ${code(d.target!)} is in the dependency tree`;
+    return `| ${code(`~ ${d.name}`)} ${was}→ ${plain(d.version)}${section} | ${sees} | ${scripts} |`;
+  }
   if (d.change === "source") {
     return `| ${code(`~ ${d.name}`)} ${plain(d.previous!)} → ${plain(d.version)}${section} | **Now installed from another source**: an adapter for ${code(d.name)} may not describe this code | ${scripts} |`;
   }
@@ -250,9 +271,13 @@ function dependencyRow(d: DependencyChange): string {
 }
 
 function dependencyHeading(deps: readonly DependencyChange[]): string {
-  const added = deps.filter((d) => d.change === "added").length;
-  const moved = deps.length - added;
-  const parts = [added > 0 ? plural(added, "new dependency", "new dependencies") : "", moved > 0 ? `${plural(moved, "dependency", "dependencies")} from another source` : ""];
+  const count = (change: DependencyChange["change"]) => deps.filter((d) => d.change === change).length;
+  const [added, moved, overridden] = [count("added"), count("source"), count("override")];
+  const parts = [
+    added > 0 ? plural(added, "new dependency", "new dependencies") : "",
+    moved > 0 ? `${plural(moved, "dependency", "dependencies")} from another source` : "",
+    overridden > 0 ? plural(overridden, "changed override") : "",
+  ];
   return parts.filter(Boolean).join(", ");
 }
 
@@ -344,7 +369,8 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
   }
   if (out.length === header) {
     const complete = !notes.analysisError && !notes.lockDeleted && !notes.lockOutdated && !pendingChanges(notes);
-    out.push(complete ? "No permission changes." : "The base and the code reach the same access.");
+    const deps = (notes.dependencies ?? []).length > 0 ? " The dependencies changed, though: review them below." : "";
+    out.push(complete ? `No permission changes.${deps}` : "The base and the code reach the same access.");
   }
   const deps = notes.dependencies ?? [];
   if (deps.length > 0) {
@@ -352,6 +378,11 @@ export function formatDiffText(diff: LockDiff, via: ViaPaths, notes: DiffNotes =
       const section = SECTION[d.section] ? ` (${SECTION[d.section]})` : "";
       const scripts = d.installScripts && d.installScripts.length > 0 ? `; install scripts: ${d.installScripts.map(printable).join(", ")}` : "";
       if (d.change === "source") return `  ~ ${printable(d.name)} ${printable(d.previous!)} -> ${printable(d.version)}${section}: now installed from another source${scripts}`;
+      if (d.change === "override") {
+        const was = d.previous === undefined ? "" : `${printable(d.previous)} `;
+        const what = isOtherSource(d.version) ? "now installed from another source, by an override" : "overridden";
+        return `  ~ ${printable(d.name)} ${was}-> ${printable(d.version)}${section}: ${what}${scripts}`;
+      }
       const known = { adapter: "checked by an adapter", pure: "declared pure", detected: "detected directly", unknown: "not checked: no adapter" }[d.known];
       return `  + ${printable(d.name)} ${printable(d.version)}${section}: ${known}${scripts}`;
     });

@@ -695,3 +695,35 @@ describe("new code PermLang can't check is recorded in the lock", () => {
     expect(check.out).toContain("PermLang can't check src/b/x.cjs: its types can't be found, and permlang.lock.json doesn't record it.");
   });
 });
+
+describe("overrides in the comment", () => {
+  it("lists npm, Yarn, and pnpm overrides, as they replace a package's code in the whole tree", () => {
+    write("package.json", JSON.stringify({ dependencies: { lodash: "^4.17.21" } }));
+    expect(permlang("init", "src").code).toBe(0);
+    commit("base");
+    const evil = "npm:evil-lodash@1.0.0";
+    write("package.json", JSON.stringify({ dependencies: { lodash: "^4.17.21" }, overrides: { lodash: evil, react: { "lodash.merge": "4.6.1" } }, resolutions: { "**/lodash": evil }, pnpm: { overrides: { lodash: evil } } }));
+
+    const md = permlang("diff", "HEAD", "src", "--format", "markdown");
+    expect(md.code).toBe(0);
+    expect(md.out).toContain("**4 changed overrides**");
+    const alias = "npm:\u{200b}evil-lodash@\u{200b}1.0.0";
+    expect(md.out).toContain(`| <code>&#126; lodash</code> → ${alias} <sub>(overrides)</sub> | **Now installed from another source**, by an override: an adapter for <code>lodash</code> may not describe this code |`);
+    expect(md.out).toContain("| <code>&#126; react &gt; lodash.merge</code> → 4.6.1 <sub>(overrides)</sub> | **Overridden**: installed at this version wherever <code>lodash.merge</code> is in the dependency tree |");
+    expect(md.out).toContain(`| <code>&#126; &#42;&#42;/lodash</code> → ${alias} <sub>(resolutions)</sub> |`);
+    expect(md.out).toContain(`| <code>&#126; lodash</code> → ${alias} <sub>(pnpm.overrides)</sub> |`);
+    expect(md.out).toContain("No permission changes. The dependencies changed, though: review them below.");
+
+    const text = permlang("diff", "HEAD", "src").out;
+    expect(text).toContain(`  ~ lodash -> ${evil} (overrides): now installed from another source, by an override`);
+    expect(text).toContain("  ~ react > lodash.merge -> 4.6.1 (overrides): overridden");
+    expect(text).toContain("No permission changes. The dependencies changed, though: review them below.");
+    const json = JSON.parse(permlang("diff", "HEAD", "src", "--format", "json").out) as { dependencies: { name: string; section: string; change: string }[] };
+    expect(json.dependencies.map((d) => `${d.section} ${d.name} ${d.change}`)).toEqual([
+      "overrides lodash override",
+      "overrides react > lodash.merge override",
+      "resolutions **/lodash override",
+      "pnpm.overrides lodash override",
+    ]);
+  });
+});
