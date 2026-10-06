@@ -57,8 +57,9 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     `process.env` (and `(process as any).env`) is
     read the same way without Node's types, or with a project's own
     `declare const process`, also as `globalThis.process.env`,
-    `global.process.env`, `process["env"]`, or through `const p = process` or
-    `const { env } = process`, whose uses are followed (an untyped
+    `global.process.env`, `process["env"]`, or through `const p = process`,
+    `const { env } = process`, or `const { process: { env } } = globalThis`,
+    whose uses are followed (an untyped
     `const env = process.env` reads every variable); a `process`
     that doesn't resolve also gets a PERM007 warning, since its other APIs
     can't be checked. `import.meta.env.KEY` (Vite, Astro, and others) is
@@ -250,7 +251,8 @@ it can't see yet. New here? Start with [getting started](getting-started.md).
     (`const { execSync: run } = cp`, `const { fetch } = globalThis`,
     `const { promises: { writeFile } } = fs`, `({ exec }: typeof cp) => ...`).
     A chain of more than 32 aliases is unverifiable. A value whose code isn't in
-    sight is judged by its type: `require` used as a value
+    sight is judged by its type, as is an element destructured from an array
+    (`const [run] = runners`): `require` used as a value
     (`require.call(null, name)`, `["x"].map(require)`, `load(require)`), or what
     `createRequire()` returns, is unverifiable; `require.resolve()`,
     `require.main`, `require.cache`, and `typeof require` aren't uses. Testing
@@ -492,8 +494,10 @@ so the list can't go stale.
     `Promise.resolve(cp).then((m: any) => ...)`; or given as `this` to a function
     of the project's own, as in `run.call(cp)`; copied with a spread,
     `{ ...cp }`; or passed to a parameter of the project's own typed with a type
-    parameter or a mapped type, as in `function run<T>(m: T)` or
-    `function run(m: Partial<typeof cp>)`) is unverifiable (PERM004).
+    parameter or a mapped type, as in `function run<T>(m: T)`,
+    `function run<T>(...ms: T[])`, or `function run(m: Partial<typeof cp>)`; or
+    passed as an argument the function has no parameter for, which only
+    `arguments` reaches) is unverifiable (PERM004).
     Passed to a parameter of its own type (`function run(m: typeof cp)`), it's
     checked through that parameter like the module itself. A module's function
     or class called past a cast returns `any` too, so when what it returns or
@@ -559,13 +563,16 @@ so the list can't go stale.
   `Reflect.defineProperty`, `Reflect.deleteProperty`, or
   `Reflect.setPrototypeOf`, matched by declaration however they're reached:
   `Object["assign"]`, `const { assign } = Object`, `globalThis.Object.assign`,
-  `.call`, `.apply`, `Reflect.apply`, or a spread list of arguments), and so is
-  an `as const` object's own method that writes to `this`. Values read from a
-  written object are unknown. A plain exported `const`, enum, or `as const`
-  object is also unknown when the object holding the exports is written: its
-  namespace (`namespace Api { export const url = ... }` with
-  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS, the module's
-  `exports` object reached by a namespace import (`import * as config` with
+  `.call`, `.bind`, `.apply`, `Reflect.apply`, or a spread list of arguments),
+  and so is an `as const` object's own method, getter, setter, or `function`
+  property (also one of an object nested in it) that writes to `this`. Values
+  read from a written object are unknown. A plain exported `const`, enum, or
+  `as const` object is also unknown when the object holding the exports is
+  written: its namespace (`namespace Api { export const url = ... }` with
+  `Object.assign(Api, ...)`), or, in a file compiled to CommonJS (a `.cts` file;
+  under node16 or nodenext, one in a package that isn't `"type": "module"`;
+  otherwise per the `module` option), the module's `exports` object reached by
+  a namespace import or `import x = require()` (`import * as config` with
   `Object.assign(config, ...)`); an ES module's namespace can't be written. An
   object passed to a function that writes to it, or stored in another variable
   first, isn't followed ([`fixtures/m6/limits/constant-written-elsewhere.ts`](../fixtures/m6/limits/constant-written-elsewhere.ts)),

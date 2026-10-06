@@ -633,6 +633,13 @@ describe("a default import TypeScript gives no type (module commonjs, no esModul
     expect(reaches("src/reexported.ts")).toEqual({ "<module>": ["unverifiable"] });
     for (const harmless of ["src/constant.ts", "src/pure.ts", "src/typed.ts"]) expect(reaches(harmless)).toEqual({});
   });
+
+  it("reports a cast of it once, as the cast", () => {
+    write("tsconfig.json", JSON.stringify({ compilerOptions: { module: "commonjs", strict: true, types: ["node"], typeRoots }, include: ["src"] }));
+    write("src/cast.ts", 'import cp from "node:child_process";\n/** @perm env(NONE) */\nexport function cast() {\n  return (cp as any).execSync("id");\n}\n');
+    const report = JSON.parse(permlang("check", "--no-lock", "--json").out) as { diagnostics: { function: string; capability?: string; call?: string }[] };
+    expect(report.diagnostics.filter((d) => d.function === "cast").map((d) => `${d.capability} ${d.call}`)).toEqual(["unverifiable cp cast to `any`"]);
+  });
 });
 
 describe("new code PermLang can't check is recorded in the lock", () => {

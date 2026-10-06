@@ -25,7 +25,7 @@ import { packageOf, type AdapterIndex } from "../adapters.js";
 import { UNVERIFIABLE, type Capability } from "../capability.js";
 import { fsCapabilities, fsStreamClass } from "./fs.js";
 import { declarationCapabilities } from "./functions.js";
-import { admitsString, argumentsOf, containerName, evaluatesString, hostOf, isGlobalLibFunction, literalString, type CallLike } from "./shared.js";
+import { admitsString, argumentsOf, containerName, evaluatesString, hostOf, isGlobalLibFunction, literalString, signatureDeclarations, type CallLike } from "./shared.js";
 
 const NETWORK_CLASSES = new Set(["WebSocket", "EventSource", "WebTransport", "WebSocketStream"]);
 const SCRIPT_CLASSES = new Set(["Worker", "SharedWorker"]);
@@ -92,12 +92,13 @@ export function capabilitiesOf(declaration: Node, args: readonly Node[], adapter
  * with no arguments, or one constructed past a cast (`new (window as any).WebSocket(url)`).
  */
 export function constructorCapabilities(type: Type, adapters: AdapterIndex, args: readonly Node[] = []): Capability[] {
-  for (const signature of type.getConstructSignatures()) {
-    // A class with no constructor and no base class has a signature with no declaration, which
-    // ts-morph can't wrap (it throws), so it's checked on the compiler's signature first.
-    const declaration = signature.compilerSignature.declaration && signature.getDeclaration();
-    const capabilities = declaration ? capabilitiesOf(declaration, args, adapters, args.length > 0 ? "called" : "value") : [];
+  const signatures = type.getConstructSignatures();
+  // A class with no constructor and no base class has a signature with no declaration.
+  for (const declaration of signatureDeclarations(signatures)) {
+    const capabilities = capabilitiesOf(declaration, args, adapters, args.length > 0 ? "called" : "value");
     if (capabilities.length > 0) return capabilities;
+  }
+  for (const signature of signatures) {
     const stream = fsStreamClass(signature.getReturnType());
     if (stream) return fsCapabilities(stream.name, stream.direct ? args : []);
   }
@@ -169,8 +170,10 @@ function timerEvaluates(declaration: Node, args: readonly Node[], reach: Reach):
 /** Whether the program declares the browser's timers: lib.dom's or a worker's, which may share a name with Node's. */
 function hasBrowserTimers(declaration: Node): boolean {
   if (platformSource(declaration) === "lib") return true;
-  const name = Node.isFunctionDeclaration(declaration) || Node.isVariableDeclaration(declaration) ? declaration.getNameNode() : undefined;
-  return (name?.getSymbol()?.getDeclarations() ?? []).some((d) => platformSource(d) === "lib");
+  // Otherwise it's Node's global function or variable (see isTimer), and the symbol of its name
+  // is the global one, merged with lib.dom's of the same name.
+  const name = declaration.getFirstChildByKindOrThrow(SyntaxKind.Identifier);
+  return name.getSymbolOrThrow().getDeclarations().some((d) => platformSource(d) === "lib");
 }
 
 function net(arg: Node | undefined): Capability {

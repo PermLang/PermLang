@@ -27,6 +27,11 @@ declare module "mysql2/promise" {
     execute(parameters: unknown): Promise<unknown>;
   }
   export function createPool(uri: string): Pool;
+  export interface Connection {
+    query(sql: string, values?: unknown[]): Promise<unknown>;
+    end(): Promise<void>;
+  }
+  export function createConnection(uri: string): Promise<Connection>;
 }
 
 declare module "better-sqlite3" {
