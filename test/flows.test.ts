@@ -89,6 +89,15 @@ describe("data-flow rules", () => {
     const anyEnv = { from: { name: "env" }, to: [{ name: "net", arg: "api.stripe.com" }] };
     expect(flows({ flows: [anyEnv] }).map((d) => d.function)).toContain("other");
   });
+
+  // Every rule used to read the same one-pass list of functions, so a rule after the first saw none.
+  it("checks every rule, whatever its place in the list", () => {
+    const unused = { from: { name: "env", arg: "NOT_READ_ANYWHERE" }, to: [] };
+    const found = flows().map((d) => `${d.function} ${d.capability}`);
+    expect(found.length).toBeGreaterThan(0);
+    expect(flows({ flows: [unused, stripeRule] }).map((d) => `${d.function} ${d.capability}`)).toEqual(found);
+    expect(flows({ flows: [stripeRule, unused] }).map((d) => `${d.function} ${d.capability}`)).toEqual(found);
+  });
 });
 
 describe("data-flow rules in permlang.config.json", () => {
