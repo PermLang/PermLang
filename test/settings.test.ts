@@ -14,6 +14,8 @@ beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), "permlang-settings-"));
   cwd = process.cwd();
   process.chdir(dir);
+  // A tsconfig.json must select a file that exists.
+  write("src/a.ts", "export {};\n");
 });
 afterEach(() => {
   process.chdir(cwd);
@@ -86,6 +88,7 @@ describe("the tsconfig.json entry", () => {
   it("records include, exclude, and files, following extends", () => {
     write("config/base.json", JSON.stringify({ include: ["../src", "../lib/"], exclude: ["../src/legacy"] }));
     write("tsconfig.json", JSON.stringify({ extends: "./config/base.json", files: ["./types.d.ts"] }));
+    write("types.d.ts", "export {};\n");
     expect(project().actual).toEqual(["tsconfig.exclude(src/legacy)", "tsconfig.files(types.d.ts)", "tsconfig.include(lib)", "tsconfig.include(src)"]);
   });
 
@@ -148,6 +151,8 @@ describe("more settings", () => {
 
   it("records an empty list, each entry once, and entries that aren't strings as written", () => {
     write("tsconfig.json", JSON.stringify({ include: [], files: ["a.ts", "./a.ts", 5] }));
+    write("a.ts", "export {};\n");
+    write("5", "export {};\n");
     expect(project().actual).toEqual(["tsconfig.files(5)", "tsconfig.files(a.ts)", "tsconfig.include(none)"]);
   });
 

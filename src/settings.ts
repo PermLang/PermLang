@@ -136,8 +136,9 @@ export function settingsEntries(settings: Settings, root: string, imported: read
 
 /**
  * Reads a TypeScript project's config, following "extends".
- * @throws SettingsError when it's missing, malformed, or extends a file that can't be read
- *   (which would silently change the files checked).
+ * @throws SettingsError when it's missing, malformed, extends a file that can't be read, lists
+ *   a file in "files" that isn't there, or selects no files at all (each of which would
+ *   silently change the files checked, or leave none to fail on).
  */
 export function readTsConfig(file: string): ts.ParsedCommandLine {
   if (!existsSync(file)) throw new SettingsError(`${file} doesn't exist.`);
@@ -151,6 +152,11 @@ export function readTsConfig(file: string): ts.ParsedCommandLine {
   // unknown compiler option, don't change which files are read.
   const problem = ts.getConfigFileParsingDiagnostics(parsed).find((d) => d.code < 2000 || d.code === 5083);
   if (problem) throw new SettingsError(`${file}: ${printable(ts.flattenDiagnosticMessageText(problem.messageText, " "))}`);
+  // TypeScript reports these when it builds the program (TS6053, and TS18002 or TS18003 above),
+  // and builds nothing; the check would pass on what's left.
+  const missing = parsed.fileNames.find((f) => !ts.sys.fileExists(f));
+  if (missing !== undefined) throw new SettingsError(`${file}: "files" lists ${printable(relative(process.cwd(), missing))}, which doesn't exist.`);
+  if (parsed.fileNames.length === 0) throw new SettingsError(`${file} selects no files: nothing matches its "include" or "files".`);
   return parsed;
 }
 

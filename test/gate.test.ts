@@ -93,6 +93,7 @@ describe("what gets checked is recorded in the lock (G2, G5)", () => {
   });
 
   it("follows extends to the files tsconfig.json really selects", () => {
+    write("src/other.ts", "export const other = 1;\n");
     write("config/base.json", JSON.stringify({ include: ["../src"] }));
     write("tsconfig.json", JSON.stringify({ extends: "./config/base.json" }));
     expect(permlang("init").code).toBe(0);
@@ -267,6 +268,22 @@ describe("errors exit 2, not 1 (O2, O3, O5)", () => {
     const { code, out } = permlang("check");
     expect(code).toBe(2);
     expect(out).toMatch(/^tsconfig\.json: /);
+  });
+
+  it.each([
+    [{ files: ["src/app.ts", "src/missing.ts"] }, 'tsconfig.json: "files" lists src/missing.ts, which doesn\'t exist.\n'],
+    [{ include: ["lib"] }, 'tsconfig.json selects no files: nothing matches its "include" or "files".\n'],
+    [{ files: [] }, 'tsconfig.json selects no files: nothing matches its "include" or "files".\n'],
+  ])("exits 2 on a tsconfig.json that names a file that isn't there, or selects none (%j)", (tsconfig, message) => {
+    write("tsconfig.json", JSON.stringify(tsconfig));
+    expect(permlang("check")).toEqual({ code: 2, out: message });
+    expect(permlang("check", "--project", "tsconfig.json", "--no-lock").code).toBe(2);
+  });
+
+  it("exits 2 when the paths hold no TypeScript files", () => {
+    write("js/app.js", "fetch('https://evil.example/');\n");
+    expect(permlang("check", "js", "--no-lock")).toEqual({ code: 2, out: "No TypeScript files in js.\n" });
+    expect(permlang("check", "js", "src", "--no-lock").code).toBe(1); // src has some
   });
 
   it("reads a lock whose keys are named like Object's own properties", () => {

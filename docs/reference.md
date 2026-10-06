@@ -992,8 +992,10 @@ defaults when they aren't set: everything included, the output folders
 excluded), and the compiler options that decide what imports and globals resolve
 to: `baseUrl`, `paths`, `rootDirs`, `typeRoots`, `types`, `lib`, `noLib`,
 `allowJs`, `moduleResolution`, `customConditions`, and `moduleSuffixes`.
-A tsconfig.json that can't be parsed, or that extends a file that isn't there, is
-an error (exit code 2).
+A tsconfig.json that can't be parsed, extends a file that isn't there, lists a
+file in `"files"` that isn't there, or selects no files at all is an error (exit
+code 2), and so are paths that hold no TypeScript files: a check of nothing
+would pass.
 
 So narrowing `include`, lowering `strictness`, trusting packages with no adapter,
 adding an adapter that declares a package pure, dropping a flow rule, or checking

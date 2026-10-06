@@ -592,6 +592,8 @@ function settingsFor(args: Args): Settings {
     const targets = args.paths.length > 0 ? args.paths : ["src"];
     const missing = targets.filter((p) => !existsSync(p));
     if (missing.length > 0) throw new UsageError(`Not found: ${missing.map(printable).join(", ")}`);
+    // A check of nothing would pass.
+    if (targets.flatMap(expand).length === 0) throw new UsageError(`No TypeScript files in ${targets.map(printable).join(", ")}.`);
     scope = { paths: targets, given: args.paths.length > 0 };
   }
   return {
