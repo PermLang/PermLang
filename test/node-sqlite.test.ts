@@ -31,7 +31,7 @@ export function extension() { db.loadExtension("./evil.so"); }
 export function copy() { return [db.serialize(), backup(db, "copy.db")]; }
 export function replace(data: Uint8Array) { db.deserialize(data); return db.applyChangeset(data); }
 export function session() { const s = db.createSession(); return [s.changeset(), s.close()]; }
-export function lifecycle() { db.function("double", (x) => Number(x) * 2); db.close(); db.open(); return [db.isOpen, db.location()]; }
+export function lifecycle() { db.function("double", (x) => Number(x) * 2); db.enableDefensive(true); db.createTagStore().clear(); db.close(); db.open(); return [db.isOpen, db.location()]; }
 export function cast() { return (db as any).exec("DELETE FROM secrets"); }
 export function npmSqlite(other: Database) { return other.exec("DELETE FROM secrets"); }
 `;

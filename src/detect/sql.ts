@@ -41,7 +41,7 @@ const SAFE_METHODS: Record<string, readonly string[]> = {
   ],
   "@neondatabase/serverless": ["neon", "neonConfig", "transaction", "connect", "end", "release", "on"],
   "@vercel/postgres": ["createPool", "createClient", "connect", "end", "release", "on"],
-  "node:sqlite": ["close", "open", "function", "aggregate", "setAuthorizer", "enableLoadExtension", "createTagStore", "createSession", "location", "clear", "[Symbol.dispose]"],
+  "node:sqlite": ["close", "open", "function", "aggregate", "setAuthorizer", "enableLoadExtension", "enableDefensive", "createTagStore", "createSession", "location", "clear", "[Symbol.dispose]"],
 };
 
 // Methods that do more than query a table.
@@ -71,7 +71,9 @@ const TEXT_CONTAINERS: Record<string, string> = { sqlite3: "Database", "node:sql
 // Statement handles, whose methods run the SQL they were prepared with.
 const STATEMENT_CONTAINERS: Record<string, readonly string[]> = { mysql2: ["PreparedStatementInfo", "PrepareStatementInfo"], "node:sqlite": ["StatementSync"] };
 // Objects whose methods are tags: node:sqlite's tag store, `store.all` with a template.
-const TAG_CONTAINERS: Record<string, string> = { "node:sqlite": "SQLTagStore" };
+const TAG_CONTAINERS: Record<string, { container: string; tags: readonly string[] }> = {
+  "node:sqlite": { container: "SQLTagStore", tags: ["all", "get", "iterate", "run"] },
+};
 
 /** Packages whose tagged templates run SQL with bound parameters. */
 const TAG_PACKAGES = new Set(["postgres", "@neondatabase/serverless", "@vercel/postgres"]);
@@ -117,7 +119,8 @@ export function sqlCapabilities(declaration: Node, call: CallLike | undefined): 
   if (STATEMENT_CONTAINERS[name]?.includes(container)) return [];
   // A tag reads its template. Called with anything else (an array made to look like a
   // template's strings), or used as a value, it could run any SQL.
-  if (TAG_CONTAINERS[name] === container) return call && Node.isTaggedTemplateExpression(call) ? fromSql(templateText(call.getTemplate())) : unknown;
+  const store = TAG_CONTAINERS[name];
+  if (store?.container === container && store.tags.includes(method)) return call && Node.isTaggedTemplateExpression(call) ? fromSql(templateText(call.getTemplate())) : unknown;
   if (TEXT_METHODS[name]!.includes(method) && (!textContainer || container === textContainer)) {
     // Used as a value (no call), the SQL is unknown.
     if (!call) return unknown;
