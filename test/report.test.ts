@@ -88,3 +88,30 @@ describe("the rest of the text report", () => {
     expect(out).toContain('src/a.ts:1:1 error PERM002: invalid @perm entry "nett" on f: unknown capability.\n\n');
   });
 });
+
+describe("the text report on messages built to be slow", () => {
+  const diagnostic = (message: string): Diagnostic => ({
+    severity: "error",
+    code: "PERM003",
+    file: path.join(root, "src", "a.ts"),
+    line: 1,
+    column: 1,
+    function: "f",
+    capability: "net",
+    call: "",
+    message,
+  });
+
+  // Code scanning found the split before "but" / "which" scanned line breaks quadratically, and a
+  // message carries text from the analyzed code (here, a string literal of line breaks).
+  it("formats a message full of line breaks quickly", () => {
+    const start = performance.now();
+    formatText(report({ diagnostics: [diagnostic(`f calls x("${"\n".repeat(100_000)}")`)] }), root);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
+
+  it("still puts PermLang's own reason on a line of its own", () => {
+    const out = formatText(report({ diagnostics: [diagnostic("f calls fetch(u)\n  but its declared permissions do not include net.")] }), root);
+    expect(out).toContain("PERM003: f calls fetch(u)\n  but its declared permissions do not include net.");
+  });
+});

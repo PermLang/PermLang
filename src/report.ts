@@ -105,8 +105,10 @@ export function formatText(report: Report, cwd = process.cwd()): string {
 /**
  * PermLang's own messages break at most once, before the reason ("but ...", "which ...").
  * Any other line break in a message comes from a value in the code, and is escaped with it.
+ * Only spaces and tabs follow the break: `\s*` would match line breaks too, and scan a message
+ * full of them (text from the code) in quadratic time.
  */
-const OWN_BREAK = /\n\s*(?=but |which )/;
+const OWN_BREAK = /\n[ \t]*(?=but |which )/;
 
 function formatDiagnostic(d: Diagnostic, cwd: string): string {
   const location = `${relative(d.file, cwd)}:${d.line}:${d.column}`;
