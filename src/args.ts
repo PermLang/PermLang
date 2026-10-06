@@ -37,9 +37,9 @@ Options:
   --workflow                      init: also add .github/workflows/permlang.yml
   --spec <file.perm>              spec: check this spec (repeatable; default: every .perm file here)
 
-diff also takes check's options, so one set of arguments works for both (the Action
-passes its args to each); --require-lock, --sarif, and --github-annotations don't
-change the diff.
+diff also takes check's options except --base, so one set of arguments works for both
+(the Action passes its args to each); --require-lock, --sarif, and --github-annotations
+don't change the diff.
 
 permlang.config.json:
   { "strictness": "sketch", "unmapped": "warn", "adapters": ["./permlang/adapters/acme-sms.json"] }

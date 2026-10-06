@@ -64,6 +64,8 @@ perm process_refund  src/refunds.ts#processRefund
   perms     no access beyond the declared scope
   must      3 rules, not verified yet (phase 2)
   examples  2 examples, not run yet (phase 2)
+
+1 spec, 0 failing.
 ```
 
 | Code | Meaning |
@@ -89,8 +91,10 @@ calls something typed `any` (a package export declared `any`, a member of an
 perm process_refund  src/refunds.ts#processRefund
   perms     unchecked: reaches code PermLang can't see
   ...
-  refunds.perm:2 error SPEC005: perm process_refund: processRefund reaches code PermLang can't see, so its permissions can't be checked: it calls into node:child_process, whose types can't be found.
+  refunds.perm:3 error SPEC005: perm process_refund: processRefund reaches code PermLang can't see, so its permissions can't be checked: it calls into node:child_process, whose types can't be found.
     -> install the missing types (@types/node for Node's modules and globals, such as process), then run it again.
+
+1 spec, 1 failing.
 ```
 
 The fix says what to do: install the missing types, or give what's called a type
@@ -98,8 +102,8 @@ other than `any`. An `any` value that the implementation passes somewhere else t
 be called (a callback typed `any`) isn't noticed.
 
 Unused permissions aren't reported for an unchecked spec, since the code that
-can't be seen may use them. Calls into packages with no adapter are trusted, as
-in `permlang check`, which lists them.
+can't be seen may use them. Calls into packages with no adapter are trusted
+here; `permlang check` lists them, and its lock file records them.
 
 ## What comes next
 

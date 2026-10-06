@@ -129,7 +129,7 @@ function init(args: Args): number {
       throw new UsageError(`Strictness must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
     }
     writeFileSync(configFile, `${JSON.stringify({ strictness }, null, 2)}\n`);
-    const meaning = strictness === "sketch" ? ": rules are reported, not enforced; new access the lock file doesn't record still fails" : "";
+    const meaning = strictness === "sketch" ? ": rules are reported, not enforced; anything the lock file doesn't record still fails: new access, a changed setting, or new code PermLang can't check" : "";
     done.push(`Wrote ${configFile} (strictness ${strictness}${meaning}).`);
   }
 
