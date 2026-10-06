@@ -385,15 +385,19 @@ so the list can't go stale.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that
   assigns them is still reported.
-- A function kept in a collection is linked to calls through the collection
-  only when it's written against the collection's function type (see
-  [how calls are followed](#how-calls-are-followed)). Not linked: a function put
-  in through a parameter of a function type of its own
-  (`function add(job: () => void) { jobs.set("x", job); }`), and a collection
+- A function is linked to calls through a callable type or a collection only
+  when it's written against that type (see
+  [how calls are followed](#how-calls-are-followed)). Not linked: a function
+  that only fits the type, and reaches the call some other way (from outside
+  the project, say, or through `any`); a function put in a collection through a
+  parameter of a function type of its own
+  (`function add(job: () => void) { jobs.set("x", job); }`); and a collection
   with no function type (`new Map()` with no type arguments is a
   `Map<any, any>`, so calls through it can't be resolved at all). The code that
   makes the function is charged with what it does either way. A call through an
   array entry picked by a computed index (`handlers[i]()`) is unverifiable.
+  Matching every function that fits instead would link nearly every function:
+  any function with no parameters fits `() => void`.
 - Implicit calls made inside a library function: `Promise.resolve(x)` calling
   `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
