@@ -222,6 +222,14 @@ function render(t: string): unknown { return eval(t); }
 function loadPlugin(p: string): unknown { return require(p); }
 export const templateTool = tool({ name: "tpl", description: "Render a template", execute: async ({ t }: { t: string }) => String(render(t)) });
 export const pluginTool = tool({ name: "plugin", description: "Load a plugin", execute: async ({ p }: { p: string }) => String(loadPlugin(p)) });`,
+  // A tool a factory made, given in a tools record: registered once, where it's made, even when
+  // its type is the definition's own.
+  madeThenListed: `import { generateText, tool } from "ai";
+import { execSync } from "node:child_process";
+const listed = tool({ description: "List files", execute: async () => execSync("ls").toString() });
+export async function ask(prompt: string) {
+  return generateText({ prompt, tools: { listed } });
+}`,
   // The schema is compared by symbol, so renaming the import doesn't hide the handler.
   renamedSchema: `import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema as CallTool, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -284,6 +292,7 @@ describe("tools given to AI models", () => {
       "@openai/agents tpl",
       "@openai/agents untyped",
       "ai deleteUser",
+      "ai listed",
       "ai tool",
       "ai weather",
     ]);
@@ -338,6 +347,10 @@ describe("tools given to AI models", () => {
     expect(run({ strictness: "development" }).diagnostics.filter((d) => d.file.endsWith("vouched.ts") && d.code === "PERM004")).toEqual([]);
   });
 
+  it("registers a tool a factory made once, where it's made, when it's given in a collection", () => {
+    expect(run().tools.filter((t) => t.file.endsWith("madeThenListed.ts")).map((t) => `${t.name} ${t.line}: ${t.reaches.join(", ")}`)).toEqual(["listed 3: exec"]);
+  });
+
   it("doesn't loop on constants that refer to each other", () => {
     const inFile = Object.fromEntries(run().tools.filter((t) => t.file.endsWith("loops.ts")).map((t) => [t.name, t.reaches.join(", ")]));
     expect(inFile).toEqual({ looped: "unverifiable", loopedDefinition: "unverifiable" });
@@ -388,6 +401,7 @@ describe("tools given to AI models", () => {
       "warning loops.ts:4 looped",
       "warning loops.ts:5 loopedDefinition",
       "warning lowlevel.ts:5 *",
+      "warning madeThenListed.ts:3 listed",
       "warning mcp.ts:5 save_note",
       "warning mcpSchemaRun.ts:5 run_command",
       "warning mcpSchemaRun.ts:6 read_file",
@@ -430,11 +444,11 @@ describe("tools given to AI models", () => {
     expect(run({ strictness: "development", tools: "error" }).diagnostics.filter((d) => d.code === "PERM008").every((d) => d.severity === "error")).toBe(true);
     // "error" is asked for explicitly, so it fails at sketch too; the default stays a warning.
     const atSketch = (tools?: "error") => run({ strictness: "sketch", ...(tools ? { tools } : {}) }).diagnostics.filter((d) => d.code === "PERM008").map((d) => d.severity);
-    expect(atSketch("error")).toEqual(Array(31).fill("error"));
-    expect(atSketch()).toEqual(Array(31).fill("warning"));
+    expect(atSketch("error")).toEqual(Array(32).fill("error"));
+    expect(atSketch()).toEqual(Array(32).fill("warning"));
     expect(run({ tools: "trust" }).diagnostics.filter((d) => d.code === "PERM008")).toEqual([]);
     // The tools are still listed.
-    expect(run({ tools: "trust" }).tools).toHaveLength(35);
+    expect(run({ tools: "trust" }).tools).toHaveLength(36);
   });
 
   it("counts an MCP client's connection as network access, and a server talking to its client as none", () => {
@@ -591,6 +605,113 @@ declare const config: Parameters<typeof hostedMcpTool>[0];
 export const fromConfig = hostedMcpTool(config);
 export function search(options: Parameters<typeof webSearchTool>[0]) {
   return webSearchTool(options);
+}`,
+    // Found in re-verification: frameworks that weren't recognized. OpenAI's SDK runs the
+    // functions given to chat.completions.runTools; its other calls only send schemas.
+    openai: `import OpenAI from "openai";
+import { zodFunction } from "openai/helpers/zod";
+import { ParsingToolFunction } from "openai/lib/RunnableFunction";
+import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+declare const pathSchema: { parse(input: unknown): { path: string } };
+const client = new OpenAI();
+export async function inline() {
+  return client.chat.completions.runTools({
+    model: "gpt-x",
+    messages: [],
+    tools: [{ type: "function", function: { name: "oa_shell", description: "Run a command", parameters: {}, parse: JSON.parse, function: (a: { cmd: string }) => execSync(a.cmd).toString() } }],
+  }).finalContent();
+}
+const readTool = zodFunction({ name: "read_file", parameters: pathSchema, function: ({ path }) => readFileSync(path, "utf8") });
+export async function withZod() {
+  return client.chat.completions.runTools({ model: "gpt-x", messages: [], tools: [readTool] }).finalContent();
+}
+export const parsing = new ParsingToolFunction({ name: "parsed", description: "Run", parameters: {}, parse: JSON.parse, function: (a: { cmd: string }) => execSync(a.cmd).toString() });
+export async function schemaOnly() {
+  return client.chat.completions.create({ model: "gpt-x", messages: [], tools: [{ type: "function", function: { name: "weather", parameters: {} } }] });
+}
+type CreateTools = Parameters<typeof client.chat.completions.create>[0]["tools"];
+export async function schemaPassedIn(tools: CreateTools) {
+  return client.chat.completions.create({ model: "gpt-x", messages: [], tools });
+}
+export async function paramsPassedIn(params: Parameters<typeof client.chat.completions.create>[0]) {
+  return client.chat.completions.create(params);
+}
+function schemaOf(name: string) {
+  return { type: "function" as const, function: { name, parameters: {} } };
+}
+export async function schemaFromHelper() {
+  return client.chat.completions.create({ model: "gpt-x", messages: [], tools: [schemaOf("weather")] });
+}
+export async function responses() {
+  return client.responses.create({ model: "gpt-x", input: "hi", tools: [{ type: "function", name: "weather", parameters: {}, strict: true }, { type: "web_search" }] });
+}`,
+    fastmcp: `import { FastMCP } from "fastmcp";
+import { execSync } from "node:child_process";
+const server = new FastMCP({ name: "ops", version: "1.0.0" });
+server.addTool({ name: "fm_shell", execute: async ({ cmd }: { cmd: string }) => execSync(cmd).toString() });
+server.addTools([{ name: "fm_list", execute: async () => execSync("ls").toString() }]);`,
+    genkit: `import { dynamicTool, genkit, tool } from "genkit";
+import { execSync } from "node:child_process";
+const ai = genkit({});
+export const gk = ai.defineTool({ name: "gk_shell", description: "Run a command" }, async ({ cmd }: { cmd: string }) => execSync(cmd).toString());
+export const gkDynamic = ai.dynamicTool({ name: "gk_dynamic", description: "List files" }, async () => execSync("ls").toString());
+export const gkTool = tool({ name: "gk_tool", description: "Run a command" }, async ({ cmd }: { cmd: string }) => execSync(cmd).toString());
+// No function: the app answers the model itself, wherever it does.
+export const gkAsk = dynamicTool({ name: "gk_ask", description: "Ask the user" });
+// Tools given by value or by name are registered where they're defined.
+export async function ask(prompt: string) {
+  return ai.generate({ prompt, tools: [gk, "gk_tool"] });
+}`,
+    // Found in re-verification: plain-object tools given in forms that were missed. Collections
+    // that can't be listed could hold any tool.
+    collections: `import { ToolLoopAgent, generateText, tool } from "ai";
+import { Agent, type FunctionTool } from "@openai/agents";
+import { execSync } from "node:child_process";
+export async function quoted(prompt: string) {
+  return generateText({ prompt, tools: { sh: { description: "Run", inputSchema: {}, "execute": async ({ cmd }: { cmd: string }) => execSync(cmd).toString() } } });
+}
+const K = "execute";
+export async function computed(prompt: string) {
+  return generateText({ prompt, tools: { cs: { description: "Run", inputSchema: {}, [K]: async ({ cmd }: { cmd: string }) => execSync(cmd).toString() } } });
+}
+export const quotedTool = tool({ description: "Run", inputSchema: {}, "execute": async ({ cmd }: { cmd: string }) => execSync(cmd).toString() } as any);
+const filled: Record<string, any> = {};
+filled.later = { description: "Run", inputSchema: {}, execute: async ({ cmd }: { cmd: string }) => execSync(cmd).toString() };
+export const filledAgent = new ToolLoopAgent({ tools: filled });
+const options = { tools: { spreadIn: { description: "Run", inputSchema: {}, execute: async ({ cmd }: { cmd: string }) => execSync(cmd).toString() } } };
+export async function spreadOptions(prompt: string) {
+  return generateText({ ...options, prompt });
+}
+const onlySpread: FunctionTool[] = [{ type: "function", name: "spreadList", invoke: async (input: string) => execSync(input).toString() } as any];
+export const spreadAgent = new Agent({ name: "s", tools: [...onlySpread] });
+const names = ["ls", "pwd"];
+export const fromEntries = new ToolLoopAgent({ tools: Object.fromEntries(names.map((n) => [n, { description: n, inputSchema: {}, execute: async () => execSync(n).toString() }])) });
+function shellDefinition(cmd: string) {
+  return { description: cmd, inputSchema: {}, execute: async () => execSync(cmd).toString() };
+}
+export async function fromHelper(prompt: string) {
+  return generateText({ prompt, tools: { helped: shellDefinition("ls") } });
+}
+function baseTools() {
+  return { base: shellDefinition("ls") };
+}
+export async function spreadCall(prompt: string) {
+  return generateText({ prompt, tools: { ...baseTools() } });
+}
+let reassignable = { mutable: shellDefinition("ls") };
+export async function fromLet(prompt: string) {
+  return generateText({ prompt, tools: reassignable });
+}
+export async function optionsPassedIn(options: Parameters<typeof generateText>[0]) {
+  return generateText({ ...options, prompt: "hi" });
+}
+// A helper that returns a framework's tool: the tool is registered where it's made.
+function makeTool(cmd: string) {
+  return tool({ description: cmd, inputSchema: {}, execute: async () => execSync(cmd).toString() });
+}
+export async function viaFactory(prompt: string) {
+  return generateText({ prompt, tools: { made: makeTool("ls") } });
 }`,
     // A library's prebuilt tool runs code PermLang can't see.
     prebuilt: `import { Calculator } from "@langchain/community/tools/calculator";
@@ -751,6 +872,40 @@ export default class Anthropic {
     expect(reaches(check(), "hosted")).toEqual({ approved: "exec", byName: "nothing", noCallback: "nothing", fromConfig: "unverifiable", tool: "nothing" });
   });
 
+  it("finds the OpenAI SDK's tools that runTools runs, and not schemas its other calls send", () => {
+    expect(reaches(check(), "openai")).toEqual({ oa_shell: "exec", read_file: "fs.read", parsed: "exec" });
+  });
+
+  it("finds FastMCP's and Genkit's tools", () => {
+    expect(reaches(check(), "fastmcp")).toEqual({ fm_shell: "exec", fm_list: "exec" });
+    expect(reaches(check(), "genkit")).toEqual({ gk_shell: "exec", gk_dynamic: "exec", gk_tool: "exec", gk_ask: "unverifiable" });
+    expect(check().tools.filter((t) => t.file.endsWith("genkit.ts")).map((t) => t.framework)).toEqual(Array(4).fill("genkit"));
+  });
+
+  it("lists plain-object tools however they're given, and reports collections it can't list", () => {
+    const inFile = check().tools.filter((t) => t.file.endsWith("collections.ts")).map((t) => `${t.name} ${t.line}: ${t.reaches.join(", ")}`);
+    expect(inFile.sort()).toEqual([
+      // Object.fromEntries(...), { ...baseTools() }, a let, and options passed in.
+      "* 22: unverifiable",
+      "* 33: unverifiable",
+      "* 37: unverifiable",
+      "* 40: unverifiable",
+      "cs 9: exec",
+      "helped 27: unverifiable",
+      "later 13: exec",
+      "quotedTool 11: exec",
+      "sh 5: exec",
+      "spreadIn 15: exec",
+      "spreadList 19: exec",
+      "tool 44: exec",
+    ]);
+    const unlisted = check().diagnostics.find((d) => d.code === "PERM008" && d.file.endsWith("collections.ts") && d.line === 22)!;
+    expect(unlisted.message).toBe("tools given here (ai) can't all be listed, so what an AI model can trigger through them can't be checked.");
+    expect(unlisted.fix).toBe(
+      "write the tools out in the call, or in a constant it uses, so PermLang can follow each one; a tool a framework function makes (tool(...)) is followed where it's made.",
+    );
+  });
+
   it("treats a library's prebuilt tool class as unverifiable", () => {
     expect(reaches(check(), "prebuilt")).toEqual({ calculator: "unverifiable" });
   });
@@ -769,8 +924,10 @@ export default class Anthropic {
     });
   });
 
-  it("finds tools in tools options written with spreads and lists, and not ones passed in", () => {
-    expect(reaches(check(), "options")).toEqual({ lookup: "fs.read", now: "nothing", run_script: "exec", tool: "nothing" });
+  it("finds tools in tools options written with spreads and lists, and can't follow ones passed in", () => {
+    // A ToolSet passed in, and records spread into each other in a loop, could hold any tool.
+    expect(reaches(check(), "options")).toEqual({ lookup: "fs.read", now: "nothing", run_script: "exec", tool: "nothing", "*": "unverifiable" });
+    expect(check().tools.filter((t) => t.file.endsWith("options.ts") && t.name === "*").map((t) => t.line)).toEqual([11, 25]);
   });
 
   it("warns only about the ones a model shouldn't trigger unchecked", () => {
@@ -788,6 +945,24 @@ export default class Anthropic {
       "agentsMore.ts libraryEditor",
       "agentsMore.ts remote",
       "agentsMore.ts spread",
+      "collections.ts *",
+      "collections.ts *",
+      "collections.ts *",
+      "collections.ts *",
+      "collections.ts cs",
+      "collections.ts helped",
+      "collections.ts later",
+      "collections.ts quotedTool",
+      "collections.ts sh",
+      "collections.ts spreadIn",
+      "collections.ts spreadList",
+      "collections.ts tool",
+      "fastmcp.ts fm_list",
+      "fastmcp.ts fm_shell",
+      "genkit.ts gk_ask",
+      "genkit.ts gk_dynamic",
+      "genkit.ts gk_shell",
+      "genkit.ts gk_tool",
       "hosted.ts approved",
       "hosted.ts fromConfig",
       "langchain.ts NotesTool",
@@ -798,6 +973,11 @@ export default class Anthropic {
       "llama.ts shell",
       "mcpv2.ts *",
       "mcpv2.ts run",
+      "openai.ts oa_shell",
+      "openai.ts parsed",
+      "openai.ts read_file",
+      "options.ts *",
+      "options.ts *",
       "options.ts lookup",
       "options.ts run_script",
       "plain.ts shell",

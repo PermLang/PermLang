@@ -286,7 +286,7 @@ function isCallable(type: Type): boolean {
 // anything back.
 
 /** Methods of the standard library's arrays, maps, sets, strings, and objects that change nothing. */
-const READS_ONLY = new Set([
+export const READS_ONLY = new Set([
   "at", "concat", "entries", "every", "filter", "find", "findIndex", "findLast", "findLastIndex", "flat", "flatMap",
   "forEach", "get", "has", "includes", "indexOf", "join", "keys", "lastIndexOf", "map", "reduce", "reduceRight",
   "slice", "some", "toLocaleString", "toReversed", "toSorted", "toSpliced", "toString", "values", "valueOf", "with",

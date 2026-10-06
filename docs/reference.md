@@ -605,11 +605,15 @@ the tool. If the tool can run commands, that's prompt injection turned into
 code execution.
 
 PermLang finds tool registrations and works out what each tool's handler can
-reach, through everything it calls:
+reach, through everything it calls. Only the frameworks below are recognized: a
+tool registered with any other package isn't found at all.
 
 | Framework | Recognized |
 | --- | --- |
-| Vercel AI SDK (`ai`, `@ai-sdk/*`) | `tool({ execute })`, `dynamicTool(...)`; plain objects in a `tools` option, such as `generateText({ tools: { shell: { execute } } })` or `new ToolLoopAgent({ tools })`, written in the call or in a constant, spreads included; provider tools such as `anthropic.tools.bash_20250124({ execute })` |
+| Vercel AI SDK (`ai`, `@ai-sdk/*`) | `tool({ execute })`, `dynamicTool(...)`; plain objects in a `tools` option, such as `generateText({ tools: { shell: { execute } } })` or `new ToolLoopAgent({ tools })` (see [tools given in a collection](#tools-given-in-a-collection)); provider tools such as `anthropic.tools.bash_20250124({ execute })` |
+| OpenAI SDK (`openai`) | the functions `chat.completions.runTools` runs: `{ type: "function", function: { function } }` in its `tools`, `zodFunction({ function })`, `zodResponsesFunction({ function })`, `standardFunction(...)`, `new ParsingToolFunction({ function })`; and handlers in a `toolHandlers` record |
+| FastMCP (`fastmcp`) | `server.addTool({ execute })` and `server.addTools([...])` |
+| Genkit (`genkit`, `@genkit-ai/*`) | `ai.defineTool(config, fn)`, `ai.dynamicTool(config, fn)`, `tool(config, fn)`, `dynamicTool(config, fn)` |
 | MCP (`@modelcontextprotocol/sdk`, and version 2's `@modelcontextprotocol/server`) | `server.tool(name, ..., handler)`, `server.registerTool(name, config, handler)`, and the handler that serves every tool (named `*`): `setRequestHandler(CallToolRequestSchema, handler)`, or `setRequestHandler("tools/call", handler)` in version 2 |
 | OpenAI Agents (`@openai/agents`, `@openai/agents-*`) | `tool({ name, execute })`, and the built-in tools that run here: `shellTool({ shell })`, `computerTool({ computer })`, `applyPatchTool({ editor })` |
 | LangChain (`@langchain/*`, `langchain`) | `tool(func, ...)`, `new DynamicStructuredTool({ func })`, other `new ...Tool(...)` classes, prebuilt tools that extend `Tool` (such as `new Calculator()`), and your own subclasses of `StructuredTool` or `Tool`, including class expressions (what any of their methods reaches: `_call`, and `invoke` or anything else a subclass overrides) |
@@ -619,9 +623,40 @@ reach, through everything it calls:
 A package counts by its family, because one package often re-exports another's
 (`@openai/agents` re-exports `tool` from `@openai/agents-core`). The handler is
 the last function argument when there is one (MCP's callback, LangChain's
-`func`), else the definition's function-valued `execute`, `run`, or `func`, else a
-built-in tool's `shell`, `computer`, or `editor` object, whose methods are what
-runs. A schema property that happens to be called `run` isn't a handler.
+`func`), else the definition's function-valued `execute`, `run`, `func`, or
+`function` (written as `execute`, `"execute"`, or `[KEY]` with a constant `KEY`,
+or in a definition spread in from a constant), else a built-in tool's `shell`,
+`computer`, or `editor` object, whose methods are what runs. A schema property
+that happens to be called `run` isn't a handler.
+
+### Tools given in a collection
+
+Tools are often handed to a framework together: a `tools` option
+(`generateText({ tools })`, `new Agent({ tools: [...] })`,
+`runTools({ tools: [...] })`), the OpenAI SDK's `toolHandlers` record, or
+FastMCP's `addTools([...])`. PermLang reads the collection where it's written: in
+the call, in options spread into it from a constant (`{ ...options, prompt }`), in
+a constant it names, with what's spread in (`{ ...shared }`, `[...list]`) and
+what's added to that constant later (`tools.shell = {...}`,
+`tools["shell"] = ...`, `list.push(...)`). Each entry is:
+
+- a plain object with a handler: a tool, named by its key or its `name`;
+- a tool a framework function made (`tool({...})`, `new ShellTool()`, a function
+  of yours whose every `return` gives one), a value whose type the framework
+  declares (a parameter typed as its `Tool`), or a tool's name: these are
+  registered where they're made, and aren't counted twice;
+- a function: the tool's handler;
+- a schema with no handler: the app answers the model itself, so it's skipped.
+
+Anything else could be any tool, and so could a collection that can't be read: a
+parameter, a variable that can be reassigned, a function's result (such as
+`Object.fromEntries(...)`), options passed in from elsewhere, a plain object a
+helper of yours builds, or a constant changed in ways that can't be read
+(`Object.assign(tools, more)`, a computed key). Each is listed as a tool that
+reaches `unverifiable`, named by its key, or `*` for a whole collection, with a
+`PERM008` warning saying it can't be listed. That only happens where the
+collection's type allows a tool the framework runs: the schema lists of the
+OpenAI or Anthropic SDK's message calls (`create({ tools })`) can't hold one.
 
 Every tool is listed in the report, with what it reaches. When a tool reaches
 something a model shouldn't trigger unchecked, there's a `PERM008` warning at
@@ -672,13 +707,26 @@ What counts as unverifiable, and what reaches nothing:
 
 Not recognized yet:
 
-- Tools registered through a wrapper of your own.
-- Plain-object tools passed through anything but the call itself or a constant
-  (a function's parameter, say), including a whole `tools` list or record passed
-  in that way.
+- Tool frameworks other than those in the table above.
+- Tools registered through a wrapper of your own
+  (`function addTool(name, fn) { server.registerTool(name, {}, fn) }`) are found
+  inside the wrapper, where the handler is a parameter, so the tool counts as
+  unverifiable. The handlers its callers pass aren't followed.
+- Plain-object tools that reach a framework through a function of yours: a
+  helper that takes the `tools` record or list as a parameter and passes it on is
+  reported as one tool PermLang can't follow (see above), not as the tools its
+  callers give it. A constant record changed by a function it's passed to isn't
+  noticed.
+- An entry typed as the framework's own tool type is taken to be registered where
+  it's made. A plain object you build and annotate with that type
+  (`const shell: Tool = { execute }`), then pass to the framework through a
+  parameter, isn't followed.
 - Tool lists that are only schemas, such as the `tools: [...]` of the Anthropic or
-  OpenAI SDK's message calls. Your own code answers the model's calls there,
-  wherever it handles them, and PermLang can't link that code to the tool.
+  OpenAI SDK's message calls (`messages.create`, `chat.completions.create`,
+  `responses.create`). Your own code answers the model's calls there, wherever it
+  handles them, and PermLang can't link that code to the tool. (The OpenAI SDK's
+  `runTools` is different: it runs the functions it's given, and those are
+  recognized.)
 
 ## Project configuration
 

@@ -339,6 +339,8 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
       tools.push({ name: t.name, framework: t.framework, file: file.getFilePath(), line, function: registrar.name, reaches });
       const risky = reaches.filter(isRiskyForTools);
       if (toolPolicy === "trust" || risky.length === 0) continue;
+      // A collection of tools that can't be listed: say so, rather than name a tool called "*".
+      const unlisted = t.unlisted && t.name === "*";
       diagnostics.push({
         severity: toolPolicy === "error" ? "error" : "warning",
         code: "PERM008",
@@ -348,8 +350,12 @@ export function checkProject(project: Project, options: CheckOptions = {}): Repo
         function: registrar.name,
         capability: t.name,
         call: "",
-        message: `tool ${t.name} (${t.framework}) can be called by an AI model, and reaches ${risky.join(", ")}.`,
-        fix: "anyone who controls the model's input can trigger it: limit what the tool can do, validate its arguments, or have a person confirm before it runs.",
+        message: unlisted
+          ? `tools given here (${t.framework}) can't all be listed, so what an AI model can trigger through them can't be checked.`
+          : `tool ${t.name} (${t.framework}) can be called by an AI model, and reaches ${risky.join(", ")}.`,
+        fix: unlisted
+          ? "write the tools out in the call, or in a constant it uses, so PermLang can follow each one; a tool a framework function makes (tool(...)) is followed where it's made."
+          : "anyone who controls the model's input can trigger it: limit what the tool can do, validate its arguments, or have a person confirm before it runs.",
       });
     }
   }
