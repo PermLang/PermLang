@@ -363,3 +363,15 @@ describe("the Action's setup", () => {
     expect(script("Compute build cache key")).toContain('cygpath -m "$(pwd -P)"');
   });
 });
+
+describe("the release workflow", () => {
+  // Dependencies' install scripts ran in the job that packs the tarball, which is then attested
+  // and published, and could change it (the second verification, item 8).
+  it("installs without running dependencies' install scripts, as the Action builds itself", () => {
+    const release = parse(readFileSync(path.join(repo, ".github", "workflows", "release.yml"), "utf8")) as { jobs: Record<string, { steps: { run?: string }[] }> };
+    const installs = Object.values(release.jobs).flatMap((job) => job.steps.map((s) => s.run ?? "").filter((run) => /\bnpm (ci|install)\b/.test(run)));
+    expect(installs).not.toHaveLength(0);
+    for (const run of installs) expect(run).toContain("--ignore-scripts");
+    expect(script("Build PermLang")).toContain("npm ci --ignore-scripts");
+  });
+});
