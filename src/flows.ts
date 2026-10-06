@@ -19,7 +19,7 @@ import { callText, unwrapExpression } from "./detect/shared.js";
 import { pathTo, type Edge, type Reach } from "./graph.js";
 import { unmappedCalls } from "./unmapped.js";
 import { untypedImportUses } from "./unseen.js";
-import { enclosingUnitNode, type Unit, type Use } from "./units.js";
+import { enclosingUnitNode, type PackageFolders, type Unit, type Use } from "./units.js";
 import { lineAndColumn } from "./walk.js";
 
 export interface FlowRule {
@@ -117,11 +117,14 @@ function one(text: string, what: string, source: string, appCapability?: string)
 export function flowDiagnostics(units: Iterable<Unit>, edges: readonly Edge[], reach: Reach, rules: readonly FlowRule[]): Diagnostic[] {
   const out: Diagnostic[] = [];
   // Listed once: an iterator (a Map's values, say) would be used up by the first rule.
-  const all = [...units];
+  const all = new Set(units);
   for (const rule of rules) {
     const source = formatCapability(rule.from);
     const allowed = rule.to.length > 0 ? `allows only ${rule.to.map(formatCapability).join(", ")}` : "doesn't let it go anywhere";
-    for (const [unit, via] of holders(all, edges, rule)) {
+    // Any unit can hand the source on, including one that isn't reported (an anonymous
+    // function kept in a Map, say: units.ts); the reported ones are diagnosed.
+    for (const [unit, via] of holders(reach.keys(), edges, rule)) {
+      if (!all.has(unit)) continue;
       const got = via.length === 0 ? `reads ${source}` : `gets ${source} from ${via.join(" → ")}`;
       for (const [key, p] of reach.get(unit)!) {
         const sink = sinkOf(key, p.capability, rule, source, allowed);
@@ -201,7 +204,7 @@ function sinkOf(key: string, capability: Capability, rule: FlowRule, source: str
  * (PERM007). Either could send what it's given anywhere. They aren't capabilities a function
  * declares, so they're kept out of what @perm, the lock, and AI tools see.
  */
-export function opaqueUses(sourceFiles: readonly SourceFile[], adapters: AdapterIndex, unitOf: (node: Node) => Unit | undefined): Map<Unit, Use[]> {
+export function opaqueUses(sourceFiles: readonly SourceFile[], adapters: AdapterIndex, packages: PackageFolders, unitOf: (node: Node) => Unit | undefined): Map<Unit, Use[]> {
   const out = new Map<Unit, Use[]>();
   const add = (node: Node, capability: Capability, call: string) => {
     const unit = unitOf(enclosingUnitNode(node));
@@ -211,7 +214,7 @@ export function opaqueUses(sourceFiles: readonly SourceFile[], adapters: Adapter
     uses.push({ verb: "calls", capability, call, line, column });
     out.set(unit, uses);
   };
-  for (const { node, package: pkg } of unmappedCalls(sourceFiles, adapters)) add(node, { name: NO_ADAPTER, arg: pkg }, callText(node));
+  for (const { node, package: pkg } of unmappedCalls(sourceFiles, adapters, packages)) add(node, { name: NO_ADAPTER, arg: pkg.name }, callText(node));
   for (const sourceFile of sourceFiles) {
     for (const { node, specifier } of untypedImportUses(sourceFile)) add(node, { name: NO_TYPES, arg: specifier }, siteText(node));
   }

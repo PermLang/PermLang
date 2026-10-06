@@ -105,7 +105,7 @@ Start gentle and tighten up when you're ready.
 
 | Level | Best for | What fails the build |
 | --- | --- | --- |
-| 🌱 **Sketch** | Trying it on an existing project | Only new access the inventory doesn't record, and rules you add to the settings file yourself (such as where a secret may go). Everything else is just reported. |
+| 🌱 **Sketch** | Trying it on an existing project | Only changes the inventory doesn't record (new access, or access it lists that the code no longer has), and rules you add to the settings file yourself (such as where a secret may go). Everything else is just reported. |
 | 🛠️ **Development** (default) | Most teams | Also: functions that break their own rules, and public functions with no rules. |
 | 🔒 **Production** | Sensitive code | Also: every function, including internal helpers, must be covered by a rule. |
 

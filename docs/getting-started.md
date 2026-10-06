@@ -34,7 +34,7 @@ This writes three files. Commit all of them:
 
 | File | What it is |
 | --- | --- |
-| `permlang.config.json` | Settings. Starts at `"strictness": "sketch"`: everything is reported, and only new access the lock doesn't record fails (plus any flow rules, or `"error"` policies, you add later). |
+| `permlang.config.json` | Settings. Starts at `"strictness": "sketch"`: everything is reported, and only a difference between the code and the lock fails, such as new access the lock doesn't record (plus any flow rules, or `"error"` policies, you add later). |
 | `permlang.lock.json` | What every function can reach today (network hosts, files, database tables, environment variables, processes), and what your workflows and `package.json` scripts grant (token permissions, secrets, Actions, install hooks). It also records which files were checked (`src` here), and the settings. |
 | `.github/workflows/permlang.yml` | Installs your dependencies (for their types), then runs PermLang on every pull request and comments the permission diff. |
 
@@ -94,6 +94,11 @@ fixes each of these, and the lock's diff shows what changed.
 Run `permlang check` and `permlang lock` with the same paths and options as your
 workflow (`src` here): the lock records them, and a check of other files, or with
 other settings, fails with one error that says what differs.
+
+Make the PermLang check a **required status check** in your branch protection
+rules or ruleset. A pull request runs its own version of the workflow, so without
+that, one that removes the PermLang step could still be merged. The
+[reference](reference.md#github-action) has more on protecting the workflow.
 
 ## 5. Enforce, when you're ready
 

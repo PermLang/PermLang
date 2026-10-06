@@ -230,6 +230,27 @@ them by what the code says, not by names:
   that could be used as one, since TypeScript doesn't require `implements`. A
   generic type is compared by the members it requires. Members declared as
   function-typed properties (`send: (u: string) => void`) count like methods.
+- **Callable types and collections of functions.** A call through a callable
+  interface or type alias (`interface Runner { (cmd: string): void }`,
+  `type Runner = (cmd: string) => void`), or through the function type of a
+  collection's entries (`ops.get(name)!(arg)` on a
+  `Map<string, (arg: string) => void>`, `handlers.forEach((h) => h(x))` on a
+  `Handler[]`, or a `Map` whose type TypeScript inferred from a function in it),
+  reaches every function written against that type: one whose type comes from
+  it (`const shell: Runner = (cmd) => ...`, an entry of the collection,
+  `ops.set("run", (arg) => ...)`), or a named function put where it's expected
+  (`ops.set("run", shell)`, `const runners: Runner[] = [shell]`). An anonymous
+  function reached this way is named by where it is (`<function at ops.ts:4>`);
+  the code around it is charged with what it does, as before. Unlike classes
+  and interfaces, a function that merely fits the type isn't counted: nearly
+  every function fits a call signature. A function type written for a
+  parameter (`function apply(run: (cmd: string) => void)`, or
+  `jobs: Array<() => void>`) isn't followed this way: a callback runs as part of
+  the code that passes it, which already reaches it. A callable type alias is
+  followed wherever it's used, parameters included, so a function that calls
+  what it's given through one (`function retry(job: Job)`) reaches every
+  function written against that alias, as a call through an interface reaches
+  every implementation.
 - **Objects of functions handed to a call.** A function that passes an object
   holding functions (`app.use({ run(q) {...} })`, or a `const` holding one,
   nested in arrays and objects too) reaches those functions. Handed out by a
@@ -286,12 +307,36 @@ written as a literal, give `any`. PermLang traces the specifier (a literal, a
 | a file in the project | its top-level code runs, and any of its exports can be called: the caller reaches all of them |
 | a module whose functions carry capabilities (`child_process`, `fs`, a Node built-in that isn't declared pure, a database client, a package an adapter maps) | unverifiable |
 | a package with no adapter | listed and warned about (PERM006), like an import of it |
-| a package declared pure, JSON, or another asset | nothing |
+| a package declared pure, or data (see below) | nothing |
 | a specifier that can't be traced, or a file outside the project | unverifiable |
 
 `data:`, `http:`, `https:`, `blob:` and `file:` specifiers are unverifiable in
 every form of import: the code isn't a file in the project. A query or fragment
 doesn't make a script an asset (`./evil.js?x=.css` is still `./evil.js`).
+
+Which files are data depends on what loads them:
+
+- **An ES import** (`import`, `export ... from`, or `import()`, in a file
+  TypeScript emits as an ES module): a stylesheet, an image, JSON, or another
+  asset is data. A bundler loads it as what it is, and Node's ES module loader
+  doesn't run it.
+- **`require()`**, `import x = require()`, and imports in a file TypeScript
+  compiles to CommonJS: only a `.json` file that exists is data. Node runs any
+  other file as JavaScript, and adds `.js` to a path that doesn't exist, so
+  `require("./theme.css")` runs `./theme.css`, or `./theme.css.js`, and
+  `require("./data.json")` runs `./data.json.js` when there's no `./data.json`.
+  Such a `require()` is unverifiable (PERM004), and such an import is one whose
+  types can't be found (PERM007). The extension must be exactly `.json`:
+  `./data.JSON` runs as JavaScript too.
+
+A file is compiled to CommonJS when `"module"` is `commonjs` (or AMD, UMD, or
+unset with a target before ES2015), when it's a `.cts` file, or, with `node16`
+or later, when its `package.json` doesn't say `"type": "module"`. There,
+`import()` stays an ES import. When the check is given paths instead of a
+tsconfig.json, files are read with bundler settings (ES modules), so in a
+project compiled to CommonJS, check with `--project tsconfig.json` to have its
+imports of asset-looking files reported. A `require()` is held to the CommonJS
+rule either way.
 
 ### Known limits
 
@@ -345,6 +390,19 @@ so the list can't go stale.
 - Functions attached after the fact (`obj.m = fn`, reassigning a `let`) aren't
   linked to calls through that property or variable. The top-level code that
   assigns them is still reported.
+- A function is linked to calls through a callable type or a collection only
+  when it's written against that type (see
+  [how calls are followed](#how-calls-are-followed)). Not linked: a function
+  that only fits the type, and reaches the call some other way (from outside
+  the project, say, or through `any`); a function put in a collection through a
+  parameter of a function type of its own
+  (`function add(job: () => void) { jobs.set("x", job); }`); and a collection
+  with no function type (`new Map()` with no type arguments is a
+  `Map<any, any>`, so calls through it can't be resolved at all). The code that
+  makes the function is charged with what it does either way. A call through an
+  array entry picked by a computed index (`handlers[i]()`) is unverifiable.
+  Matching every function that fits instead would link nearly every function:
+  any function with no parameters fits `() => void`.
 - Implicit calls made inside a library function: `Promise.resolve(x)` calling
   `then`, `Array.from(x)` running an iterator, `String(x)` calling `toString`.
   Written directly (`await x`, `for...of`, `${x}`, `"" + x`), they're caught.
@@ -379,17 +437,41 @@ Other gaps, not yet in fixtures:
   into it are unverifiable, but importing it (which runs its top-level code) isn't
   reported, and neither is reading a property it declares. To have it checked,
   convert it to TypeScript; PermLang doesn't analyze the `.js` even with
-  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe the
-  runtime (`declare global`, a `.d.ts` with no imports or exports) or a package
-  (`declare module "x"`, a folder with its own `package.json`, such as a
-  generated Prisma client) are trusted like a package with no adapter.
+  `allowJs`, as long as the `.d.ts` describes it. Declarations that describe a
+  package (`declare module "x"`, or a `.d.ts` in a folder with its own
+  `package.json`) are trusted like a package with no adapter: listed and warned
+  about (PERM006; see [packages without an adapter](#packages-without-an-adapter)).
+  Declarations that describe the runtime (`declare global`, or a `.d.ts` with no
+  imports or exports) are trusted without being listed, as what the runtime
+  provides: a global function declared there, and defined by a script the page
+  or process loads, isn't checked.
+- A client prisma-client-js generates into a folder of the project's is covered
+  by the Prisma detector, as `@prisma/client` is, and nothing in that folder is
+  listed. PermLang recognizes it by what Prisma writes there (its `index.d.ts`
+  imports Prisma's runtime as `runtime`; Prisma's header isn't enough), and
+  can't tell a real generated client from a forged one: a folder with a
+  `package.json`, a `.d.ts` that imports a `./runtime/` file that way, and
+  JavaScript that does anything else passes as one. Review changes to a
+  generated client's folder as you would any code.
 - `require()` of a package an adapter maps is unverifiable, rather than reaching
   the capabilities the adapter lists; use `import` to have its calls checked.
+- Checked by paths rather than a tsconfig.json, every file is read as an ES
+  module, as a bundler would load it. So in a project compiled to CommonJS, an
+  `import "./theme.css"`, which runs `./theme.css.js` when `./theme.css` doesn't
+  exist, isn't reported; check it with `--project tsconfig.json`. (PermLang
+  can't tell from the files alone: many bundled projects have no
+  `"type": "module"` either.) A `.cts` file, and `require()`, are held to
+  CommonJS's rules either way ([loading modules](#loading-modules)).
 - A file loaded with `require()` or a traced `import()` reaches every export of
   that file, used or not.
 - Interfaces are matched structurally, so a class or object literal that merely
   fits an interface counts as an implementation of it, even if it's never used
-  as one.
+  as one. Matching compares every interface a call goes through with every
+  class and object literal that has a member of that name, once per interface
+  and member, and each such call is linked to every match. That's quick for
+  real code, but grows with the product of the two: a thousand interfaces of
+  one shape, a thousand classes that fit all of them, and a call through each
+  interface take about ten seconds to check.
 - A file that TypeScript itself can't parse (code nested thousands of levels
   deep) is unverifiable when the project's file list includes it. One reached
   only through imports from outside that list still stops the check.
@@ -398,10 +480,18 @@ Other gaps, not yet in fixtures:
 - The Action knows whether the lock file existed before only on pull requests
   and merge-queue entries, from their base commit. On a push, a deleted lock
   file isn't detected.
-- A pull request that changes the Action's `args` to use a new `--lock` file,
-  one the base commit doesn't have, isn't held to the old one: the check uses
-  the new file, and the comment lists all access as new and says the base has
-  no lock file.
+- A pull request that points the Action at a new lock file is held to the
+  base commit's only as far as PermLang can read the base's workflows (see
+  [a lock file the change stops using](#a-lock-file-the-change-stops-using)).
+  It can't read a step whose `working-directory` or `args` come from an
+  expression, such as a matrix, or PermLang run from a reusable workflow in
+  another repository; and it takes `working-directory` to be from the
+  repository root, as it is unless `actions/checkout` was given a `path:`. So a
+  matrix entry changed to a folder with no lock file at the base, for example,
+  isn't caught: the check uses that folder's new lock file, and the comment
+  lists all its access as new and says the base has no lock file.
+- A pull request's own workflow decides whether PermLang runs at all: see
+  [protect the workflow itself](#github-action).
 - New dependencies are described with the pull request's own adapters. An
   adapter the pull request adds or changes is itself a settings change, which
   fails the check and is listed in the comment.
@@ -463,9 +553,9 @@ file along with the paths checked, so changing them fails the check until
 | `PERM002` | error | An `@perm` annotation is invalid, or attaches to nothing. |
 | `PERM003` | error | A function that must declare its permissions has no `@perm`: exported functions at development, every function at production. See [strictness levels](#strictness-levels). |
 | `PERM004` | error | Code whose effects can't be determined statically, such as `eval` or a capability hidden behind `any`. |
-| `PERM005` | error | The code and `permlang.lock.json` differ: the code reaches something the lock doesn't record, or the lock records something the code no longer reaches; a `@perm-unsafe` override is new, gone, or has another reason; the check ran on other files or with other settings than the lock records; the lock is missing (with `--require-lock`); or an older PermLang wrote it. See [the lock file](#the-lock-file-and-the-permission-diff). |
-| `PERM006` | warning, by default | A call into a package with no adapter: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
-| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked. Also the global `process` when Node's types are missing (reported as `node:process`). |
+| `PERM005` | error | The code and `permlang.lock.json` differ: the code reaches something the lock doesn't record, or the lock records something the code no longer reaches; a `@perm-unsafe` override is new, gone, or has another reason; the check ran on other files or with other settings than the lock records; the lock is missing (with `--require-lock`, or `--base` when the base commit has it); the change stops checking with the base commit's lock file (with `--base`); or an older PermLang wrote it. See [the lock file](#the-lock-file-and-the-permission-diff). |
+| `PERM006` | warning, by default | A call into a package with no adapter, installed or a folder of the project's with its own `package.json`: what it touches isn't checked. See [packages without an adapter](#packages-without-an-adapter). |
+| `PERM007` | warning, by default | An import whose types can't be found, so nothing called from it is checked, including an import of an asset-looking file where it compiles to `require()` (see [loading modules](#loading-modules)). Also the global `process` when Node's types are missing (reported as `node:process`). |
 | `PERM008` | warning, by default | A tool an AI model can call reaches something dangerous. See [tools given to AI models](#tools-given-to-ai-models). |
 | `PERM009` | error | A function gets hold of data a flow rule protects and can send it somewhere the rule doesn't allow: another host, a command, or code that can't be verified. See [data-flow rules](#data-flow-rules). |
 | `SPEC001`–`SPEC005` | error or warning | Problems with `.perm` specs: see [specs](#specs-phase-2-groundwork). |
@@ -907,6 +997,19 @@ A package that touches nothing PermLang tracks is declared pure with an adapter
 whose `default` is `[]`. [`adapters/pure.json`](../adapters/pure.json) does this for
 Node's pure built-ins and common libraries (zod, date-fns, React, ...).
 
+A folder of the project's with its own `package.json` is a package too: a client
+generated into the project, or a workspace package that an import reaches
+through a link. PermLang reads its `.d.ts` files but not its JavaScript, so a
+call into it is listed and warned about like a call into an installed package,
+named by its `package.json`'s `name` (or by its folder, such as `./src/gen`,
+when it has none), wherever it's imported from. Since that `name` could claim
+to be any package, only your own adapters (in `"adapters"`) cover such a folder:
+a folder named `lodash` isn't pure, and one named `@prisma/client` isn't read as
+Prisma. An adapter of yours covers every folder that takes its package's name,
+so review a new `package.json` in the repository as you would code. The
+exception is a client prisma-client-js generates there, which the Prisma
+detector covers (see [known limits](#known-limits)).
+
 Built-in adapters cover axios, Stripe, nodemailer, `node-fetch`, `undici`, Redis
 (`redis`, `ioredis`), Kafka, Bull/BullMQ, ClickHouse, AI SDKs (`ai`, `openai`,
 `@anthropic-ai/sdk`, ...), MCP clients, several web APIs, `@nestjs/config`,
@@ -935,7 +1038,7 @@ Set `"strictness"` in `permlang.config.json`, or pass `--strictness`:
 
 | Level | What fails |
 | --- | --- |
-| `sketch` | Only what you ask for explicitly: access the lock file doesn't record (`PERM005`), flow rules (`PERM009`), and `"unmapped": "error"` or `"tools": "error"`. Rules about `@perm` annotations are reported as warnings, and every function's permissions are inferred. Start here on an existing codebase. |
+| `sketch` | Only what you ask for explicitly: any difference between the code and the lock file (`PERM005`), such as access it doesn't record, flow rules (`PERM009`), and `"unmapped": "error"` or `"tools": "error"`. Rules about `@perm` annotations are reported as warnings, and every function's permissions are inferred. Start here on an existing codebase. |
 | `development` (default) | Annotated functions that exceed their `@perm`, invalid annotations, unverifiable code, and exported functions or top-level code without `@perm`. |
 | `production` | All of the above, plus any function (private helpers too) that reaches something without being covered by function- or module-level `@perm`. |
 
@@ -973,6 +1076,9 @@ ran on and with which settings. Commit it. From then on:
   - **Not approved yet**, when the code and the lock file don't match. Access the
     lock records but the code doesn't reach is listed under its own heading.
   - When the change deletes the lock file, or an older PermLang wrote it.
+  - When the change stops checking with the lock file the base commit's
+    workflows check with (see
+    [a lock file the change stops using](#a-lock-file-the-change-stops-using)).
   - When the code couldn't be analyzed (an invalid setting, say). The diff then
     shows only what the lock files record, says so, and never says "No permission
     changes".
@@ -998,22 +1104,37 @@ ran on and with which settings. Commit it. From then on:
 `--format markdown` produces the pull-request comment. Text from the code is
 escaped so it can't change the comment: it can't break out of code formatting or
 a table, hide rows in an HTML comment, mention people (`@name`), or link issues,
-commits, URLs, or emoji (an invisible zero-width space breaks those). The
-comment stays under GitHub's length limit: a row names at most 20 functions,
-and when the comment would still be too long, it's cut short from the end, the
-new-access table first in line to stay, with a note saying how much is left out.
-If the diff can't be computed at all (the base commit can't be read, say),
-`--format markdown` still prints a comment that says so, and the command exits 2.
+commits, URLs, or emoji (an invisible zero-width space breaks those). Control
+characters and bidirectional overrides show as escapes (`\u202e`), as in the
+text output.
 
-`--format json` is for tools, and includes `unrecorded` (where the code and the
-lock file differ, or `null`), `unsafeChanged`, `analysisError` (or `null`),
-`lockDeleted`, `baseLockMissing`, and `dependencies` (each with its `section`, and
-`change`: `added` or `source`).
+The comment stays under GitHub's length limit. Each value from the code (a
+capability, a name, a path, a reason) is cut to 500 characters, and a cell names
+at most 20 functions, AI tools, or capabilities, then says how many more. When
+the comment would still be too long, it leaves rows out: the new-access table
+comes first, right after the warnings at the top, and each later section gets
+what room is left. A row too long for the room left is skipped, and shorter rows
+after it still go in, so one long row can't push the others out. A note says how
+many lines are left out. `--summary <file>` also writes the diff, cut only to
+GitHub's 1 MiB limit on a job summary, which is where the Action puts it.
 
-The text output of `check`, `lock`, and `diff` escapes line breaks and control
-characters in anything from the code (`\n`, `\u001b`), so a string in the code
-can't print a line of its own, which GitHub Actions would obey as a workflow
-command, or drive the terminal.
+If the diff can't be computed at all (the base commit can't be read, or the
+arguments are wrong, say), `--format markdown` still prints a comment that says
+so, and the command exits 2. With no lock file in the working tree or at the
+base commit, there's nothing to compare: the command exits 2, and
+`--format markdown` prints a short notice saying so.
+
+`--format json` (or `--json`) is for tools, and includes `unrecorded` (where the
+code and the lock file differ, or `null`), `unsafeChanged`, `analysisError` (or
+`null`), `lockDeleted`, `lockMoved` (the base's lock files the change stops
+checking with), `baseLockMissing`, and `dependencies` (each with its `section`,
+and `change`: `added` or `source`).
+
+The text output of `check`, `lock`, `diff`, and `spec`, its GitHub annotations,
+and its error messages escape line breaks, control characters, and bidirectional
+overrides in anything from the code or a file (`\n`, `\u001b`, `\u202e`), so a
+string in the code can't print a line of its own, which GitHub Actions would
+obey as a workflow command, drive the terminal, or read differently than it is.
 
 The check compares against `./permlang.lock.json` whenever it exists. When
 checking other files from the same folder (like the fixtures here), pass
@@ -1085,11 +1206,41 @@ To change them, run `permlang lock` with the new paths and options, and commit
 the change. To try other settings without the lock, add `--no-lock`.
 
 **A missing lock file.** With `--require-lock`, a missing lock is an error
-(PERM005); the GitHub Action passes it when the pull request's base commit has
-the lock. A `--lock <file>` that doesn't exist is a usage error (exit code 2), so
-a mistyped path can't turn the comparison off. `--no-lock` with `--require-lock`
-is a usage error too. Without any of these, a check with no lock file checks
-only annotations.
+(PERM005). With `--base <ref>`, which the GitHub Action passes on pull requests,
+it's an error when `<ref>` has the lock file this check reads. A `--lock <file>`
+that doesn't exist is a usage error (exit code 2), so a mistyped path can't turn
+the comparison off. `--no-lock` with `--require-lock`, or with a `--base` that
+has the lock, is a usage error too. Without any of these, a check with no lock
+file checks only annotations.
+
+#### A lock file the change stops using
+
+A change could leave the base commit's lock file behind: point the Action at a
+new lock file (`args: src --lock permlang.lock.v2.json`) or another folder
+(`working-directory`), and approve its own access in a lock file nobody has
+reviewed. So `check --base <ref>` also reads the workflows at `<ref>` and in the
+working tree, and finds the steps that run the PermLang Action
+(`PermLang/permlang@...`, or a local Action named PermLang, such as `uses: ./`
+in PermLang's own repository) and the lock file each one reads, from its
+`working-directory` and the `--lock` in its `args`. The check fails (PERM005)
+when it reads a lock file none of `<ref>`'s steps read, and a lock file one of
+them read, which `<ref>` has, is no longer read by any step:
+
+```
+permlang.lock.v2.json:1:1 error PERM005: This change stops checking with permlang.lock.json, which the base commit's workflow checks with, and this check reads permlang.lock.v2.json instead. A lock file the base doesn't check with can approve whatever the change adds.
+```
+
+When no step at `<ref>` names its lock file plainly (there's no workflow, or its
+inputs come from an expression such as `${{ matrix.dir }}`), `<ref>`'s lock file
+is taken to be `permlang.lock.json` in the folder the check runs in.
+
+Adding a package to a monorepo, with a step and a lock file of its own, passes:
+the base's lock files are all still checked with. To move a lock file (rename
+it, or move the project), do it in two pull requests: the first adds a step that
+checks with the new lock file next to the old one, and once that's merged, the
+second removes the old step. Each pull request's comment shows what its new lock
+file records. A pull request that both drops a package's step and adds another
+package fails; split it the same way.
 
 #### Upgrading from 0.3 or earlier
 
@@ -1147,11 +1298,29 @@ What `init --workflow` writes:
   repository's default branch (from `origin`'s HEAD, else `main`).
 - **In a monorepo package**, run `init` in the package: the workflow goes in
   the repository's `.github/workflows/`, named after the package
-  (`permlang-packages-api.yml`), with `working-directory` set to it.
-  Dependencies install at the repository root, where the lockfile is.
-- **Paths** are written with forward slashes. A path with a space can't be
-  passed in the Action's `args`, so `init` refuses it; list such files in a
-  `tsconfig.json` and use `--project`.
+  (`permlang-packages-api.yml`), with `working-directory` set to it. When
+  another folder's workflow already has that name (`packages/web` and
+  `packages_web` both make `permlang-packages-web.yml`), the new one's name
+  gets a hash of the folder's path. The package's lock records only what's
+  in the package: its own `package.json` scripts, but not the workflows in the
+  repository's `.github/workflows/`, so the package's check doesn't fail when a
+  workflow changes. To have workflows checked too, run PermLang at the
+  repository root as well (`permlang init` there), or have a code owner review
+  `.github/workflows/`.
+- **Dependencies** install with the package manager whose lockfile is nearest,
+  from the project's folder up to the repository root, and in that lockfile's
+  folder: at the root of a workspace, or in a project's own subfolder (with
+  `working-directory` on the install step). With no lockfile, `npm install`
+  runs where the nearest `package.json` is.
+- **`args`** has the paths or `--project` init checked, and the `--config`,
+  `--adapter`, `--unmapped`, and `--lock` options it was given, so the first
+  pull request's check runs with the same settings the lock records. Paths are
+  written relative to the folder init runs in, with forward slashes. `init`
+  refuses, before writing anything, a path the Action can't pass: one with a
+  space (list such files in a `tsconfig.json` and use `--project`), one outside
+  the repository, or one with `${{` or a control character in it.
+- **Names** that YAML would read as something else (`@acme/api`, `#x`, `[a]`,
+  `1e3`) are written in double quotes.
 
 `init` keeps an existing config, workflow, or lock. It writes the workflow
 before the lock, so the lock records it and the first pull request passes.
@@ -1194,7 +1363,7 @@ permissions:
 
 | Input | Default | Meaning |
 | --- | --- | --- |
-| `args` | | Arguments for `permlang check`: source paths, or `--project tsconfig.json`. |
+| `args` | | Arguments for `permlang check`: source paths, or `--project tsconfig.json`, and options such as `--lock` or `--config`. They're split on spaces, so a path can't have one. An option `check` doesn't take is an error. |
 | `strictness` | | `sketch`, `development`, or `production`. Overrides `permlang.config.json`. |
 | `working-directory` | `.` | Where the code, `permlang.config.json`, and `permlang.lock.json` are. |
 | `comment` | `true` | Post the permission diff as a pull-request comment. |
@@ -1211,13 +1380,26 @@ that changes them in its workflow fails the check until `permlang lock` is run
 with the same arguments and options, and committed. For a workflow with
 `args: src` and `strictness: sketch`, that's `npx permlang lock src --strictness sketch`.
 
-**A deleted lock file.** On pull requests and merge-queue entries, the Action
-fetches the base commit first. When the base has the lock file
-(`permlang.lock.json`, or the file `--lock` names in `args`), the check runs with
-`--require-lock`, so deleting the lock fails it, and the comment says the pull
-request deletes it. When the base commit can't be fetched, the lock is required
-anyway, with a warning. `--no-lock` in `args` then stops the check with a usage
-error.
+**A deleted or replaced lock file.** On pull requests and merge-queue entries,
+the Action makes sure it has the base commit (fetching just that commit into a
+shallow clone; a full clone, `fetch-depth: 0`, already has it and stays full),
+and runs the check with `--base <the base commit>` (see
+[a lock file the change stops using](#a-lock-file-the-change-stops-using)).
+PermLang reads `args` itself, as the check does, so it knows which lock file
+the check reads:
+
+- When the base has that lock file, the check requires it: deleting the lock
+  fails the check, and the comment says the pull request deletes it.
+- When the pull request points the check at a lock file the base commit's
+  workflows don't check with (by changing `--lock` in `args`, or
+  `working-directory`), and stops checking with the base's own, the check
+  fails, and the comment says so.
+- When the base commit can't be fetched, the lock is required anyway, with a
+  warning.
+
+`--no-lock` in `args` then stops the check with a usage error. So do options
+`check` doesn't take, and `-h` or `--help` with anything else, rather than being
+ignored.
 
 **The comment.** The Action updates its own comment on each push. It finds the
 comment by its first line, a marker that names the `working-directory` when it
@@ -1225,12 +1407,40 @@ isn't the repository root (so runs for several folders each keep their own), and
 by the account of the token that posted it: `github-actions[bot]` for the default
 token, or a personal token's owner. It never edits a comment from another
 account. The comment's text goes to GitHub in a file, and stays under GitHub's
-length limit. If its comment can't be updated, the step fails, since the old
-comment would go on looking current. If the diff can't be computed, the comment
-says so instead. Other problems (fetching the base commit, posting a first
-comment without `pull-requests: write`) are warnings, and the diff is always in
-the job summary. A pull request from a fork gets the diff in the job summary
-only, since its token is read-only.
+length limit; the job summary gets the diff uncut (up to GitHub's 1 MiB limit
+there). If its comment can't be updated, the step fails, since the old comment
+would go on looking current. If the diff can't be computed, the comment says so
+instead, even when it's `args` that's wrong; and when the check itself stopped
+with an error (exit code 2), the comment says so first, whatever the diff
+shows. When neither the pull request nor
+its base commit has a lock file, there's no diff: the Action posts no comment,
+but replaces one it posted earlier (when a later push deleted the pull
+request's new lock file, say) with a notice saying so. Other problems (fetching
+the base commit, posting a first comment without `pull-requests: write`) are
+warnings, and the diff is always in the job summary. A pull request from a fork
+gets the diff in the job summary only, since its token is read-only.
+
+**Protect the workflow itself.** On `pull_request`, GitHub runs the workflow as
+the pull request has it, so a pull request can remove the PermLang step, change
+its inputs, or add `continue-on-error: true`, and its own run then passes. The
+change to the workflow shows in the pull request, and PermLang's lock records
+the workflow's permissions, triggers, and Actions, but nothing PermLang does
+can stop a workflow that doesn't run it. So:
+
+- Make the PermLang job a **required status check** in the branch's protection
+  rules or ruleset, so a pull request whose workflow doesn't run it can't merge.
+- For stronger protection, run it as a **required workflow**, with a ruleset's
+  "Require workflows to pass before merging" rule (where your GitHub plan
+  offers it): GitHub then runs the workflow from the repository and branch the
+  rule names, not as the pull request has it.
+- Have a code owner review changes to `.github/workflows/` (a `CODEOWNERS` entry).
+
+**`pull_request_target`.** Use `pull_request`. Under `pull_request_target`, the
+comment step doesn't run (it runs on `pull_request` only), and
+`actions/checkout` checks out the base branch unless told otherwise, so the
+check runs on the base's code, not the pull request's. Checking out the pull
+request's code there instead runs it with a token that can write, which is
+what `pull_request_target` warns against.
 
 **Node.** The Action runs PermLang on Node 22, from the runner's tool cache, by
 its full path, so the Node your later steps use doesn't change. On a runner
@@ -1250,19 +1460,37 @@ npm run permlang -- check src --github-annotations # also print GitHub Actions a
 npm run permlang -- check src --sarif out.sarif    # also write the findings as SARIF, for code scanning
 npm run permlang -- lock src                       # write permlang.lock.json
 npm run permlang -- check src --require-lock       # also fail when permlang.lock.json is missing
+npm run permlang -- check src --base origin/main   # ...and as the Action does: see "A missing lock file"
 npm run permlang -- diff origin/main               # permission changes since main
+npm run permlang -- diff origin/main --summary s.md  # ...and the markdown diff, uncut, in s.md
 npm run permlang -- spec src --spec x.perm        # check a .perm spec against the code
 npm run permlang -- --version                      # the installed version
 npm run permlang -- check --help                   # usage (any command)
 ```
 
 Exit codes: `0` no errors; `1` permission errors, and nothing else; `2`
-anything else: a usage or configuration error, a file that can't be read or
-written, or an internal error. An internal error prints the error and where it
-happened, to [report](https://github.com/PermLang/PermLang/issues).
+anything else: a usage or configuration error (a `.perm` spec that can't be
+parsed included), a file that can't be read or written, or an internal error.
+An internal error prints the error and where it happened, to
+[report](https://github.com/PermLang/PermLang/issues).
+
+Each command takes only its own options. Another command's option is a usage
+error that says which command takes it (`check takes --json, not --format`),
+since ignoring it would quietly do something else. `--help` goes on its own,
+and an option's value can't start with `-`. `diff` also takes `check`'s options,
+so the GitHub Action can pass the same `args` to both: `--json` is `--format
+json` there (an explicit `--format` wins), and `--require-lock`, `--sarif`, and
+`--github-annotations` don't change the diff.
 
 With `--json`, `--github-annotations` prints the annotations on standard error,
 so standard output stays valid JSON. GitHub Actions reads both.
+
+### Using PermLang as a library
+
+The `permlang` package is an ES module only: `import { checkFiles } from
+"permlang"` works, and `require("permlang")` fails with
+`ERR_PACKAGE_PATH_NOT_EXPORTED`. From CommonJS, load it with
+`await import("permlang")`. What it exports is in `src/index.ts`.
 
 ## Specs (phase 2 groundwork)
 
@@ -1314,8 +1542,8 @@ src/capability.ts   vocabulary, parsing, and coverage rules
 src/annotations.ts  reading @perm tags from JSDoc and @module comments
 src/adapters.ts     adapter manifests: loading, validation, matching
 src/detect/         direct uses: fetch, fs, env, browser and Node globals, Prisma, Drizzle, SQL, adapter-mapped calls, values, module loads, unverifiable code
-src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes
-src/units.ts        functions, methods, and files that permissions attach to
+src/dispatch.ts     implementations reachable through interfaces, type aliases, and base classes, and functions through callable types and collections
+src/units.ts        functions, methods, and files that permissions attach to, and which folders are packages
 src/graph.ts        the call graph and propagation along it
 src/walk.ts         walking syntax trees without recursion, and finding positions in them
 src/load.ts         building the ts-morph project, setting aside files that can't be parsed
@@ -1334,7 +1562,10 @@ src/lock.ts         permlang.lock.json: build, read, compare
 src/settings.ts     what the check runs with (config, options, files), as lock entries
 src/diff.ts         the permission diff, as text or a pull-request comment
 src/report.ts       text, JSON, GitHub annotation, and SARIF output
-src/main.ts         the permlang command: its subcommands and options
+src/args.ts         the permlang command's options, and which command takes each
+src/main.ts         the permlang command: its subcommands
+src/init-workflow.ts the workflow `init --workflow` writes
+src/lock-moves.ts   the lock files the PermLang Action's steps read, at a commit and in the working tree
 src/cli.ts          the executable that runs it
 src/index.ts        the library API
 src/spec/           .perm specs: parsing and checking

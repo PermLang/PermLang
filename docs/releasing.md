@@ -15,15 +15,21 @@ The [release workflow](../.github/workflows/release.yml) runs in two jobs:
 
 1. **Build**, with read-only access: checks that the tag matches
    `package.json` and that the release commit is on `main`, installs the
-   dependencies, runs the tests, and packs the package.
+   dependencies without running their install scripts (which could change the
+   package before it's packed, and none of which the build or the tests need),
+   runs the tests, and packs the package.
 2. **Publish**, which installs nothing, so no dependency's code ever runs with
    the right to publish: signs a build provenance attestation for that tarball,
    publishes the same tarball to npm with provenance, attaches it and the
    attestation to the GitHub release, and moves the `v0` tag.
 
-Releases run one at a time. Re-running a release is safe: a version already on
-npm is skipped, and `v0` only moves for the newest release, so re-running an
-older one can't move it back. A pre-release (a version such as `0.4.0-rc.1`,
+Releases run one at a time: a release made while another is running waits for
+it. GitHub keeps only one waiting run, though, so a third release made while
+the second is still waiting cancels the second. Make one release at a time, and
+wait for its workflow to start before making the next. If a release's workflow
+shows as cancelled, re-run it from the Actions tab. Re-running a release is
+safe: a version already on npm is skipped, and `v0` only moves for the newest
+release, so re-running an older one can't move it back. A pre-release (a version such as `0.4.0-rc.1`,
 with the release marked as a pre-release on GitHub) is published under npm's
 `next` tag and leaves `v0` alone. A new version can take a few minutes to
 download from npm after the workflow finishes.
