@@ -511,6 +511,22 @@ describe("permlang diff: new dependencies", () => {
     const json = JSON.parse(permlang("diff", "HEAD", "my lib", "--format", "json").out) as { dependencies: { name: string }[] };
     expect(json.dependencies.map((d) => d.name)).toEqual(["sketchy-telemetry", "stripe"]);
   });
+
+  // The name of a package the change adds came from its package.json, and a path made of it read
+  // another package.json: `../evil` read ./evil/package.json, whose install scripts the diff showed.
+  it("reads an added package only from node_modules, by a name npm allows", () => {
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: {} }));
+    expect(permlang("init", "my lib").code).toBe(0);
+    git("add", "-A");
+    git("commit", "-q", "-m", "base");
+    mkdirSync(path.join(dir, "evil"));
+    writeFileSync(path.join(dir, "evil", "package.json"), JSON.stringify({ scripts: { postinstall: "echo read from outside node_modules" } }));
+    mkdirSync(path.join(dir, "node_modules"));
+    writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { "../evil": "1.0.0" } }));
+    const text = permlang("diff", "HEAD", "my lib").out;
+    expect(text).toContain("../evil");
+    expect(text).not.toContain("read from outside node_modules");
+  });
 });
 
 describe("permlang check --github-annotations", () => {

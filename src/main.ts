@@ -366,7 +366,8 @@ function diff(args: Args): number {
   let headLock: LockFile;
   let via: ViaPaths = {};
   // For each capability, the AI tools that can trigger it (from analyzing the working tree).
-  const aiTools: Record<string, string[]> = {};
+  // Keyed by capability: one an adapter names `constructor` mustn't find Object's.
+  const aiTools = Object.create(null) as Record<string, string[]>;
   if (args.head) {
     const found = lockAt(args.head, lockName);
     if (!found) throw new UsageError(`${lockName} doesn't exist at ${printable(args.head)}.`);
@@ -540,6 +541,8 @@ function dependencyChanges(base: string, args: Args): DependencyChange[] {
   const head = parsePackage(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
   if (!head) return [];
   const installed = (name: string) => {
+    // The name comes from the change's package.json: only one npm allows names a folder in node_modules.
+    if (!NPM_NAME.test(name)) return undefined;
     const file = path.join("node_modules", name, "package.json");
     return existsSync(file) ? parsePackage(readFileSync(file, "utf8")) : undefined;
   };
@@ -547,6 +550,9 @@ function dependencyChanges(base: string, args: Args): DependencyChange[] {
   const adapters = dependencyAdapters(args);
   return [...addedDependencies(before, head, adapters, installed), ...overriddenDependencies(before, head, adapters, installed)];
 }
+
+/** A package name npm allows, scoped or not: no `.` or `_` first, no `..`, no other `/`, so it names a folder in node_modules. */
+const NPM_NAME = /^(?:@[A-Za-z0-9~-][A-Za-z0-9_.~-]*[/])?[A-Za-z0-9~-][A-Za-z0-9_.~-]*$/;
 
 function parsePackage(text: string | undefined): PackageJson | undefined {
   if (text === undefined) return undefined;
