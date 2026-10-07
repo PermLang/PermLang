@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 /**
  * The GitHub workflow `permlang init --workflow` writes: the PermLang Action, on the files and
  * with the settings init checked, after installing the project's dependencies. Everything about

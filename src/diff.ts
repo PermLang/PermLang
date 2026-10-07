@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // `permlang diff`: what a change adds to or removes from the lock file, written
 // for a pull-request comment (markdown) or a terminal (text). New access comes
 // first, with the path to the line that causes it when that is known. Anything

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // `permlang init`: the day-one setup for an existing project. Runs the CLI in a
 // temporary directory.
 

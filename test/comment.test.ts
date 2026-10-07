@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // The permission-diff comment the Action posts, and the text diff, as the second round of
 // verification found them: what stays when the comment is cut to fit GitHub's limit, text
 // from the code that could still change the comment, and what the comment says about lock

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 /**
  * What the permlang command does: init, check, lock, diff, spec (cli.ts runs it). It
  * reads sources, config, and lock files, writes the lock file, and runs `git show` to
@@ -428,8 +431,13 @@ function importedFiles(report: Report, selected: readonly string[]): string[] {
 function settingsFor(args: Args): Settings {
   const config = readConfig(args.config);
   const configName = config.file ?? args.config ?? DEFAULT_CONFIG;
+  // A setting that isn't a string is shown as JSON, so it matches no allowed value: String(["error"]) would read as "error".
   const pick = (option: string | undefined, fromConfig: unknown, fallback: string): { value: string; from: Origin } =>
-    option !== undefined ? { value: option, from: "option" } : fromConfig !== undefined ? { value: String(fromConfig), from: "config" } : { value: fallback, from: "default" };
+    option !== undefined
+      ? { value: option, from: "option" }
+      : fromConfig !== undefined
+        ? { value: typeof fromConfig === "string" ? fromConfig : JSON.stringify(fromConfig), from: "config" }
+        : { value: fallback, from: "default" };
 
   if (config.strictness !== undefined && typeof config.strictness !== "string") {
     throw new UsageError(`${configName}: "strictness" must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
@@ -479,7 +487,10 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
   const relative = path.relative(process.cwd(), path.resolve(file)).replaceAll("\\", "/");
   const spec = `${ref}:./${relative}`;
   const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const failed = (e: unknown) => String((e as { stderr?: unknown }).stderr ?? "").trim() || (e as Error).message;
+  const failed = (e: unknown) => {
+    const { stderr } = e as { stderr?: unknown };
+    return (typeof stderr === "string" ? stderr.trim() : "") || (e as Error).message;
+  };
   // After --end-of-options, a ref that starts with "-" can't be read as an option.
   try {
     // First, that the commit is here: for a full hash it doesn't have, `git show` only says the file isn't in it.
@@ -518,7 +529,7 @@ function parsePackage(text: string | undefined): PackageJson | undefined {
   if (text === undefined) return undefined;
   try {
     const pkg: unknown = JSON.parse(text);
-    return typeof pkg === "object" && pkg !== null ? (pkg as PackageJson) : undefined;
+    return typeof pkg === "object" && pkg !== null ? pkg : undefined;
   } catch {
     return undefined;
   }
