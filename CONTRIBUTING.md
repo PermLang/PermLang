@@ -96,6 +96,28 @@ PermLang checks its own pull requests twice
 pins. When Dependabot moves the pin to a new release, relock with it in the same
 pull request.
 
+## Code review
+
+Every pull request is reviewed by a maintainer on GitHub before it merges. Once
+PermLang has two maintainers, the reviewer will be one who isn't its author
+([GOVERNANCE.md](GOVERNANCE.md#changes-to-the-code)). The reviewer checks:
+
+- **That it does what it says,** with a test that fails without the change, and
+  for a new rule, that breaking the rule on purpose fails a test.
+- **What it changes in what PermLang can reach.** The permission-diff comment
+  and the diffs of `permlang.lock.json` and `permlang.released.lock.json`: any
+  new access needs a reason.
+- **Security.** Text from a repository is read as data and never run; anything
+  PermLang can't decide fails or is recorded, never passes; text it prints is
+  escaped. Changes to workflows, `action.yml`, the release process, and
+  dependencies get the closest look: Actions pinned by commit, least
+  permissions, no untrusted value inside a script
+  ([docs/policies.md](docs/policies.md), [docs/threat-model.md](docs/threat-model.md)).
+- **That the docs and the changelog** match the change.
+
+It merges when every required check passes, every commit is signed off, and the
+reviewer's questions are answered in the pull request.
+
 ## Signing off
 
 Every commit in a pull request ends with a line like this one, which

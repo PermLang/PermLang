@@ -1,8 +1,9 @@
 # Roadmap
 
-Where PermLang is going next. Plans change; the [changelog](CHANGELOG.md) says
-what actually shipped, and [issues](https://github.com/PermLang/PermLang/issues)
-are the place to ask for something.
+Where PermLang is going over the next year, and what it won't do. Plans change;
+the [changelog](CHANGELOG.md) says what actually shipped, and
+[issues](https://github.com/PermLang/PermLang/issues) are the place to ask for
+something.
 
 ## The project
 
@@ -36,3 +37,18 @@ are the place to ask for something.
 that break them: the lock file's format, the command line, the Action's inputs,
 and the JSON and SARIF output. Before then, a minor version can still change
 them ([docs/releasing.md](docs/releasing.md#choosing-the-version)).
+
+## What PermLang won't do
+
+These stay out of scope, at least for the next year:
+
+- **Run, watch, or sandbox your program.** PermLang reads code; it never
+  executes it, and doesn't enforce anything at run time. Pair it with runtime
+  controls (network policies, sandboxes) if you need them.
+- **Decide that access is acceptable.** It shows what code can reach; people
+  approve it, by committing the lock.
+- **Send your code anywhere.** No hosted service, no accounts, no telemetry: the
+  command line has no network code, and the Action sends results only to GitHub.
+- **Check languages other than TypeScript and JavaScript.**
+- **Analyze the code inside your dependencies.** Packages are judged by their
+  adapters, as the [reference](docs/reference.md#known-limits) explains.
