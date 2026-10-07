@@ -16,7 +16,8 @@ In either case, a pull request can change the check's result. Delete
 `.github/workflows/permlang.yml` and run
 `npx permlang@0.4.2 init <your paths> --workflow` again, or split it into two
 jobs as the [reference](docs/reference.md#github-action) shows. Nothing that
-passed with 0.4.1 fails with 0.4.2.
+passed with 0.4.1 fails with 0.4.2, unless a setting in `permlang.config.json`
+isn't text ([below](#fixed)).
 
 ### Security
 
@@ -78,6 +79,29 @@ passed with 0.4.1 fails with 0.4.2.
 - **Tens of thousands of `@perm` tags in one comment, or of `package.json`
   scripts,** took minutes to read: 50,000 took 70 and 34 seconds. Both now take
   well under a second.
+- **A setting in `permlang.config.json` that isn't text** was read as text, so
+  `"unmapped": ["error"]` worked as `"unmapped": "error"`. It now stops the
+  check with the usual message listing the allowed values (exit code 2).
+
+### Project
+
+- **Each release comes with an SBOM**: a CycloneDX list of every package
+  installing PermLang installs, signed by the release workflow and attached to
+  the GitHub release ([SECURITY.md](SECURITY.md#whats-in-a-release-sbom)).
+- **Anyone can rebuild a release** from its tag and get the same package, byte
+  for byte; CI checks that building twice gives the same result
+  ([SECURITY.md](SECURITY.md#rebuilding-a-release)).
+- **Every pull request is also checked by:**
+  - ESLint, with typescript-eslint's type-aware rules;
+  - a review of its new and updated dependencies, which fails on a known
+    vulnerability or a license PermLang can't use;
+  - a check that each commit is signed off by its author
+    ([CONTRIBUTING.md](CONTRIBUTING.md#signing-off)).
+- Every source file starts with its license, and a test keeps hidden and
+  bidirectional characters out of them.
+- [docs/policies.md](docs/policies.md) writes down how dependencies are chosen,
+  which findings block a merge, how secrets are kept, and what every change
+  must include.
 
 ## 0.4.1 (2026-10-06)
 
