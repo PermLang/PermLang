@@ -10,7 +10,7 @@
 //   new StringChunk("..."), new SQL([...])        the same, from drizzle's own pieces
 //   a column's $defaultFn / $onUpdateFn           the SQL they return, in inserts and updates
 
-import { Node, SyntaxKind, type CallExpression, type SourceFile, type Symbol as MorphSymbol, type TemplateLiteral, type Type } from "ts-morph";
+import { Node, SyntaxKind, VariableDeclarationKind, type CallExpression, type SourceFile, type Symbol as MorphSymbol, type TemplateLiteral, type Type } from "ts-morph";
 import { packageName, packageOf } from "../adapters.js";
 import type { Capability } from "../capability.js";
 import { descendantsOfKind } from "../walk.js";
@@ -110,7 +110,7 @@ function constValue(node: Node): Node | undefined {
   const symbol = (Node.isPropertyAccessExpression(node) ? node.getNameNode() : node).getSymbol();
   const declaration = symbol && resolveAlias(symbol).getDeclarations()[0];
   if (!declaration || !Node.isVariableDeclaration(declaration)) return undefined;
-  if (declaration.getVariableStatement()?.getDeclarationKind() !== "const") return undefined;
+  if (declaration.getVariableStatement()?.getDeclarationKind() !== VariableDeclarationKind.Const) return undefined;
   const init = declaration.getInitializer();
   return init && unwrapExpression(init);
 }
@@ -131,7 +131,7 @@ function runtimeDefaults(arg: Node | undefined, names: ReadonlySet<string | unde
   // A table drizzle made (pgTable(...), a schema's or a table creator's), whatever its name.
   const definition = definitionCall(arg);
   const made = definition && resolvedDeclaration(definition);
-  const sources = made && inDrizzle(made) ? columnSources(definition!) : undefined;
+  const sources = made && inDrizzle(made) ? columnSources(definition) : undefined;
   if (!sources) return [{ name: "db.read", dynamic: true }];
   return sources.flatMap((source) =>
     source.getDescendantsOfKind(SyntaxKind.CallExpression).flatMap((call) => {

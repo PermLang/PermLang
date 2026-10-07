@@ -51,6 +51,7 @@
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -63,11 +64,15 @@
     "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^24.0.0",
     "@vitest/coverage-v8": "^5.0.3",
+    "eslint": "^10.12.0",
     "fast-check": "^4.10.2",
+    "globals": "^17.13.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.71.1",
     "vitest": "^5.0.3"
   },
   "exports": {

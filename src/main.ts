@@ -484,7 +484,10 @@ function fileAt(ref: string, file: string): { text: string; spec: string } | und
   const relative = path.relative(process.cwd(), path.resolve(file)).replaceAll("\\", "/");
   const spec = `${ref}:./${relative}`;
   const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-  const failed = (e: unknown) => String((e as { stderr?: unknown }).stderr ?? "").trim() || (e as Error).message;
+  const failed = (e: unknown) => {
+    const { stderr } = e as { stderr?: unknown };
+    return (typeof stderr === "string" ? stderr.trim() : "") || (e as Error).message;
+  };
   // After --end-of-options, a ref that starts with "-" can't be read as an option.
   try {
     // First, that the commit is here: for a full hash it doesn't have, `git show` only says the file isn't in it.
@@ -523,7 +526,7 @@ function parsePackage(text: string | undefined): PackageJson | undefined {
   if (text === undefined) return undefined;
   try {
     const pkg: unknown = JSON.parse(text);
-    return typeof pkg === "object" && pkg !== null ? (pkg as PackageJson) : undefined;
+    return typeof pkg === "object" && pkg !== null ? pkg : undefined;
   } catch {
     return undefined;
   }

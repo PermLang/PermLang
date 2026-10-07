@@ -91,7 +91,7 @@ function blanking(blank: ReadonlySet<string>): FileSystemHost {
     get(target, property) {
       if (property === "readFileSync") return (file: string, encoding?: string) => (blank.has(key(file)) ? EMPTY : target.readFileSync(file, encoding));
       const value: unknown = Reflect.get(target, property, target);
-      return typeof value === "function" ? value.bind(target) : value;
+      return typeof value === "function" ? ((value as (...args: unknown[]) => unknown).bind(target) as unknown) : value;
     },
   });
 }

@@ -349,7 +349,7 @@ function relationsOf(model: Model, at: Node): Map<string, Relation> | undefined 
 /** A payload's model name, when its `name` is a literal: `"Lead"`. */
 function literalName(payload: Type, at: Node): string | undefined {
   const name = payload.getProperty("name")?.getTypeAtLocation(at);
-  return name?.isStringLiteral() ? String(name.getLiteralValue()) : undefined;
+  return name?.isStringLiteral() ? name.getLiteralValue() as string : undefined;
 }
 
 type Alias = Node & { getType(): Type };

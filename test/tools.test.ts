@@ -3,7 +3,7 @@
 // PermLang finds tool registrations, works out what each handler reaches, and warns when
 // a model can trigger something dangerous.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

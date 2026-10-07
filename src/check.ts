@@ -16,7 +16,7 @@ import { projectFiles } from "./project-files.js";
 import { findTools, handlerReach } from "./tools.js";
 import { checkFlowTargets, flowDiagnostics, opaqueUses, type FlowRule } from "./flows.js";
 import { failureReason, projectOfFiles, projectOfTsConfig, unparsedReason } from "./load.js";
-import { clearResolutionCache, resolveAlias } from "./detect/shared.js";
+import { clearResolutionCache } from "./detect/shared.js";
 import { unmappedPackages, unresolvedImports, type UnmappedPackage } from "./unmapped.js";
 import { unseenFrom } from "./unseen.js";
 import { forEachDescendant, lineAndColumn } from "./walk.js";

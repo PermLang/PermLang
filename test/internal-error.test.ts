@@ -10,8 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runCli, runCliStreams } from "./run-cli.js";
 import { removeTemporary } from "./temporary.js";
 
-/** What each stand-in throws, when set. */
-const fail = vi.hoisted(() => ({ formatText: undefined as unknown, settingsEntries: undefined as unknown, formatDiffMarkdown: undefined as unknown }));
+/** What each stand-in throws, when set: an Error, or any other value, as a bug might. */
+const fail = vi.hoisted((): Record<"formatText" | "settingsEntries" | "formatDiffMarkdown", unknown> => ({ formatText: undefined, settingsEntries: undefined, formatDiffMarkdown: undefined }));
 
 vi.mock("../src/report.js", async (original) => {
   const real = await original<typeof import("../src/report.js")>();

@@ -3,6 +3,7 @@
 import {
   Node,
   SyntaxKind,
+  VariableDeclarationKind,
   type CallExpression,
   type NewExpression,
   type ObjectLiteralExpression,
@@ -80,7 +81,7 @@ export function literalString(arg: Node | undefined, depth = 0): string | undefi
 }
 
 function isConst(declaration: Node): boolean {
-  return Node.isVariableDeclaration(declaration) && declaration.getVariableStatement()?.getDeclarationKind() === "const";
+  return Node.isVariableDeclaration(declaration) && declaration.getVariableStatement()?.getDeclarationKind() === VariableDeclarationKind.Const;
 }
 
 /** The name of the `const X` holding `{ ... } as const` that a property belongs to (possibly nested), if it is one. */
