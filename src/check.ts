@@ -121,7 +121,7 @@ export interface Report {
   functions: FunctionReport[];
   diagnostics: Diagnostic[];
   unsafe: UnsafeReport[];
-  /** Packages called with no adapter, most calls first. PermLang trusts them (D1). */
+  /** Packages called with no adapter, most calls first. PermLang trusts them, and lists them (docs/design.md#design-decisions). */
   unmapped: UnmappedPackage[];
   /** Imported modules whose types can't be found, so nothing called from them is checked. */
   unresolved: string[];
@@ -145,7 +145,7 @@ export interface Report {
 }
 
 /**
- * How strictly annotations are enforced (design doc §7). An out-of-date lock
+ * How strictly annotations are enforced (docs/reference.md#strictness-levels). An out-of-date lock
  * file fails at every level: it is the review gate, not an annotation rule. So do
  * flow rules, and "error" policies for unmapped packages and AI tools: they are
  * asked for explicitly in the configuration.
@@ -193,8 +193,8 @@ const DEFAULT_COMPILER_OPTIONS: ts.CompilerOptions = {
   skipLibCheck: true,
 };
 
-// These read source files through ts-morph too. ts-morph has no adapter, so that
-// read isn't detected (design doc decision D1); fs.read covers it anyway.
+// These read source files through ts-morph too, which PermLang's own adapter for it
+// (permlang/adapters/ts-morph.json) records as fs.read.
 
 /** @perm fs.read */
 export function checkFiles(files: readonly string[], options: CheckOptions = {}): Report {

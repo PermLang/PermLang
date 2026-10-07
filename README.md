@@ -188,6 +188,9 @@ Yes. PermLang is open source under the Apache 2.0 license.
 | 🧪 [Real-world trial](docs/trial-2026-09.md) | Results on two open-source apps, Umami and Ghostfolio |
 | 📝 [Spec format](docs/spec-format.md) | Early work on describing business rules alongside permissions |
 | 🗒️ [Changelog](CHANGELOG.md) | What changed, release by release |
+| 🏗️ [Design](docs/design.md) | How it's put together, and every interface it has |
+| 🛡️ [Threat model](docs/threat-model.md) | What could go wrong, the defences, and the vulnerabilities found so far |
+| 🧭 [Roadmap](ROADMAP.md), [governance](GOVERNANCE.md), [policies](docs/policies.md) | Where it's going, who decides, and the rules every change follows |
 
 ## License
 
