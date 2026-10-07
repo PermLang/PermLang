@@ -10,6 +10,11 @@
       "ci.trigger(pull_request)",
       "ci.trigger(push)"
     ],
+    ".github/workflows/dependency-review.yml#<dependency-review.yml>": [
+      "ci.action(actions/dependency-review-action)",
+      "ci.permission(contents: read)",
+      "ci.trigger(pull_request)"
+    ],
     ".github/workflows/permlang.yml#<permlang.yml>": [
       "ci.action(./)",
       "ci.action(PermLang/permlang)",
