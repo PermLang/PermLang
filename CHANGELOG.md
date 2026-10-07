@@ -2,6 +2,44 @@
 
 All notable changes to PermLang.
 
+## 0.4.3 (2026-10-07)
+
+**A security release**, for workflows that 0.4.2's `permlang init --workflow`
+wrote, or that follow 0.4.2's [reference](docs/reference.md#github-action). Add
+`if: always()` to the check's job, beside `needs: dependencies`:
+
+```yaml
+  permissions:
+    needs: dependencies
+    if: always()
+```
+
+Or delete `.github/workflows/permlang.yml` and run
+`npx permlang@0.4.3 init <your paths> --workflow` again. Nothing that passed
+with 0.4.2 fails with 0.4.3.
+
+### Security
+
+- **A failed install skipped the check (low,
+  [GHSA-86ff-3f4h-rrjp](https://github.com/PermLang/PermLang/security/advisories/GHSA-86ff-3f4h-rrjp)).**
+  0.4.2's workflow runs the check in a job after the one that installs the
+  dependencies. When that job fails, GitHub skips the check's job, and counts a
+  skipped job as passed, also as a required check. Code the pull request runs
+  while installing could fail that job on purpose, and only that job, so the
+  pull request could merge without a check. The check's job now runs always,
+  and fails when there are no dependencies to download, saying why.
+
+### Fixed
+
+- **The rule for moved lock files** counts a step whose job has
+  `if: always()` or `if: !cancelled()` as sure to run: it runs even when a job
+  it needs fails.
+
+### Project
+
+- **PermLang's own `released` check** installs its dependencies in a job of
+  its own, as `init`'s workflow does, and runs 0.4.2.
+
 ## 0.4.2 (2026-10-07)
 
 **A security release.** It fixes four vulnerabilities, two of them high

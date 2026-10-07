@@ -204,7 +204,9 @@ export const DEPENDENCIES_ARTIFACT = "permlang-dependencies";
  * .pnpmfile.cjs, Yarn's yarnPath and plugins, the program a project .npmrc names as `git`), and
  * code that runs in a job before the check can change what it runs or reports. So one job
  * installs, with a read-only token, and packs every node_modules folder; the job that checks runs
- * nothing from the pull request, and brings in only those folders. (GHSA-chh9-p8fq-3gf9)
+ * nothing from the pull request, and brings in only those folders. (GHSA-chh9-p8fq-3gf9) The check
+ * runs even when the installing job fails, and fails then too: a job skipped because a job it needs
+ * failed counts as passed, so a pull request could otherwise skip its check. (GHSA-86ff-3f4h-rrjp)
  */
 export function workflowFile(actionArgs: string, target: WorkflowTarget): string {
   const inputs = [
@@ -248,9 +250,11 @@ export function workflowFile(actionArgs: string, target: WorkflowTarget): string
     "          retention-days: 1",
     "",
     "  # The check. Nothing from the pull request runs here: PermLang only reads its code, and the",
-    "  # node_modules folders the job above installed.",
+    "  # node_modules folders the job above installed. It runs even when that job fails, and then",
+    "  # fails too: GitHub would skip it otherwise, and a skipped job counts as passed.",
     "  permissions:",
     "    needs: dependencies",
+    "    if: always()",
     "    runs-on: ubuntu-latest",
     "    permissions:",
     "      contents: read",

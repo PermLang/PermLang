@@ -158,11 +158,19 @@ runs:
     # those folders (and the generated folders named) come in from its archive, as new folders,
     # with links that stay in the repository (src/dependencies.ts). (GHSA-chh9-p8fq-3gf9)
     - name: Download the dependencies
+      id: download
       if: inputs.dependencies != ''
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         name: ${{ inputs.dependencies }}
         path: ${{ runner.temp }}/permlang-dependencies
+
+    # The check's job runs even when the job that installs fails (`if: always()`), so that it fails
+    # too: a job skipped because a job it needs failed counts as passed. (GHSA-86ff-3f4h-rrjp)
+    - name: Explain the missing dependencies
+      if: failure() && steps.download.outcome == 'failure'
+      shell: bash
+      run: echo "::error::There are no dependencies to download, so PermLang can't check this code. The job that installs them may have failed; see its log."
 
     - name: Import the dependencies
       if: inputs.dependencies != ''
