@@ -1539,6 +1539,17 @@ When no step at `<ref>` names its lock file plainly (there's no workflow, or its
 inputs come from an expression such as `${{ matrix.dir }}`), `<ref>`'s lock file
 is taken to be `permlang.lock.json` in the folder the check runs in.
 
+In the working tree, a step only counts as still checking with a lock file when
+it's sure to run for this pull request, and to fail its job when it fails.
+GitHub counts a skipped job as passed, so a step that never runs could otherwise
+stand in for the real check. A step doesn't count when:
+
+- its workflow doesn't run on `pull_request`, or only for some pull requests
+  (`branches`, `branches-ignore`, `paths`, `paths-ignore` or `types` under
+  `pull_request`);
+- the step, its job, or a job its job `needs` has an `if:`;
+- the step or its job has `continue-on-error:` (other than `false`).
+
 Adding a package to a monorepo, with a step and a lock file of its own, passes:
 the base's lock files are all still checked with. To move a lock file (rename
 it, or move the project), do it in two pull requests: the first adds a step that

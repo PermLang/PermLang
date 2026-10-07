@@ -166,6 +166,47 @@ describe("permlang check --base", () => {
     expect(permlang("web", "check", "src", "--lock", "next.json", "--base", both)).toMatchObject({ code: 0 });
   });
 
+  // A step that never ran still counted as reading the base's lock, so a pull request could point
+  // the real check at a lock of its own and add a decoy (GHSA-h4jc-gqvh-2675). Only a step that
+  // runs whenever its workflow runs for a pull request, and whose failure fails its job, counts.
+  const step = "      - uses: PermLang/permlang@v0\n        with:\n          args: src\n";
+  const job = (extra = "") => `jobs:\n  decoy:\n    runs-on: ubuntu-latest\n${extra}    steps:\n`;
+  it.each([
+    ["a step with if:", `on: pull_request\n${job()}      - if: false\n        uses: PermLang/permlang@v0\n        with:\n          args: src\n`],
+    ["a job with if:", `on: pull_request\n${job("    if: false\n")}${step}`],
+    ["a job that needs one with if:", `on: pull_request\njobs:\n  never:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - run: "true"\n  decoy:\n    needs: never\n    runs-on: ubuntu-latest\n    steps:\n${step}`],
+    ["a step whose failure doesn't fail its job", `on: pull_request\n${job()}      - uses: PermLang/permlang@v0\n        continue-on-error: true\n        with:\n          args: src\n`],
+    ["a job whose failure doesn't fail the run", `on: pull_request\n${job("    continue-on-error: true\n")}${step}`],
+    ["a workflow that doesn't run for pull requests", `on: push\n${job()}${step}`],
+    ["a workflow that runs only for some pull requests", `on:\n  pull_request:\n    paths: [nothing/**]\n${job()}${step}`],
+  ])("doesn't count %s as still reading the base's lock", (_, decoy) => {
+    app(".");
+    workflow("permlang.yml", { args: "src" });
+    permlang(".", "lock", "src");
+    const base = commit("base");
+    app(".", "api.data-broker.example");
+    workflow("permlang.yml", { args: "src --lock permlang.lock.v2.json" });
+    write(".github/workflows/decoy.yml", decoy);
+    permlang(".", "lock", "src", "--lock", "permlang.lock.v2.json");
+    expect(permlang(".", "check", "src", "--lock", "permlang.lock.v2.json", "--base", base)).toMatchObject({ code: 1, out: expect.stringContaining("stops checking with permlang.lock.json") });
+  });
+
+  it.each([
+    ["on: pull_request", "on: pull_request\n"],
+    ["a list of events", "on: [push, pull_request]\n"],
+    ["a mapping of events", "on:\n  push:\n  pull_request:\n"],
+    ["an empty pull_request mapping", "on:\n  pull_request: {}\n"],
+  ])("counts a step that runs for every pull request, with %s", (_, on) => {
+    app(".");
+    workflow("permlang.yml", { args: "src" });
+    permlang(".", "lock", "src");
+    const base = commit("base");
+    workflow("permlang.yml", { args: "src --lock next.json" });
+    write(".github/workflows/old.yml", `${on}${job()}${step}`);
+    permlang(".", "lock", "src", "--lock", "next.json");
+    expect(permlang(".", "check", "src", "--lock", "next.json", "--base", base)).toMatchObject({ code: 0 });
+  });
+
   it("ignores other Actions, and steps it can't read", () => {
     app(".");
     workflow("permlang.yml", { args: "src" }, { uses: "someone/permlang@v1", args: "--lock elsewhere.json" }, { args: "src --frob" });
@@ -279,9 +320,9 @@ describe("the lock files a workflow's PermLang steps read", () => {
   it("reads each PermLang step's inputs as written", () => {
     const steps = permLangSteps([".github/workflows/many.yml"], read);
     expect(steps.slice(0, 3)).toEqual([
-      { workingDirectory: undefined, args: undefined },
-      { workingDirectory: "web", args: undefined },
-      { workingDirectory: "api", args: "src --lock locks/api.json" },
+      { workingDirectory: undefined, args: undefined, surelyRuns: true },
+      { workingDirectory: "web", args: undefined, surelyRuns: true },
+      { workingDirectory: "api", args: "src --lock locks/api.json", surelyRuns: true },
     ]);
     expect(steps).toHaveLength(10);
   });
