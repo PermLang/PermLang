@@ -75,7 +75,7 @@ export function parseSpecs(text: string, file: string, vocabulary?: ReadonlySet<
   };
 
   // Editors on Windows may save a byte-order mark, which would hide the first header.
-  text.replace(/^﻿/, "").split(/\r?\n/).forEach((raw, i) => {
+  text.replace(/^\uFEFF/, "").split(/\r?\n/).forEach((raw, i) => {
     const line = i + 1;
     const trimmed = raw.trim();
     if (trimmed === "" || trimmed.startsWith("#")) return;
