@@ -1785,6 +1785,15 @@ without Node 22 in its tool cache (some self-hosted runners), it installs it
 with `actions/setup-node` (with its package-manager cache turned off), which
 does put it first on the PATH for later steps.
 
+**PermLang's own build.** The Action builds PermLang from its sources and its
+lockfile (`npm ci --ignore-scripts`, then the TypeScript compiler). On a push,
+or a scheduled or manual run, it keeps the build in the Actions cache, keyed on
+PermLang's sources, so later runs skip that. It never uses the cache for a pull
+request or a merge queue entry, though: GitHub looks first in the pull
+request's own cache, which any job that runs for it can write to, so the pull
+request's code could put a build of its own there. Those runs build PermLang
+every time, which takes about half a minute.
+
 ## Command line
 
 Install PermLang in the project (`npm install --save-dev permlang`), then run it

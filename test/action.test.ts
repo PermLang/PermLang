@@ -389,3 +389,27 @@ describe("the release workflow", () => {
     expect(script("Build PermLang")).toContain("npm ci --ignore-scripts");
   });
 });
+
+// For a pull request, GitHub looks first in that pull request's own cache, which any job that runs
+// for it can write to, so its code could put a build of its own under the Action's key, which the
+// Action then ran instead of PermLang (GHSA-2vhg-398w-7p59). The cache is used only for runs no
+// pull request can write to.
+describe("the Action's build cache", () => {
+  const steps = (action.runs.steps as { name: string; id?: string; if?: string; uses?: string }[]);
+  const key = steps.find((s) => s.id === "build-key")!;
+
+  it("is only looked up for pushes, and scheduled and manual runs", () => {
+    const events = JSON.parse(/^contains\(fromJSON\('(\[.*\])'\), github\.event_name\)$/.exec(key.if ?? "")?.[1] ?? "null") as string[] | null;
+    expect(events).toEqual(["push", "schedule", "workflow_dispatch"]);
+  });
+
+  it("is restored and saved only when it's looked up", () => {
+    const cacheSteps = steps.filter((s) => s.uses?.startsWith("actions/cache"));
+    expect(cacheSteps.map((s) => s.name)).toEqual(["Restore the build", "Save the build"]);
+    for (const s of cacheSteps) expect(s.if).toMatch(/^steps\.build-key\.outputs\.key != ''( && |$)/);
+  });
+
+  it("is built from source whenever it isn't restored", () => {
+    expect(steps.find((s) => s.name === "Build PermLang")!.if).toBe("steps.build-cache.outputs.cache-hit != 'true'");
+  });
+});

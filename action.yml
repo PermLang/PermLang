@@ -92,7 +92,15 @@ runs:
     # actions/cache rejects paths containing `.` segments, and github.action_path is
     # `<workspace>/./` when the action runs from its own repository (`uses: ./`), so
     # the cached paths use the directory's resolved absolute path.
+    #
+    # Only on a push, or a scheduled or manual run, though. For a pull request or a merge
+    # queue entry, GitHub looks first in that pull request's own cache, which any job that
+    # runs for it can write to: the pull request's code (its tests, say) could put a build of
+    # its own there under this key, which would then run instead of PermLang. So there,
+    # PermLang is built from its sources and lockfile every time, and the build isn't saved.
+    # (GHSA-2vhg-398w-7p59)
     - name: Compute build cache key
+      if: contains(fromJSON('["push", "schedule", "workflow_dispatch"]'), github.event_name)
       id: build-key
       shell: bash
       working-directory: ${{ github.action_path }}
@@ -106,6 +114,7 @@ runs:
         if [ "$RUNNER_OS" = Windows ]; then echo "dir=$(cygpath -m "$(pwd -P)")" >> "$GITHUB_OUTPUT"; else echo "dir=$(pwd -P)" >> "$GITHUB_OUTPUT"; fi
 
     - name: Restore the build
+      if: steps.build-key.outputs.key != ''
       id: build-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -126,7 +135,7 @@ runs:
         npm ci --ignore-scripts --no-audit --no-fund && npm run build
 
     - name: Save the build
-      if: steps.build-cache.outputs.cache-hit != 'true'
+      if: steps.build-key.outputs.key != '' && steps.build-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
