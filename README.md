@@ -11,6 +11,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/PermLang/PermLang/badge)](https://scorecard.dev/viewer/?uri=github.com/PermLang/PermLang)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15173/badge)](https://www.bestpractices.dev/projects/15173)
+[![OpenSSF Baseline](https://www.bestpractices.dev/projects/15173/baseline)](https://www.bestpractices.dev/projects/15173)
 [![Permissions: checked by PermLang](https://img.shields.io/badge/permissions-checked%20by%20PermLang-2B3BFF)](https://github.com/PermLang/PermLang)
 
 A safety check for TypeScript projects. It notices when a change makes your code
