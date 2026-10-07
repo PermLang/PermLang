@@ -399,6 +399,9 @@ describe("configuration errors", () => {
     [`{ "strictness": 3 }`, /^permlang\.config\.json: "strictness" must be one of: sketch, development, production\./],
     [`{ "strictness": "strict" }`, /^Strictness must be one of/],
     [`{ "tools": "ignore" }`, /^"tools" must be one of: warn, error, trust\./],
+    // A one-item list read as its item (String(["error"]) is "error"), so it passed for a setting.
+    [`{ "unmapped": ["error"] }`, /^"unmapped" must be one of: warn, error, trust\./],
+    [`{ "tools": ["trust"] }`, /^"tools" must be one of: warn, error, trust\./],
   ])("exits 2 on the config %s", (config, message) => {
     writeFileSync(path.join(dir, "permlang.config.json"), config);
     const { code, out } = permlang("check", "my lib");

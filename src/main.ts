@@ -428,8 +428,13 @@ function importedFiles(report: Report, selected: readonly string[]): string[] {
 function settingsFor(args: Args): Settings {
   const config = readConfig(args.config);
   const configName = config.file ?? args.config ?? DEFAULT_CONFIG;
+  // A setting that isn't a string is shown as JSON, so it matches no allowed value: String(["error"]) would read as "error".
   const pick = (option: string | undefined, fromConfig: unknown, fallback: string): { value: string; from: Origin } =>
-    option !== undefined ? { value: option, from: "option" } : fromConfig !== undefined ? { value: String(fromConfig), from: "config" } : { value: fallback, from: "default" };
+    option !== undefined
+      ? { value: option, from: "option" }
+      : fromConfig !== undefined
+        ? { value: typeof fromConfig === "string" ? fromConfig : JSON.stringify(fromConfig), from: "config" }
+        : { value: fallback, from: "default" };
 
   if (config.strictness !== undefined && typeof config.strictness !== "string") {
     throw new UsageError(`${configName}: "strictness" must be one of: ${STRICTNESS_LEVELS.join(", ")}.`);
