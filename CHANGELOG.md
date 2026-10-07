@@ -2,7 +2,7 @@
 
 All notable changes to PermLang.
 
-## 0.4.2 (unreleased)
+## 0.4.2 (2026-10-07)
 
 **A security release.** It fixes four vulnerabilities, two of them high
 severity. `@v0` users get the Action's fixes automatically, but the most
