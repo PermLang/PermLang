@@ -195,12 +195,24 @@ function installSteps(target: WorkflowTarget): string[] {
   return run("npm install --ignore-scripts --no-audit --no-fund", nearest);
 }
 
-/** A workflow that runs the PermLang Action with these `args`. */
+/** The artifact the installing job packs the dependencies in, and the check reads them from. */
+export const DEPENDENCIES_ARTIFACT = "permlang-dependencies";
+
+/**
+ * A workflow that runs the PermLang Action with these `args`, in two jobs. Installing the
+ * dependencies runs code the pull request controls, even with install scripts off (pnpm's
+ * .pnpmfile.cjs, Yarn's yarnPath and plugins, the program a project .npmrc names as `git`), and
+ * code that runs in a job before the check can change what it runs or reports. So one job
+ * installs, with a read-only token, and packs every node_modules folder; the job that checks runs
+ * nothing from the pull request, and brings in only those folders. (GHSA-chh9-p8fq-3gf9)
+ */
 export function workflowFile(actionArgs: string, target: WorkflowTarget): string {
   const inputs = [
+    `          dependencies: ${DEPENDENCIES_ARTIFACT}`,
     ...(target.workingDirectory ? [`          working-directory: ${scalar(target.workingDirectory)}`] : []),
     ...(actionArgs ? [`          args: ${scalar(actionArgs)}`] : []),
   ];
+  const checkout = ["      - uses: actions/checkout@v7", "        with:", "          persist-credentials: false"];
   return [
     target.workingDirectory ? `name: ${scalar(`PermLang (${target.workingDirectory})`)}` : "name: PermLang",
     "",
@@ -212,21 +224,42 @@ export function workflowFile(actionArgs: string, target: WorkflowTarget): string
     "",
     "permissions:",
     "  contents: read",
-    "  pull-requests: write",
     "",
     "jobs:",
-    "  permissions:",
+    "  # Installs your dependencies, whose types PermLang reads (@types/node above all, to see file,",
+    "  # process, and environment access). Installing can run code a pull request controls, even with",
+    "  # install scripts off, so it happens here, with a read-only token, and not in the job that checks.",
+    "  dependencies:",
     "    runs-on: ubuntu-latest",
     "    steps:",
-    "      - uses: actions/checkout@v7",
+    ...checkout,
     "      - uses: actions/setup-node@v7",
     "        with:",
     "          node-version: lts/*",
-    "      # PermLang needs your dependencies' types (@types/node above all) to see file, process,",
-    "      # and environment access. If you generate code, such as `prisma generate`, add it here too.",
     ...installSteps(target),
+    "      # If you generate code, such as `prisma generate`, add it here. Code generated outside",
+    "      # node_modules needs its folder added to the archive, and to the check's `generated`.",
+    "      - name: Pack the dependencies for the check",
+    '        run: find . -name node_modules -type d -prune -print0 | tar --null -cf "$RUNNER_TEMP/dependencies.tar" -T -',
+    "      - uses: actions/upload-artifact@v7",
+    "        with:",
+    `          name: ${DEPENDENCIES_ARTIFACT}`,
+    "          path: ${{ runner.temp }}/dependencies.tar",
+    "          retention-days: 1",
+    "",
+    "  # The check. Nothing from the pull request runs here: PermLang only reads its code, and the",
+    "  # node_modules folders the job above installed.",
+    "  permissions:",
+    "    needs: dependencies",
+    "    runs-on: ubuntu-latest",
+    "    permissions:",
+    "      contents: read",
+    "      pull-requests: write",
+    "    steps:",
+    ...checkout,
     "      - uses: PermLang/permlang@v0",
-    ...(inputs.length > 0 ? ["        with:", ...inputs] : []),
+    "        with:",
+    ...inputs,
     "",
   ].join("\n");
 }

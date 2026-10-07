@@ -56,6 +56,7 @@
     "action.yml#<action.yml>": [
       "ci.action(actions/cache/restore)",
       "ci.action(actions/cache/save)",
+      "ci.action(actions/download-artifact)",
       "ci.action(actions/setup-node)",
       "ci.action(github/codeql-action/upload-sarif)"
     ],
@@ -94,12 +95,45 @@
       "fs.read"
     ],
     "src/cli.ts#<module>": [
+      "env(GITHUB_ACTIONS)",
       "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
       "fs.read(package.json)",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)",
+      "fs.write"
+    ],
+    "src/dependencies.ts#checkDestination": [
+      "fs.read"
+    ],
+    "src/dependencies.ts#foldersIn": [
+      "fs.read"
+    ],
+    "src/dependencies.ts#importCommand": [
+      "exec",
+      "fs.read",
+      "fs.write"
+    ],
+    "src/dependencies.ts#importDependencies": [
+      "exec",
+      "fs.read",
+      "fs.write"
+    ],
+    "src/dependencies.ts#importUnpacked": [
+      "fs.read",
+      "fs.write"
+    ],
+    "src/dependencies.ts#move": [
+      "fs.read",
+      "fs.write"
+    ],
+    "src/dependencies.ts#unpack": [
+      "exec"
+    ],
+    "src/import-dependencies.ts#<module>": [
+      "exec",
+      "fs.read",
       "fs.write"
     ],
     "src/init-workflow.ts#canonical": [
@@ -247,6 +281,7 @@
       "exec"
     ],
     "src/main.ts#main": [
+      "env(GITHUB_ACTIONS)",
       "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
@@ -270,6 +305,9 @@
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
+    ],
+    "src/main.ts#stopCommands": [
+      "env(GITHUB_ACTIONS)"
     ],
     "src/main.ts#writeText": [
       "fs.write"

@@ -5,12 +5,14 @@
  * What the permlang command does: init, check, lock, diff, spec (cli.ts runs it). It
  * reads sources, config, and lock files, writes the lock file, and runs `git show` to
  * read a committed lock. In GitHub Actions it reads GITHUB_WORKSPACE, so annotations
- * name files from the repository root.
+ * name files from the repository root, and GITHUB_ACTIONS, to keep its output from being
+ * read as commands.
  * @module
- * @perm fs.read, fs.write, exec, env(GITHUB_WORKSPACE)
+ * @perm fs.read, fs.write, exec, env(GITHUB_WORKSPACE), env(GITHUB_ACTIONS)
  */
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
@@ -63,11 +65,12 @@ export function main(argv: string[]): number {
     console.log(USAGE);
     return 0;
   }
+  const commands = stopCommands(rest);
   try {
     if (!isCommand(command)) throw new UsageError(`Unknown command "${printable(command)}".\n\n${USAGE}`);
     const args = parseArgs(command, rest);
     if (command === "init") return init(args);
-    if (command === "check") return check(args);
+    if (command === "check") return check(args, commands);
     if (command === "lock") return lock(args);
     if (command === "diff") return diff(args);
     return spec(args);
@@ -80,7 +83,35 @@ export function main(argv: string[]): number {
     // Exit code 1 means permission errors and nothing else, so CI can tell a failed check from a broken one.
     console.error(expectedError(e) ?? internalError(e));
     return 2;
+  } finally {
+    commands.resume(console.error);
   }
+}
+
+/** Lets GitHub Actions read workflow commands again; PermLang's own come after. */
+interface CommandsStopped {
+  resume(write: (line: string) => void): void;
+}
+
+/**
+ * In GitHub Actions, the runner reads a line of a step's output that starts with `::` (after
+ * any spaces) as a workflow command. What PermLang prints quotes paths and names from the code
+ * it checks, so a folder named `::stop-commands::x` would hide the annotations after it, and
+ * other names could add fake ones. So there, the runner is told to ignore commands until a
+ * token only this run knows. It goes to standard error, which keeps standard output (JSON, for
+ * one) as it was. PermLang's own annotations follow the token, on their own stream.
+ */
+function stopCommands(rest: readonly string[]): CommandsStopped {
+  if (process.env.GITHUB_ACTIONS !== "true" && !rest.includes("--github-annotations")) return { resume: () => {} };
+  let token: string | undefined = randomUUID();
+  console.error(`::stop-commands::${token}`);
+  return {
+    resume(write) {
+      if (token === undefined) return;
+      write(`::${token}::`);
+      token = undefined;
+    },
+  };
 }
 
 function isCommand(command: string): command is Command {
@@ -179,7 +210,7 @@ function init(args: Args): number {
   return 0;
 }
 
-function check(args: Args): number {
+function check(args: Args, commands: CommandsStopped): number {
   if (args.noLock && args.requireLock) throw new UsageError("--no-lock and --require-lock can't be used together.");
   const lockName = args.lock ?? DEFAULT_LOCK;
   const lockFile = path.resolve(lockName);
@@ -211,8 +242,11 @@ function check(args: Args): number {
   if (args.sarif) writeText(args.sarif, `${toSarif(report, root, packageVersion())}\n`);
   console.log(args.json ? toJson(report) : formatText(report));
   // In GitHub Actions, each diagnostic then shows on its line in the pull request. The runner
-  // reads standard error too, which keeps --json's output valid JSON.
-  if (args.githubAnnotations && report.diagnostics.length > 0) (args.json ? console.error : console.log)(formatAnnotations(report, root));
+  // reads standard error too, which keeps --json's output valid JSON. It reads them only once
+  // told the token, on the same stream, so after the report.
+  const annotate = args.json ? console.error : console.log;
+  commands.resume(annotate);
+  if (args.githubAnnotations && report.diagnostics.length > 0) annotate(formatAnnotations(report, root));
   return report.diagnostics.some((d) => d.severity === "error") ? 1 : 0;
 }
 
@@ -335,7 +369,8 @@ function diff(args: Args): number {
   let headLock: LockFile;
   let via: ViaPaths = {};
   // For each capability, the AI tools that can trigger it (from analyzing the working tree).
-  const aiTools: Record<string, string[]> = {};
+  // Keyed by capability: one an adapter names `constructor` mustn't find Object's.
+  const aiTools = Object.create(null) as Record<string, string[]>;
   if (args.head) {
     const found = lockAt(args.head, lockName);
     if (!found) throw new UsageError(`${lockName} doesn't exist at ${printable(args.head)}.`);
@@ -517,6 +552,8 @@ function dependencyChanges(base: string, args: Args): DependencyChange[] {
   const head = parsePackage(args.head ? fileAt(args.head, "package.json")?.text : existsSync("package.json") ? readFileSync("package.json", "utf8") : undefined);
   if (!head) return [];
   const installed = (name: string) => {
+    // The name comes from the change's package.json: only one npm allows names a folder in node_modules.
+    if (!NPM_NAME.test(name)) return undefined;
     const file = path.join("node_modules", name, "package.json");
     return existsSync(file) ? parsePackage(readFileSync(file, "utf8")) : undefined;
   };
@@ -524,6 +561,9 @@ function dependencyChanges(base: string, args: Args): DependencyChange[] {
   const adapters = dependencyAdapters(args);
   return [...addedDependencies(before, head, adapters, installed), ...overriddenDependencies(before, head, adapters, installed)];
 }
+
+/** A package name npm allows, scoped or not: no `.` or `_` first, no `..`, no other `/`, so it names a folder in node_modules. */
+const NPM_NAME = /^(?:@[A-Za-z0-9~-][A-Za-z0-9_.~-]*[/])?[A-Za-z0-9~-][A-Za-z0-9_.~-]*$/;
 
 function parsePackage(text: string | undefined): PackageJson | undefined {
   if (text === undefined) return undefined;

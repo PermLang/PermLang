@@ -194,3 +194,15 @@ describe("the text diff", () => {
     expect(text).not.toContain("reach the same access");
   });
 });
+
+// A capability an adapter names `constructor` (a name CAPABILITY_NAME allows) read Object's own
+// `constructor` from the notes and the paths, and the diff threw "function is not iterable".
+describe("names that objects have already", () => {
+  it.each(["constructor", "toString", "__proto__", "hasOwnProperty"])("are only names, in the comment and the text (%s)", (name) => {
+    const changes = diffLocks(empty, lock({ [`src/a.ts#${name}`]: [name, "net"] }));
+    expect(() => formatDiffMarkdown(changes, {}, { aiTools: {} })).not.toThrow();
+    expect(() => formatDiffText(changes, {}, { aiTools: {} })).not.toThrow();
+    expect(formatDiffMarkdown(changes, {}, { aiTools: {} })).not.toContain("AI model");
+    expect(formatDiffText(changes, {}, {})).toContain(`+ ${name}`);
+  });
+});
