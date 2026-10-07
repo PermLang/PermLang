@@ -170,8 +170,11 @@ PermLang's own repository runs CodeQL too.
 **Does it run my code or send it anywhere?**
 No. It reads your source with the TypeScript compiler and never runs it. Your
 code stays on your machine or CI runner: the command-line tool makes no network
-calls, and the GitHub Action only posts its results to the pull request (and to
-code scanning, if you turn that on).
+calls. The GitHub Action downloads what it needs to build PermLang (from npm),
+and sends GitHub only its results, which quote short lines of code, for the
+pull-request comment and annotations (and code scanning, if you turn that on).
+The workflow `init` writes passes your installed packages, not your code, from
+the job that installs them to the job that checks, as an artifact kept for a day.
 
 **Is it free?**
 Yes. PermLang is open source under the Apache 2.0 license.

@@ -1394,6 +1394,12 @@ and its error messages escape line breaks, control characters, and bidirectional
 overrides in anything from the code or a file (`\n`, `\u001b`, `\u202e`), so a
 string in the code can't print a line of its own, which GitHub Actions would
 obey as a workflow command, drive the terminal, or read differently than it is.
+In GitHub Actions (where `GITHUB_ACTIONS` is `true`, or with
+`--github-annotations`), every command also tells the runner to ignore workflow
+commands until a token only that run knows, on standard error, so standard
+output stays as it is. A path such as `::stop-commands::x/app.ts`, from a folder
+named that way, can't start one either. The check's own annotations come after
+the token.
 
 The check compares against `./permlang.lock.json` whenever it exists. When
 checking other files from the same folder (like the fixtures here), pass
@@ -1600,31 +1606,100 @@ merge-conflict markers, say), with a warning to review all of it.
 on: [pull_request]
 permissions:
   contents: read
-  pull-requests: write
 jobs:
-  permissions:
+  # Installs the dependencies, apart from the check.
+  dependencies:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: lts/*
       - run: npm ci --ignore-scripts   # or pnpm / yarn; see below
+      - name: Pack the dependencies for the check
+        run: find . -name node_modules -type d -prune -print0 | tar --null -cf "$RUNNER_TEMP/dependencies.tar" -T -
+      - uses: actions/upload-artifact@v7
+        with:
+          name: permlang-dependencies
+          path: ${{ runner.temp }}/dependencies.tar
+          retention-days: 1
+  # The check, where nothing from the pull request runs.
+  permissions:
+    needs: dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: PermLang/permlang@v0
         with:
+          dependencies: permlang-dependencies
           args: src            # or --project tsconfig.json
 ```
 
-**Install dependencies before the Action.** PermLang reads code through the
+**Dependencies, in a job of their own.** PermLang reads code through the
 TypeScript compiler, so it needs your dependencies' types, `@types/node` above
 all. Without them, file, process, and environment access are invisible, and the
 check reports `PERM007` warnings instead of what the code does.
-`permlang init --workflow` writes this step for npm, pnpm, or yarn, based on
-your lockfile. Install scripts aren't needed for types; if you generate code,
-such as with `prisma generate`, run that too.
+
+Installing them runs code the pull request controls, though, even with install
+scripts off. pnpm loads `.pnpmfile.cjs`; Yarn 2 and later run the file
+`.yarnrc.yml`'s `yarnPath` names, and its plugins; npm runs the program a
+project `.npmrc` names as `git` when the lockfile has a git dependency. Code
+that runs in the check's job before the check can change what it runs or
+reports. So the dependencies install in another job, which packs every
+`node_modules` folder into an archive and uploads it, and the check's job runs
+nothing from the pull request. The Action's `dependencies` input names that
+archive's artifact, and the Action brings it in before the check:
+
+- Only `node_modules` folders come in, and the folders `generated` names.
+- A link in them must be relative, stay in the repository, and keep out of
+  `.git`. pnpm's links between `node_modules` folders, and a workspace's links
+  to its own packages, are fine.
+- Each folder must be new to the checkout, in a folder of the checkout's own,
+  with no link on the way, so the checkout's files, which the check reads as
+  the pull request's code, never change.
+- Anything else fails the step, and nothing comes in. So does a Windows runner,
+  whose `tar` unpacks a link as a copy of what it points to.
+
+**Don't run the pull request's code in the check's job.** That includes
+installing, building, testing, and code generation: any step before the Action
+in its job. A workflow written by an earlier `init`, or by hand, that installs
+in the same job lets a pull request change the check's result. Split it as
+above, or run `permlang init --workflow` again after deleting it.
+
+**Generated code.** Run generators, such as `prisma generate`, in the
+dependencies job, after installing. Code generated into `node_modules` (Prisma's
+default before its `prisma-client` generator) comes along. For code generated
+elsewhere, such as `src/generated`, add its folder to the archive, and name it
+in the check's `generated` input:
+
+```yaml
+      - name: Pack the dependencies for the check
+        run: |
+          { find . -name node_modules -type d -prune; echo src/generated; } |
+            tar -cf "$RUNNER_TEMP/dependencies.tar" -T -
+# ...
+      - uses: PermLang/permlang@v0
+        with:
+          dependencies: permlang-dependencies
+          generated: src/generated
+```
+
+A generated folder mustn't be committed: the check refuses to replace a folder
+the checkout has.
 
 What `init --workflow` writes:
 
+- **Two jobs**, as above: `dependencies`, which installs and packs, and
+  `permissions`, which checks. Both check out without keeping the token in the
+  repository's git config (`persist-credentials: false`), and only the check
+  gets `pull-requests: write`.
 - **pnpm and Yarn** come through Corepack, which the workflow installs from npm
   first (`npm install --global corepack@latest`), since Node 25 and later no
   longer include it. Yarn 2 and later (a `.yarnrc.yml`, or a Yarn 2 lockfile)
@@ -1706,6 +1781,8 @@ permissions:
 | `comment` | `true` | Post the permission diff as a pull-request comment. |
 | `sarif` | `false` | Also upload the findings to code scanning. |
 | `github-token` | `github.token` | Token for the comment. |
+| `dependencies` | | The artifact, uploaded by an earlier job, with a tar archive of the project's `node_modules` folders, which the check reads types from (see [dependencies, in a job of their own](#github-action)). Linux and macOS runners. |
+| `generated` | | Folders, from the repository root and split on spaces, that the installing job generated outside `node_modules` and packed too. They mustn't be committed. |
 
 | Output | Meaning |
 | --- | --- |
