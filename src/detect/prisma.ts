@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: The PermLang Authors
 
-// Prisma, the first database client with built-in support (design doc open
-// question 2). Prisma generates one `<Model>Delegate` interface per model; the
-// table in db.read/db.write is the model's accessor name, e.g. `prisma.lead`.
+// Prisma, the first database client with built-in support. Prisma generates one
+// `<Model>Delegate` interface per model; the table in db.read/db.write is the model's
+// accessor name, e.g. `prisma.lead`.
 // Related tables reached through `include`, `where`, nested writes, and the fluent
 // API (`prisma.user.findUnique(...).posts()`) are read from the arguments
 // (prisma-args.ts).
