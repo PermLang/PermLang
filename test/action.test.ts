@@ -314,6 +314,19 @@ describe.skipIf(!bash)("the Action's comment", () => {
     expect(sent("patched")).toMatch(/^<!-- permlang-diff -->\n### PermLang permission diff\n\n> \[!CAUTION\]\n> \*\*PermLang couldn't compute the permission diff\*\*/);
   });
 
+  // A diff that died without printing (out of memory, killed) only warned, and the comment went on
+  // showing an earlier push's diff as if it were current (found by the threat model).
+  it("fails, rather than leave an earlier push's comment standing, when the diff prints nothing", () => {
+    fakeGh({ comments: ["103\tgithub-actions[bot]\t<!-- permlang-diff -->"] });
+    const crash = path.join(temp, "crash.mjs");
+    writeFileSync(crash, "process.exit(137);\n");
+    const { code, out } = run("Comment the permission diff", env({ PERMLANG: crash }));
+    expect(code).toBe(1);
+    expect(out).toContain("PermLang's diff printed nothing");
+    expect(sent("patched")).toBeUndefined();
+    expect(sent("posted")).toBeUndefined();
+  });
+
   it("reads the lock --lock names", () => {
     fakeGh({});
     git("mv", "permlang.lock.json", "custom.json");

@@ -289,9 +289,11 @@ runs:
         elif [ "$status" -ne 0 ]; then
           echo "::warning::Couldn't compute the permission diff (see the error above). The comment says so."
         fi
+        # Even a diff that fails prints a comment saying so; nothing at all means it died (out of
+        # memory, or stopped), and an earlier push's comment would go on looking current.
         if [ ! -s "$body" ]; then
-          echo "::warning::No permission diff to post."
-          exit 0
+          echo "::error::PermLang's diff printed nothing (exit code $status), so the pull request's comment can't be updated, and may still show an earlier push's diff."
+          exit 1
         fi
         # A check that stopped with an error (exit code 2, such as for an option it doesn't take
         # that diff does) compared nothing, whatever the diff shows: the comment says so first,
