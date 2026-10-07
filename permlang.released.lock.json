@@ -43,6 +43,11 @@
       "ci.trigger(schedule)",
       "ci.trigger(workflow_dispatch)"
     ],
+    ".github/workflows/sign-off.yml#<sign-off.yml>": [
+      "ci.action(actions/checkout)",
+      "ci.permission(contents: read)",
+      "ci.trigger(pull_request)"
+    ],
     "action.yml#<action.yml>": [
       "ci.action(actions/cache/restore)",
       "ci.action(actions/cache/save)",
