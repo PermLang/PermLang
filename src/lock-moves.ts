@@ -53,7 +53,9 @@ export interface PermLangStep {
   /**
    * The step runs whenever its workflow runs for a pull request, and fails its job when it fails:
    * the workflow runs for every pull request, and nothing on the step, its job, or a job it needs
-   * says otherwise (`if:`, or `continue-on-error:`). GitHub counts a skipped job as passed.
+   * says otherwise (`if:`, or `continue-on-error:`). GitHub counts a skipped job as passed. An
+   * `if:` of `always()` or `!cancelled()` runs the step or job anyway, and the jobs its job needs
+   * then don't matter: it runs when they fail.
    */
   surelyRuns: boolean;
 }
@@ -93,18 +95,33 @@ function runsForEveryPullRequest(yaml: YamlFile): boolean {
   );
 }
 
-/** Whether a job runs whenever its workflow does, and fails it when it fails: it, and every job it needs, unconditional. */
+/**
+ * Whether a job runs whenever its workflow does, and fails it when it fails: it's unconditional,
+ * and either runs always or needs only jobs that surely run.
+ */
 function jobSurelyRuns(yaml: YamlFile, jobs: ReadonlyMap<string, Value>, name: string, seen: Set<string>): boolean {
   const job = jobs.get(name);
   if (job === undefined || seen.has(name) || !unconditional(yaml, job)) return false;
+  if (yaml.get(job, "if").length > 0) return true; // always() or !cancelled(): it runs when a job it needs fails.
   seen.add(name);
   const needs = yaml.get(job, "needs").flatMap((n) => [yaml.text(n.node), ...yaml.items(n).map((i) => yaml.text(i.node))]);
   return needs.every((n) => n !== undefined && jobSurelyRuns(yaml, jobs, n, seen));
 }
 
-/** A job or step with no `if:`, whose failure isn't ignored (`continue-on-error:` other than false). */
+/** `always()` or `!cancelled()`, alone, with or without `${{ }}`. */
+const ALWAYS = /^(?:\$\{\{\s*(?:always\(\)|!\s*cancelled\(\))\s*\}\}|always\(\)|!\s*cancelled\(\))$/;
+
+/**
+ * A job or step with no `if:` other than `always()` or `!cancelled()`, whose failure isn't
+ * ignored (`continue-on-error:` other than false).
+ */
 function unconditional(yaml: YamlFile, node: Value): boolean {
-  return yaml.get(node, "if").length === 0 && yaml.get(node, "continue-on-error").every((v) => yaml.text(v.node) === "false");
+  const ifs = yaml.get(node, "if");
+  return (
+    ifs.length <= 1 &&
+    ifs.every((v) => ALWAYS.test(yaml.text(v.node)?.trim() ?? "")) &&
+    yaml.get(node, "continue-on-error").every((v) => yaml.text(v.node) === "false")
+  );
 }
 
 /**

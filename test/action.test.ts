@@ -468,6 +468,18 @@ describe("the Action's build cache", () => {
   });
 });
 
+// The check's job runs even when the job that installs fails (`if: always()`), so that it fails
+// rather than being skipped, which counts as passed (GHSA-86ff-3f4h-rrjp). There's nothing to
+// download then, and the step after says why in plain words.
+describe.skipIf(!bash)("the Action without dependencies to download", () => {
+  it("explains a failed download", () => {
+    const steps = action.runs.steps as { name: string; id?: string; if?: string }[];
+    expect(steps.find((s) => s.name === "Download the dependencies")!.id).toBe("download");
+    expect(steps.find((s) => s.name === "Explain the missing dependencies")!.if).toBe("failure() && steps.download.outcome == 'failure'");
+    expect(run("Explain the missing dependencies", {}).out).toContain("::error::There are no dependencies to download, so PermLang can't check this code.");
+  });
+});
+
 // The packages another job installed come in before the check, and only node_modules folders do
 // (GHSA-chh9-p8fq-3gf9; the archive's checks are in test/dependencies.test.ts).
 describe.skipIf(!bash || process.platform === "win32")("the Action's import of dependencies", () => {

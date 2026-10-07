@@ -12,6 +12,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { importDependencies } from "../src/dependencies.js";
+import { permLangSteps } from "../src/lock-moves.js";
 import { runCli } from "./run-cli.js";
 import { removeTemporary } from "./temporary.js";
 
@@ -184,7 +185,7 @@ describe("permlang init", () => {
 describe("permlang init --workflow", () => {
   /** The PermLang step's inputs, and the workflow's name, as GitHub reads the file. */
   type Step = { name?: string; uses?: string; run?: string; "working-directory"?: string; with?: Record<string, string | number | boolean> };
-  type Job = { needs?: string; permissions?: Record<string, string>; steps: Step[] };
+  type Job = { needs?: string; if?: string; permissions?: Record<string, string>; steps: Step[] };
   const workflowOf = (file: string) =>
     parse(readFileSync(path.join(dir, ".github", "workflows", file), "utf8")) as { name: string; permissions: Record<string, string>; jobs: { dependencies: Job; permissions: Job } };
   const read = (file: string) => {
@@ -223,6 +224,17 @@ describe("permlang init --workflow", () => {
     expect(check.steps[1]!.with!.dependencies).toBe(upload.name);
     // Neither checkout leaves the token in the repository's git config.
     for (const job of [install, check]) expect(job.steps[0]!.with).toEqual({ "persist-credentials": false });
+  });
+
+  // When the installing job failed, GitHub skipped the check's job, which needs it, and a skipped
+  // job counts as passed, also as a required check: a pull request could fail the install on
+  // purpose, and skip its own check (GHSA-86ff-3f4h-rrjp). The check's job runs always, and fails
+  // without the dependencies; the rule for moved lock files still counts it as sure to run.
+  it("runs the check even when installing fails", () => {
+    permlang("init", "src", "--workflow");
+    expect(workflowOf("permlang.yml").jobs.permissions.if).toBe("always()");
+    const read = (file: string) => (existsSync(path.join(dir, file)) ? readFileSync(path.join(dir, file), "utf8") : undefined);
+    expect(permLangSteps([".github/workflows/permlang.yml"], read)).toEqual([expect.objectContaining({ surelyRuns: true })]);
   });
   /** The check the Action runs, with the workflow's args split on spaces as it splits them. */
   const actionCheck = (inputs: Record<string, string>) => runCli(["check", ...(inputs.args ?? "").split(/\s+/).filter(Boolean)], { cwd: path.join(dir, inputs["working-directory"] ?? ".") });

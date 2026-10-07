@@ -180,6 +180,8 @@ describe("permlang check --base", () => {
     ["a job that needs one with if:", `on: pull_request\njobs:\n  never:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - run: "true"\n  decoy:\n    needs: never\n    runs-on: ubuntu-latest\n    steps:\n${step}`],
     ["a step whose failure doesn't fail its job", `on: pull_request\n${job()}      - uses: PermLang/permlang@v0\n        continue-on-error: true\n        with:\n          args: src\n`],
     ["a job whose failure doesn't fail the run", `on: pull_request\n${job("    continue-on-error: true\n")}${step}`],
+    ["a job whose if: only starts with always()", `on: pull_request\n${job("    if: always() && github.event_name == 'push'\n")}${step}`],
+    ["a job that runs always but whose failure doesn't fail the run", `on: pull_request\n${job("    if: always()\n    continue-on-error: true\n")}${step}`],
     ["a workflow that doesn't run for pull requests", `on: push\n${job()}${step}`],
     ["a workflow that runs only for some pull requests", `on:\n  pull_request:\n    paths: [nothing/**]\n${job()}${step}`],
   ])("doesn't count %s as still reading the base's lock", (_, decoy) => {
@@ -206,6 +208,28 @@ describe("permlang check --base", () => {
     const base = commit("base");
     workflow("permlang.yml", { args: "src --lock next.json" });
     write(".github/workflows/old.yml", `${on}${job()}${step}`);
+    permlang(".", "lock", "src", "--lock", "next.json");
+    expect(permlang(".", "check", "src", "--lock", "next.json", "--base", base)).toMatchObject({ code: 0 });
+  });
+
+  // A check's job that needs the job installing the dependencies has `if: always()`, so it runs,
+  // and fails, when that job fails: skipped, it would count as passed (GHSA-86ff-3f4h-rrjp). It
+  // runs whatever the jobs it needs do, so it surely runs.
+  const never = "  never:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - run: \"true\"\n";
+  const needsNever = (condition: string) => `on: pull_request\njobs:\n${never}  check:\n    needs: never\n    if: ${condition}\n    runs-on: ubuntu-latest\n    steps:\n${step}`;
+  it.each([
+    ["a job with if: always() that needs one that never runs", needsNever("always()")],
+    ["a job with if: ${{ always() }}", needsNever("${{ always() }}")],
+    ["a job with if: !cancelled()", needsNever('"!cancelled()"')],
+    ["a job with if: ${{ !cancelled() }}", needsNever("${{ !cancelled() }}")],
+    ["a step with if: always()", `on: pull_request\n${job()}      - if: always()\n        uses: PermLang/permlang@v0\n        with:\n          args: src\n`],
+  ])("counts %s as still reading the base's lock", (_, old) => {
+    app(".");
+    workflow("permlang.yml", { args: "src" });
+    permlang(".", "lock", "src");
+    const base = commit("base");
+    workflow("permlang.yml", { args: "src --lock next.json" });
+    write(".github/workflows/old.yml", old);
     permlang(".", "lock", "src", "--lock", "next.json");
     expect(permlang(".", "check", "src", "--lock", "next.json", "--base", base)).toMatchObject({ code: 0 });
   });

@@ -1553,7 +1553,9 @@ stand in for the real check. A step doesn't count when:
 - its workflow doesn't run on `pull_request`, or only for some pull requests
   (`branches`, `branches-ignore`, `paths`, `paths-ignore` or `types` under
   `pull_request`);
-- the step, its job, or a job its job `needs` has an `if:`;
+- the step, its job, or a job its job `needs` has an `if:` other than
+  `always()` or `!cancelled()`. A job with one of those runs even when a job it
+  needs fails, so those jobs don't matter;
 - the step or its job has `continue-on-error:` (other than `false`).
 
 Adding a package to a monorepo, with a step and a lock file of its own, passes:
@@ -1628,6 +1630,7 @@ jobs:
   # The check, where nothing from the pull request runs.
   permissions:
     needs: dependencies
+    if: always()         # so it fails, not skips, when installing fails
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1666,6 +1669,13 @@ archive's artifact, and the Action brings it in before the check:
   the pull request's code, never change.
 - Anything else fails the step, and nothing comes in. So does a Windows runner,
   whose `tar` unpacks a link as a copy of what it points to.
+
+**Keep `if: always()` on the check's job.** When a job fails, GitHub skips the
+jobs that need it, and counts a skipped job as passed, also as a required check.
+A pull request could then make the install fail on purpose, and skip its own
+check. With `if: always()`, the check's job runs anyway, and fails: there are no
+dependencies to download. 0.4.2's `init` left it out; add it beside `needs:`, or
+make the dependencies job a required check too.
 
 **Don't run the pull request's code in the check's job.** That includes
 installing, building, testing, and code generation: any step before the Action
