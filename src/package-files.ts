@@ -11,6 +11,7 @@
 import { readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { isSeq } from "yaml";
+import { lineIndex, lineStarts } from "./lines.js";
 import type { Sink } from "./project-files.js";
 import { YamlFile } from "./yaml-nodes.js";
 
@@ -39,12 +40,18 @@ export function readManifest(name: string, text: string, sink: Sink): string[] {
   const pkg = parsed as { scripts?: unknown; workspaces?: unknown };
   const scripts = typeof pkg.scripts === "object" && pkg.scripts !== null ? (pkg.scripts as Record<string, unknown>) : {};
   const from = Math.max(0, text.indexOf('"scripts"'));
+  const starts = lineStarts(text);
+  // Each key is looked for after the one before, since JSON keeps them in order (anywhere after
+  // "scripts" when it isn't there): from "scripts" each time, tens of thousands took minutes.
+  let after = from;
   for (const [script, command] of Object.entries(scripts)) {
     if (typeof command !== "string") continue;
-    const key = text.indexOf(`${JSON.stringify(script)}`, from);
-    const before = text.slice(0, Math.max(0, key));
-    const line = before.split("\n").length;
-    const column = key - (before.lastIndexOf("\n") + 1) + 1;
+    const quoted = JSON.stringify(script);
+    let key = text.indexOf(quoted, after);
+    if (key === -1) key = text.indexOf(quoted, from);
+    else after = key + quoted.length;
+    const line = lineIndex(starts, Math.max(0, key)) + 1;
+    const column = key - starts[line - 1]! + 1;
     sink.add(`npm.script(${script}: ${command})`, `"${script}": ${JSON.stringify(command)}`, { line, column });
   }
   return name === "package.json" ? workspacePatterns(pkg.workspaces, sink) : [];
