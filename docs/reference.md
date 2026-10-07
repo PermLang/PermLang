@@ -1809,7 +1809,10 @@ the check reads:
   `working-directory`), and stops checking with the base's own, the check
   fails, and the comment says so.
 - When the base commit can't be fetched, the lock is required anyway, with a
-  warning.
+  warning. A checkout that didn't keep its token (`persist-credentials: false`,
+  as in the workflow `init` writes) can't fetch from a private repository, so
+  then the Action fetches with its `github-token`, passed to that one `git
+  fetch` and kept nowhere.
 
 `--no-lock` in `args` then stops the check with a usage error. So do options
 `check` doesn't take, and `-h` or `--help` with anything else, rather than being

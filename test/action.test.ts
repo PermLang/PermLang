@@ -185,6 +185,43 @@ describe.skipIf(!bash)("the Action's base-commit lookup", () => {
     }
   });
 
+  // A checkout that didn't keep its token (persist-credentials: false, as in the workflow init
+  // writes) couldn't fetch the base from a private repository, so the moved-lock rule and the
+  // diff didn't run (found by running that workflow end to end, in a private repository).
+  // Git for Windows' bash puts its own folders first on the PATH, so a stand-in git can't come first there.
+  it.skipIf(process.platform === "win32")("fetches with the Action's token, kept nowhere, when a fetch without it is refused", () => {
+    base();
+    const shallow = path.join(dir, "shallow");
+    execFileSync("git", ["clone", "-q", "--depth=1", pathToFileURL(origin).href, shallow]);
+    git("commit", "-q", "--allow-empty", "-m", "later");
+    git("push", "-q", "origin", "HEAD:refs/heads/main");
+    const later = git("rev-parse", "HEAD");
+    // A remote that refuses a fetch without the token, as a private repository's does. The header
+    // it gets is written down, to check.
+    const real = execFileSync(bash!, ["-c", "command -v git"], { encoding: "utf8" }).trim();
+    const headers = path.join(temp, "headers.txt");
+    mkdirSync(path.join(temp, "bin"), { recursive: true });
+    writeFileSync(
+      path.join(temp, "bin", "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = -c ]; then printf "%s\\n" "$2" >> "' + headers.replaceAll("\\", "/") + '"; shift 2; exec "' + real + '" "$@"; fi',
+        'case " $* " in *" fetch "*) echo "fatal: could not read Username: terminal prompts disabled" >&2; exit 128 ;; esac',
+        'exec "' + real + '" "$@"',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(path.join(temp, "bin", "git"), 0o755);
+    const { code, outputs } = run("Look up the base commit", { BASE_SHA: later, TOKEN: "ghs_test-token" }, shallow);
+    expect(code).toBe(0);
+    expect(outputs.fetched).toBe("true");
+    expect(readFileSync(headers, "utf8").trim()).toBe(`http.extraheader=AUTHORIZATION: basic ${Buffer.from("x-access-token:ghs_test-token").toString("base64")}`);
+    expect(execFileSync("git", ["cat-file", "-t", later], { cwd: shallow, encoding: "utf8" }).trim()).toBe("commit");
+    expect(readFileSync(path.join(shallow, ".git", "config"), "utf8")).not.toContain("ghs_test-token");
+    // Without a token, it still warns, and the lock is required.
+    expect(run("Look up the base commit", { BASE_SHA: "0".repeat(40), TOKEN: "" }, shallow).outputs.fetched).toBe("false");
+  });
+
   it("gives each folder its own code-scanning category", () => {
     const sha = base();
     mkdirSync(path.join(work, "packages", "api"), { recursive: true });

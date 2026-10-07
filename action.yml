@@ -188,6 +188,8 @@ runs:
       env:
         NODE: ${{ steps.node.outputs.path }}
         BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        TOKEN: ${{ inputs.github-token }}
+        GIT_TERMINAL_PROMPT: "0"
       run: |
         set +e
         fetched=false
@@ -199,7 +201,13 @@ runs:
           else
             depth=()
             [ "$(git rev-parse --is-shallow-repository)" = true ] && depth=(--depth=1)
-            if git fetch --no-tags "${depth[@]}" origin "$BASE_SHA"; then
+            # A checkout that didn't keep its token (persist-credentials: false, as in the workflow
+            # init writes) can't fetch from a private repository. Then the Action's token goes to
+            # this one fetch, in a header, and is kept nowhere.
+            # (The first try's error is shown only when there's no second.)
+            header() { printf 'AUTHORIZATION: basic %s' "$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')"; }
+            fetch() { git "$@" fetch --no-tags "${depth[@]}" origin "$BASE_SHA"; }
+            if { [ -z "$TOKEN" ] && fetch; } || { [ -n "$TOKEN" ] && { fetch 2> /dev/null || fetch -c "http.extraheader=$(header)"; }; }; then
               fetched=true
             else
               echo "::warning::Couldn't fetch the base commit, so a missing lock file fails the check, and the permission diff can't be shown."
