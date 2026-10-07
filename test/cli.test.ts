@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parseArgs } from "../src/args.js";
-import { runCli } from "./run-cli.js";
+import { runCli, runCliStreams } from "./run-cli.js";
 import { removeTemporary } from "./temporary.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
@@ -526,6 +526,62 @@ describe("permlang check --github-annotations", () => {
   it("names files from the repository root (GITHUB_WORKSPACE), not the folder it runs in", () => {
     const { out } = runCli(["check", ".", "--no-lock", "--github-annotations"], { cwd: path.join(dir, "my lib"), env: { GITHUB_WORKSPACE: dir } });
     expect(out).toMatch(/^::error file=my lib\/app\.ts,line=2/m);
+  });
+});
+
+// The runner reads a line that starts with `::` (after any spaces) as a workflow command, and the
+// report starts lines with paths from the checked code: a folder named `::stop-commands::x` hid
+// the annotations after it (GHSA-86xw-2f2v-g8vw). In GitHub Actions, PermLang now tells the
+// runner to ignore commands, until a token only that run knows, while it reports.
+describe("workflow commands in GitHub Actions", () => {
+  const streams = (args: string[], env: Record<string, string | undefined> = {}) => runCliStreams(args, { cwd: dir, env: { GITHUB_WORKSPACE: dir, ...env } });
+  const tokenIn = (stderr: string) => /^::stop-commands::([0-9a-f-]{36})\n/.exec(stderr)?.[1];
+
+  it("are ignored while the report prints, and only PermLang's annotations come after", () => {
+    const { code, stdout, stderr } = streams(["check", "my lib", "--no-lock", "--github-annotations"]);
+    expect(code).toBe(1);
+    const token = tokenIn(stderr);
+    expect(token).toBeDefined();
+    const resume = stdout.indexOf(`::${token}::\n`);
+    expect(resume).toBeGreaterThan(stdout.indexOf("my lib/app.ts:2:10 error PERM003"));
+    expect(stdout.indexOf("::error file=my lib/app.ts")).toBeGreaterThan(resume);
+    expect(stdout.split(`::${token}::`)).toHaveLength(2);
+  });
+
+  // Windows doesn't allow `:` in a name.
+  it.skipIf(process.platform === "win32")("keep a path named like a command inside the part the runner ignores", () => {
+    mkdirSync(path.join(dir, "::stop-commands::evil"));
+    writeFileSync(path.join(dir, "::stop-commands::evil", "x.ts"), `export async function x() {\n  return fetch("https://evil.example/");\n}\n`);
+    const { stdout, stderr } = streams(["check", "::stop-commands::evil", "--no-lock", "--github-annotations"]);
+    const token = tokenIn(stderr);
+    const line = stdout.search(/^::stop-commands::evil\/x\.ts:2:10 error PERM003/m);
+    expect(line).toBeGreaterThanOrEqual(0);
+    expect(stdout.indexOf(`::${token}::\n`)).toBeGreaterThan(line);
+  });
+
+  it("are ignored there without --github-annotations too, saying so only on standard error", () => {
+    const { stdout, stderr } = streams(["check", "my lib", "--no-lock", "--json"], { GITHUB_ACTIONS: "true" });
+    expect(() => JSON.parse(stdout) as unknown).not.toThrow();
+    const token = tokenIn(stderr);
+    expect(stderr.trimEnd().endsWith(`::${token}::`)).toBe(true);
+  });
+
+  it("are read again after an error, which is printed while they're ignored", () => {
+    const { code, stderr } = streams(["check", "missing", "--github-annotations"]);
+    expect(code).toBe(2);
+    const token = tokenIn(stderr);
+    expect(stderr.indexOf(`::${token}::`)).toBeGreaterThan(stderr.indexOf("missing"));
+  });
+
+  it("use a new token each run", () => {
+    const first = tokenIn(streams(["check", "my lib", "--no-lock", "--github-annotations"]).stderr);
+    const second = tokenIn(streams(["check", "my lib", "--no-lock", "--github-annotations"]).stderr);
+    expect(first).not.toBe(second);
+  });
+
+  it("aren't mentioned outside GitHub Actions", () => {
+    const { stdout, stderr } = streams(["check", "my lib", "--no-lock"]);
+    expect(stdout + stderr).not.toContain("::");
   });
 });
 

@@ -2,12 +2,14 @@
  * What the permlang command does: init, check, lock, diff, spec (cli.ts runs it). It
  * reads sources, config, and lock files, writes the lock file, and runs `git show` to
  * read a committed lock. In GitHub Actions it reads GITHUB_WORKSPACE, so annotations
- * name files from the repository root.
+ * name files from the repository root, and GITHUB_ACTIONS, to keep its output from being
+ * read as commands.
  * @module
- * @perm fs.read, fs.write, exec, env(GITHUB_WORKSPACE)
+ * @perm fs.read, fs.write, exec, env(GITHUB_WORKSPACE), env(GITHUB_ACTIONS)
  */
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { AdapterError, AdapterIndex, loadAdapters } from "./adapters.js";
@@ -60,11 +62,12 @@ export function main(argv: string[]): number {
     console.log(USAGE);
     return 0;
   }
+  const commands = stopCommands(rest);
   try {
     if (!isCommand(command)) throw new UsageError(`Unknown command "${printable(command)}".\n\n${USAGE}`);
     const args = parseArgs(command, rest);
     if (command === "init") return init(args);
-    if (command === "check") return check(args);
+    if (command === "check") return check(args, commands);
     if (command === "lock") return lock(args);
     if (command === "diff") return diff(args);
     return spec(args);
@@ -77,7 +80,35 @@ export function main(argv: string[]): number {
     // Exit code 1 means permission errors and nothing else, so CI can tell a failed check from a broken one.
     console.error(expectedError(e) ?? internalError(e));
     return 2;
+  } finally {
+    commands.resume(console.error);
   }
+}
+
+/** Lets GitHub Actions read workflow commands again; PermLang's own come after. */
+interface CommandsStopped {
+  resume(write: (line: string) => void): void;
+}
+
+/**
+ * In GitHub Actions, the runner reads a line of a step's output that starts with `::` (after
+ * any spaces) as a workflow command. What PermLang prints quotes paths and names from the code
+ * it checks, so a folder named `::stop-commands::x` would hide the annotations after it, and
+ * other names could add fake ones. So there, the runner is told to ignore commands until a
+ * token only this run knows. It goes to standard error, which keeps standard output (JSON, for
+ * one) as it was. PermLang's own annotations follow the token, on their own stream.
+ */
+function stopCommands(rest: readonly string[]): CommandsStopped {
+  if (process.env.GITHUB_ACTIONS !== "true" && !rest.includes("--github-annotations")) return { resume: () => {} };
+  let token: string | undefined = randomUUID();
+  console.error(`::stop-commands::${token}`);
+  return {
+    resume(write) {
+      if (token === undefined) return;
+      write(`::${token}::`);
+      token = undefined;
+    },
+  };
 }
 
 function isCommand(command: string): command is Command {
@@ -176,7 +207,7 @@ function init(args: Args): number {
   return 0;
 }
 
-function check(args: Args): number {
+function check(args: Args, commands: CommandsStopped): number {
   if (args.noLock && args.requireLock) throw new UsageError("--no-lock and --require-lock can't be used together.");
   const lockName = args.lock ?? DEFAULT_LOCK;
   const lockFile = path.resolve(lockName);
@@ -208,8 +239,11 @@ function check(args: Args): number {
   if (args.sarif) writeText(args.sarif, `${toSarif(report, root, packageVersion())}\n`);
   console.log(args.json ? toJson(report) : formatText(report));
   // In GitHub Actions, each diagnostic then shows on its line in the pull request. The runner
-  // reads standard error too, which keeps --json's output valid JSON.
-  if (args.githubAnnotations && report.diagnostics.length > 0) (args.json ? console.error : console.log)(formatAnnotations(report, root));
+  // reads standard error too, which keeps --json's output valid JSON. It reads them only once
+  // told the token, on the same stream, so after the report.
+  const annotate = args.json ? console.error : console.log;
+  commands.resume(annotate);
+  if (args.githubAnnotations && report.diagnostics.length > 0) annotate(formatAnnotations(report, root));
   return report.diagnostics.some((d) => d.severity === "error") ? 1 : 0;
 }
 

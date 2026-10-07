@@ -82,6 +82,7 @@
       "fs.read"
     ],
     "src/cli.ts#<module>": [
+      "env(GITHUB_ACTIONS)",
       "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
@@ -235,6 +236,7 @@
       "exec"
     ],
     "src/main.ts#main": [
+      "env(GITHUB_ACTIONS)",
       "env(GITHUB_WORKSPACE)",
       "exec",
       "fs.read",
@@ -258,6 +260,9 @@
       "fs.read",
       "fs.read(permlang.config.json)",
       "fs.read(tsconfig.json)"
+    ],
+    "src/main.ts#stopCommands": [
+      "env(GITHUB_ACTIONS)"
     ],
     "src/main.ts#writeText": [
       "fs.write"
