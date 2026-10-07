@@ -450,7 +450,7 @@ describe("lock file", () => {
       fc.property(lock, (l) => {
         const read = parseLock(serializeLock(l), "permlang.lock.json");
         expect(read.permlang).toBe(2);
-        expect(ownEntries(read.functions)).toEqual(ownEntries(l.functions).map(([k, caps]) => [k, [...caps].sort()]).sort(([a], [b]) => (a < b ? -1 : 1)));
+        expect(ownEntries(read.functions)).toEqual(ownEntries(l.functions).map(([k, caps]) => [k, [...caps].sort()] as const).sort(([a], [b]) => (a < b ? -1 : 1)));
         expect(ownEntries(read.unsafe).sort()).toEqual([...ownEntries(l.unsafe)].sort());
         expect(serializeLock(parseLock(serializeLock(read), "permlang.lock.json"))).toBe(serializeLock(read));
       }),

@@ -532,7 +532,8 @@ export function nodeRequestHost(args: readonly Node[], index: number): string | 
     return hostname === "absent" ? optionHost(input, "host") : hostname === "unknown" ? undefined : hostName(hostname);
   }
   const host = hostOf(input);
-  const options = args[index + 1] && unwrapExpression(args[index + 1]);
+  const next = args[index + 1];
+  const options = next && unwrapExpression(next);
   // No options, or a callback, leaves the URL's host; options that aren't written out could replace it.
   if (!options || isCallback(options)) return host;
   if (!Node.isObjectLiteralExpression(options)) return undefined;
@@ -560,7 +561,8 @@ export function nodeSocketHost(args: readonly Node[], index: number): string | u
   if (!type.isNumber() && !type.isNumberLiteral()) return undefined; // a socket path, or options that can't be read
   const written = args[index + 1];
   const host = written && !isCallback(unwrapExpression(written)) ? hostName(written) : undefined;
-  const options = args[index + 2] && unwrapExpression(args[index + 2]);
+  const third = args[index + 2];
+  const options = third && unwrapExpression(third);
   // A callback (`connect(port, host, onConnect)`) isn't options.
   if (!options || isCallback(options)) return host;
   if (!Node.isObjectLiteralExpression(options) || redirects(options, SOCKET_REDIRECTS)) return undefined;
@@ -575,7 +577,8 @@ export function nodeSocketHost(args: readonly Node[], index: number): string | u
  */
 export function nodeSessionHost(args: readonly Node[], index: number): string | undefined {
   const host = hostOf(args[index]);
-  const options = args[index + 1] && unwrapExpression(args[index + 1]);
+  const next = args[index + 1];
+  const options = next && unwrapExpression(next);
   if (!options || isCallback(options)) return host;
   if (!Node.isObjectLiteralExpression(options) || redirects(options, SOCKET_REDIRECTS)) return undefined;
   return sameHost(options, host);
