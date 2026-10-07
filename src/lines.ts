@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 /**
  * Where lines start in a text, to find an offset's line without reading the text from its start
  * each time: a pull request controls how long the text is, and how many offsets there are.

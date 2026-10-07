@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Writes tar archives byte by byte, for tests: an archive another job made can hold anything,
 // including entries no tar program would write (`..` in a path, a link to anywhere), so the tests
 // build those by hand.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Bringing the packages another job installed into the checkout (GHSA-chh9-p8fq-3gf9). Installing
 // runs code the pull request controls, so it happens in a job of its own, which packs every
 // node_modules folder. That job could have packed anything: only node_modules folders (and

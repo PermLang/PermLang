@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // A pull request controls the size of what PermLang reads. Reading a comment's tags, and finding
 // each package.json script's line, went back to the start of the text each time, so tens of
 // thousands of them took minutes (found by the threat model: 32,000 tags, 27 seconds). Each now

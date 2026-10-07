@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 /**
  * Brings the packages another job installed into this checkout, for the check to read, and
  * nothing else. Installing can run code the pull request controls, even with install scripts
@@ -106,10 +109,11 @@ function generatedFolder(folder: string): string {
  */
 function unpack(archive: string, into: string): void {
   try {
-    execFileSync("tar", ["-xf", path.resolve(archive), "-C", into, "--no-same-owner"], { stdio: ["ignore", "ignore", "pipe"] });
+    execFileSync("tar", ["-xf", path.resolve(archive), "-C", into, "--no-same-owner"], { encoding: "utf8", stdio: ["ignore", "ignore", "pipe"] });
   } catch (e) {
-    const stderr = String((e as { stderr?: unknown }).stderr ?? "").trim();
-    throw new DependencyImportError(`The archive of dependencies couldn't be unpacked${stderr ? `: ${printable(stderr.split("\n")[0] ?? "")}` : "."}`);
+    const { stderr } = e as { stderr?: unknown };
+    const first = (typeof stderr === "string" ? stderr : "").trim().split("\n")[0] ?? "";
+    throw new DependencyImportError(`The archive of dependencies couldn't be unpacked${first ? `: ${printable(first)}` : "."}`);
   }
 }
 
