@@ -155,7 +155,7 @@ describe("what gets checked is recorded in the lock (G2, G5)", () => {
     write("permlang.config.json", JSON.stringify({ strictness: "sketch", adapters: ["./acme-sms.json"] }));
     const check = permlang("check", "src");
     expect(check.code).toBe(1);
-    expect(check.out).toMatch(/The check runs with the adapter acme-sms\.json \(sha256:[0-9a-f]{16}\), which permlang\.lock\.json doesn't record\./);
+    expect(check.out).toMatch(/The check runs with the adapter acme-sms\.json \(sha256:[0-9a-f]{64}\), which permlang\.lock\.json doesn't record\./);
     expect(permlang("lock", "src").code).toBe(0);
     // Editing the adapter changes its hash.
     write("acme-sms.json", JSON.stringify({ permlang: 1, package: "acme-sms", defines: ["sms.send"], default: [] }));
