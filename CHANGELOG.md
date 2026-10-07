@@ -2,7 +2,7 @@
 
 All notable changes to PermLang.
 
-## 0.4.3 (unreleased)
+## 0.4.3 (2026-10-07)
 
 **A security release**, for workflows that 0.4.2's `permlang init --workflow`
 wrote, or that follow 0.4.2's [reference](docs/reference.md#github-action). Add
