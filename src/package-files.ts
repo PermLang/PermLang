@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // package.json scripts, the root's and every workspace package's: npm, Yarn, pnpm and
 // Bun run a workspace package's install hooks (`preinstall`, `postinstall`, ...) when
 // the root is installed. Workspaces are listed in package.json's `workspaces` (npm,

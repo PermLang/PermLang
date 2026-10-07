@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Data-flow rules: where a secret or sensitive data may be sent.
 //
 //   "flows": [{ "from": "env(STRIPE_KEY)", "to": ["net(api.stripe.com)", "email.send"] }]

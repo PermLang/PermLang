@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 /**
  * What the permlang command does: init, check, lock, diff, spec (cli.ts runs it). It
  * reads sources, config, and lock files, writes the lock file, and runs `git show` to

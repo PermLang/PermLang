@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Capability functions and constructors used as values: `urls.map(fetch)`,
 // `promisify(exec)`, `paths.forEach(unlinkSync)`, `Reflect.construct(WebSocket, [url])`.
 // The function can then be called anywhere with any arguments, so the reference

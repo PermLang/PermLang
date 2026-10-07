@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Writes PermLang's software bill of materials (SBOM), in CycloneDX JSON: every package that
 // installing PermLang installs, at the version package-lock.json pins, with its license and
 // checksum. The release workflow attaches it to each release, and CI makes it on every pull

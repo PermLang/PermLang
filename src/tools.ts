@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Tools given to AI models. A function registered as a tool (MCP, the Vercel AI SDK,
 // OpenAI Agents, LangChain, ...) runs when the model decides to call it, and the model
 // does what its input says, so whoever controls that input can trigger it. Prompt

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Calls through a computed key, `obj[key](...)`. With a single literal key they
 // resolve like any other call. Otherwise:
 //   - on a sensitive object (fs, globalThis, an SDK), any capability function

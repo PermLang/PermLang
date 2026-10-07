@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Compares each function's declared permissions with everything it can reach.
 //
 // A unit's actual permissions are its direct uses plus everything its callees

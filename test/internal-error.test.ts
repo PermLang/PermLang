@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // A bug in PermLang must not look like a failed check: exit code 1 means permission errors and
 // nothing else. An internal error exits 2, with the error and where it happened, so it can be
 // reported (found in the code review, O2). Bugs are simulated by making one function throw.

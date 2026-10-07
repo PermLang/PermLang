@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // `permlang check --base <ref>`, which the Action runs on pull requests and merge-queue entries:
 // the base commit decides whether the lock file is required, and a change can't leave the base's
 // lock behind by pointing the Action at another lock file or folder (found by the second

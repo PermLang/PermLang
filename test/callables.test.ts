@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Calls through a function type that more than one function can be behind: a callable
 // interface or type alias (`interface Runner { (cmd: string): void }`), or the function
 // type of a collection's entries (`Map<string, (cmd: string) => void>`, `Handler[]`).

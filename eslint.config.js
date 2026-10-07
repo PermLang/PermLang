@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 import js from "@eslint/js";
 import { defineConfig } from "eslint/config";
 import globals from "globals";

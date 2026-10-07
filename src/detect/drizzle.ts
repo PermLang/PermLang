@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Drizzle ORM. The table in db.read/db.write is the name given to pgTable,
 // mysqlTable, or sqliteTable: `pgTable("audit_log", ...)` is `audit_log`, whatever
 // the variable is called.

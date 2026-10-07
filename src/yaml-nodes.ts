@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // YAML as GitHub reads workflow and Action files. Its parser (actions/languageservices)
 // uses this same `yaml` library, with YAML 1.2's core schema whatever a `%YAML`
 // directive says, so `on:` is the key "on", never `true`. It resolves anchors and

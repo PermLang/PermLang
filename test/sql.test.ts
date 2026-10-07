@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Reading table names out of literal SQL, for raw-SQL database clients.
 //
 // The reader fails closed: it gives a definite answer only for statement shapes it

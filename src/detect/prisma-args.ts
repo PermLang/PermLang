@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // The related tables a Prisma query reaches through its arguments: `include`,
 // `select`, `where`, and `orderBy` read related models, and nested writes in `data`
 // write them. Drizzle's `with` is walked the same way (drizzle.ts).

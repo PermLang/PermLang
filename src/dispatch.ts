@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Dynamic dispatch. A call through an interface, a base class, or a structural
 // type may run any implementation of that member. This charges the caller with
 // every first-party implementation:

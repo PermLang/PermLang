@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // CLI edge cases from the pre-release review. Runs the CLI in a temporary git
 // repository whose code isn't in ./src.
 

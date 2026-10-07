@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Property-based tests. Each states a rule that must hold for every input; fast-check generates
 // hundreds of inputs, hostile ones included, and shrinks any failure to the smallest case. They
 // cover the code where a wrong answer is a security problem: escaping untrusted text into GitHub

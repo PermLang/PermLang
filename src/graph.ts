@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // The call graph between units, and propagation of capabilities along it.
 //
 // An edge is anything that can make one unit's code run another's:

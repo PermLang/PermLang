@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // What the check runs with, recorded in the lock. A pull request can loosen the check without
 // touching code: lower the strictness, trust packages with no adapter, add an adapter that
 // declares a package pure, drop a flow rule, narrow tsconfig.json's "include", or check other

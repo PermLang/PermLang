@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Building the ts-morph Project to check. TypeScript's parser recurses once per level of
 // nesting, so a file nested deeply enough (thousands of parentheses or brackets) makes it
 // overflow the stack. Rather than crash, such a file is read as an empty module and

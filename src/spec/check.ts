@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Checks specs against the code that implements them. Phase 2 groundwork:
 //   - perms:    verified. The implementation's actual reach must stay within them
 //               (SPEC003), and unused permissions are reported (SPEC004). An
