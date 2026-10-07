@@ -30,6 +30,14 @@ inputs:
     description: "Also upload the findings to GitHub code scanning (the Security tab). Needs `security-events: write` permission."
     required: false
     default: "false"
+  dependencies:
+    description: The name of an artifact, uploaded by an earlier job, holding a tar archive of the project's node_modules folders, which the check reads types from. Installing runs code the pull request controls, so it belongs in another job; only node_modules folders (and the generated folders named) come in from it, as new folders.
+    required: false
+    default: ""
+  generated:
+    description: Folders, from the repository root and split on spaces, that the installing job generated outside node_modules (such as a Prisma client in src/generated) and packed too. They mustn't be in the checkout.
+    required: false
+    default: ""
 
 outputs:
   exit-code:
@@ -142,6 +150,31 @@ runs:
           ${{ steps.build-key.outputs.dir }}/node_modules
           ${{ steps.build-key.outputs.dir }}/dist
         key: ${{ steps.build-key.outputs.key }}
+
+    # The packages another job installed, for the check to read their types. Installing runs code
+    # the pull request controls, even with install scripts off (a package manager's settings and
+    # plugins can), and code that runs in this job before the check could change what it runs or
+    # reports. So it happens in a job of its own, which packs every node_modules folder, and only
+    # those folders (and the generated folders named) come in from its archive, as new folders,
+    # with links that stay in the repository (src/dependencies.ts). (GHSA-chh9-p8fq-3gf9)
+    - name: Download the dependencies
+      if: inputs.dependencies != ''
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      with:
+        name: ${{ inputs.dependencies }}
+        path: ${{ runner.temp }}/permlang-dependencies
+
+    - name: Import the dependencies
+      if: inputs.dependencies != ''
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        NODE: ${{ steps.node.outputs.path }}
+        IMPORT: ${{ github.action_path }}/dist/import-dependencies.js
+        GENERATED: ${{ inputs.generated }}
+      run: |
+        set -f  # GENERATED is split on spaces, like a command line, but never glob-expanded.
+        "$NODE" "$IMPORT" "$RUNNER_TEMP/permlang-dependencies" "$RUNNER_TEMP" $GENERATED
 
     # Deleting the lock file, or pointing the check at another one, mustn't turn it off. On a
     # pull request (or merge queue entry), the check compares with the base commit (--base): it

@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
+import { writeTar } from "./tar.js";
 import { removeTemporary } from "./temporary.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
@@ -411,5 +412,42 @@ describe("the Action's build cache", () => {
 
   it("is built from source whenever it isn't restored", () => {
     expect(steps.find((s) => s.name === "Build PermLang")!.if).toBe("steps.build-cache.outputs.cache-hit != 'true'");
+  });
+});
+
+// The packages another job installed come in before the check, and only node_modules folders do
+// (GHSA-chh9-p8fq-3gf9; the archive's checks are in test/dependencies.test.ts).
+describe.skipIf(!bash || process.platform === "win32")("the Action's import of dependencies", () => {
+  const importStep = (generated = "") => run("Import the dependencies", { GENERATED: generated, IMPORT: path.join(repo, "src", "import-dependencies.ts") }, work);
+  const download = () => path.join(temp, "permlang-dependencies");
+
+  it("brings the archive's node_modules folders into the repository root", () => {
+    mkdirSync(download());
+    writeTar(path.join(download(), "dependencies.tar"), [{ type: "file", path: "node_modules/@types/x/index.d.ts", content: "export {};\n" }]);
+    const { code, out } = importStep();
+    expect(code).toBe(0);
+    expect(out).toContain("Imported node_modules.");
+    expect(existsSync(path.join(work, "node_modules", "@types", "x", "index.d.ts"))).toBe(true);
+  });
+
+  it("fails the step, and adds nothing, for an archive with anything else", () => {
+    mkdirSync(download());
+    writeTar(path.join(download(), "dependencies.tar"), [
+      { type: "file", path: "node_modules/@types/x/index.d.ts", content: "export {};\n" },
+      { type: "file", path: "src/types.d.ts", content: "declare function fetch(url: string): any;\n" },
+    ]);
+    const { code, out } = importStep();
+    expect(code).not.toBe(0);
+    expect(out).toContain("src/types.d.ts, which isn't in a node_modules folder");
+    expect(existsSync(path.join(work, "node_modules"))).toBe(false);
+    expect(existsSync(path.join(work, "src", "types.d.ts"))).toBe(false);
+  });
+
+  it("brings in the generated folders it's given, split on spaces", () => {
+    mkdirSync(download());
+    writeTar(path.join(download(), "dependencies.tar"), [{ type: "file", path: "src/generated/client.d.ts", content: "export {};\n" }, { type: "file", path: "gen/x.d.ts", content: "export {};\n" }]);
+    expect(importStep("src/generated gen").code).toBe(0);
+    expect(existsSync(path.join(work, "src", "generated", "client.d.ts"))).toBe(true);
+    expect(existsSync(path.join(work, "gen", "x.d.ts"))).toBe(true);
   });
 });
