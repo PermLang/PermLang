@@ -3,6 +3,10 @@
 Thanks for helping. PermLang is a security tool, so the bar is simple: every
 change comes with a test that proves it.
 
+Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
+[GOVERNANCE.md](GOVERNANCE.md) says how decisions are made, and
+[MAINTAINERS.md](MAINTAINERS.md) who makes them.
+
 ## Reporting
 
 - **A way to get past PermLang** (code that reaches the network, files, secrets,
