@@ -20,6 +20,7 @@
       "ci.action(PermLang/permlang)",
       "ci.action(actions/checkout)",
       "ci.action(actions/setup-node)",
+      "ci.action(actions/upload-artifact)",
       "ci.permission(contents: read)",
       "ci.permission(pull-requests: write)",
       "ci.permission(security-events: write)",
