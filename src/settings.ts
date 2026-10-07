@@ -374,8 +374,9 @@ function formatFlow(rule: FlowRule): string {
 }
 
 /**
- * The first 16 hex digits of a file's SHA-256. JSON is hashed as parsed, so line endings and
- * formatting (a Windows checkout's CRLF) don't change it; only content does.
+ * A file's SHA-256, all 64 hex digits: a shortened one could be matched by a different adapter,
+ * given enough computing, and the lock wouldn't change. JSON is hashed as parsed, so line endings
+ * and formatting (a Windows checkout's CRLF) don't change it; only content does.
  */
 function contentHash(file: string): string {
   const text = readIfFile(file).replace(/^\u{FEFF}/u, "");
@@ -385,7 +386,7 @@ function contentHash(file: string): string {
   } catch {
     canonical = text.replace(/\r\n/g, "\n");
   }
-  return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 function readIfFile(file: string): string {

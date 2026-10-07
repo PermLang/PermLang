@@ -1453,7 +1453,7 @@ the `--config` file), whether or not it exists:
 | `permlang.imported(file)` | Each file the check read only because a checked file imports it, directly or through other files (see [which files are checked](#which-files-are-checked)). |
 | `permlang.strictness(level)`, `permlang.unmapped(policy)`, `permlang.tools(policy)` | The settings in effect: a command-line option (or the Action's `strictness` input), else `permlang.config.json`, else the default. |
 | `permlang.flow(from -> to)` | Each [flow rule](#data-flow-rules). |
-| `permlang.adapter(path sha256:...)` | Each adapter manifest, from the config file or `--adapter`, with the first 16 hex digits of the SHA-256 of its content. The content is hashed as parsed JSON, so line endings and formatting don't change it. |
+| `permlang.adapter(path sha256:...)` | Each adapter manifest, from the config file or `--adapter`, with the SHA-256 of its content (all 64 hex digits; 0.4 recorded the first 16). The content is hashed as parsed JSON, so line endings and formatting don't change it. |
 
 When the files come from a TypeScript project, its config is an entry too
 (`tsconfig.json#<tsconfig.json>`, with capabilities such as
