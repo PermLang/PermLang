@@ -27,6 +27,7 @@ npm install
 npm test                                          # all tests
 npm run test:coverage                             # ...and what they cover
 npm run typecheck                                 # TypeScript, strict
+npm run lint                                      # ESLint
 npm run permlang -- check src                     # PermLang checks its own code
 ```
 
@@ -55,10 +56,14 @@ organized.
    the input, which make good example tests.
 2. **Make the change.** Keep modules small, and match the style around you.
    TypeScript runs in strict mode, and warnings must be fixed, not suppressed.
+   The same goes for ESLint's rules ([eslint.config.js](eslint.config.js)): if
+   one really must be switched off for a line, say why in the same comment.
+   Each source file starts with the same two SPDX lines, its license and
+   copyright; copy them from any other file.
 3. **Check that the test fails without your change.** For a fix, the new test
    should fail on `main`. We break each new rule on purpose before merging, to
    make sure a test notices.
-4. **Run everything:** `npm run typecheck && npm test`, then
+4. **Run everything:** `npm run typecheck && npm run lint && npm test`, then
    `npm run permlang -- check src`. If PermLang's check on itself reports new
    access, that's expected when the change adds some: declare it in `@perm`,
    then run `npm run permlang -- lock src` and commit `permlang.lock.json`.
@@ -68,7 +73,8 @@ organized.
    too, and commit `permlang.released.lock.json`.
 5. **Update the docs and [CHANGELOG.md](CHANGELOG.md)** when behaviour changes,
    including any new known limit.
-6. **Open a pull request.** Every check must pass before it can merge.
+6. **Sign off each commit** (`git commit -s`; see below), and **open a pull
+   request.** Every check must pass before it can merge.
 
 PermLang checks its own pull requests twice
 ([`.github/workflows/permlang.yml`](.github/workflows/permlang.yml)):
@@ -85,6 +91,22 @@ PermLang checks its own pull requests twice
 `npm run permlang:released` runs that release, whichever version the workflow
 pins. When Dependabot moves the pin to a new release, relock with it in the same
 pull request.
+
+## Signing off
+
+Every commit in a pull request ends with a line like this one, which
+`git commit -s` adds:
+
+```text
+Signed-off-by: Your Name <you@example.com>
+```
+
+It says you agree to the [Developer Certificate of Origin](https://developercertificate.org):
+that you wrote the change, or otherwise have the right to submit it under the
+project's license. Use your real name and the email address the commit is
+authored with. A check fails the pull request if a commit isn't signed off,
+and says how to fix it: `git commit --amend --signoff --no-edit` for your last
+commit, or `git rebase --signoff main` for all of them, then push again.
 
 ## Versions
 

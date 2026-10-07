@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Reads `@perm` tags from JSDoc comments.
 //
 // The raw comment text is scanned instead of relying on the TypeScript JSDoc

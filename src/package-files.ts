@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // package.json scripts, the root's and every workspace package's: npm, Yarn, pnpm and
 // Bun run a workspace package's install hooks (`preinstall`, `postinstall`, ...) when
 // the root is installed. Workspaces are listed in package.json's `workspaces` (npm,
@@ -61,7 +64,7 @@ export function readManifest(name: string, text: string, sink: Sink): string[] {
 function workspacePatterns(workspaces: unknown, sink: Sink): string[] {
   if (workspaces === undefined) return [];
   const list = Array.isArray(workspaces) ? workspaces : typeof workspaces === "object" && workspaces !== null ? ((workspaces as { packages?: unknown }).packages ?? []) : undefined;
-  if (Array.isArray(list) && list.every((p) => typeof p === "string")) return list as string[];
+  if (Array.isArray(list) && list.every((p) => typeof p === "string")) return list;
   sink.unverifiable("workspaces: a list PermLang can't read, so every package's scripts are recorded", { line: 1, column: 1 });
   return EVERY_PACKAGE;
 }

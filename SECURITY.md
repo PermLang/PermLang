@@ -51,8 +51,8 @@ attestation, which says which repository, workflow, and commit built it.
 To check a package from npm with the [GitHub CLI](https://cli.github.com):
 
 ```bash
-npm pack permlang@0.4.0
-gh attestation verify permlang-0.4.0.tgz --repo PermLang/PermLang
+npm pack permlang@0.4.1
+gh attestation verify permlang-0.4.1.tgz --repo PermLang/PermLang
 ```
 
 The same package is attached to each
@@ -61,3 +61,30 @@ attestation as `.sigstore.json` (a Sigstore bundle, for
 `gh attestation verify --bundle` or cosign) and `.intoto.jsonl` (the signed
 provenance on its own). npm also records provenance for every version since
 0.1.1, which `npm audit signatures` checks in your project.
+
+### What's in a release (SBOM)
+
+Releases after 0.4.1 also have a software bill of materials,
+`permlang-<version>.cdx.json` (CycloneDX): every package that installing
+PermLang installs, at the version PermLang was tested with, with its license
+and checksum. It's signed as describing that release's package, which you can
+check with:
+
+```bash
+gh attestation verify permlang-<version>.tgz --repo PermLang/PermLang --predicate-type https://cyclonedx.org/bom
+```
+
+### Rebuilding a release
+
+The same source always builds the same package, byte for byte (CI checks this
+on every pull request), so you can rebuild a release yourself and compare it
+with npm's. With Node 24, as the release workflow uses:
+
+```bash
+git clone https://github.com/PermLang/PermLang && cd PermLang
+git checkout v0.4.1
+npm ci --ignore-scripts
+npm run build
+npm pack
+npm view permlang@0.4.1 dist.shasum   # the same as: sha1sum permlang-0.4.1.tgz
+```

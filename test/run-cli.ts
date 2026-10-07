@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // Runs the permlang command in this process, as a shell in `cwd` would: the exit code, and
 // what it printed (stderr too, when it fails). Faster than starting a process per run, and
 // coverage sees the code. test/cli.test.ts also runs the real executable.

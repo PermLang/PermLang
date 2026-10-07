@@ -10,6 +10,11 @@
       "ci.trigger(pull_request)",
       "ci.trigger(push)"
     ],
+    ".github/workflows/dependency-review.yml#<dependency-review.yml>": [
+      "ci.action(actions/dependency-review-action)",
+      "ci.permission(contents: read)",
+      "ci.trigger(pull_request)"
+    ],
     ".github/workflows/permlang.yml#<permlang.yml>": [
       "ci.action(./)",
       "ci.action(PermLang/permlang)",
@@ -43,6 +48,11 @@
       "ci.trigger(schedule)",
       "ci.trigger(workflow_dispatch)"
     ],
+    ".github/workflows/sign-off.yml#<sign-off.yml>": [
+      "ci.action(actions/checkout)",
+      "ci.permission(contents: read)",
+      "ci.trigger(pull_request)"
+    ],
     "action.yml#<action.yml>": [
       "ci.action(actions/cache/restore)",
       "ci.action(actions/cache/save)",
@@ -52,9 +62,11 @@
     ],
     "package.json#<package.json>": [
       "npm.script(build: node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json)",
+      "npm.script(lint: eslint .)",
       "npm.script(permlang: tsx src/cli.ts)",
       "npm.script(permlang:released: node scripts/permlang-released.mjs)",
       "npm.script(prepublishOnly: npm run typecheck && npm test && npm run build)",
+      "npm.script(sbom: node scripts/sbom.mjs)",
       "npm.script(test: vitest run)",
       "npm.script(test:coverage: vitest run --coverage)",
       "npm.script(test:watch: vitest)",

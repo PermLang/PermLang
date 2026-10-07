@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 // The GitHub Action's own scripts (action.yml), run with bash as the runner would, against a real
 // git repository and a stand-in for the `gh` command. They decide whether the check requires the
 // lock, and which comment the permission diff replaces, so they're tested like the rest

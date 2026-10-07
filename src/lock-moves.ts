@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: The PermLang Authors
+
 /**
  * Which lock files the PermLang Action's steps read, in a commit's workflows and in the working
  * tree. A change that points the Action at another lock file (`args: --lock other.json`, or
