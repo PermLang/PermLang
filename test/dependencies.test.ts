@@ -226,6 +226,9 @@ describe("the Action's import step", () => {
     writeTar(path.join(folder, "deps.tar"), [{ type: "file", path: "x\n::error::forged", content: "" }]);
     const { code, out } = run(folder, dir);
     expect(code).toBe(1);
-    expect(out).toBe("Couldn't import the dependencies. The archive of dependencies has x\n::error::forged, which isn't in a node_modules folder.");
+    // The line break, written as a backslash and an n: one line, which starts with the step's own words.
+    const escaped = `x${String.fromCharCode(92)}n::error::forged`;
+    expect(out).toBe(`Couldn't import the dependencies. The archive of dependencies has ${escaped}, which isn't in a node_modules folder.`);
+    expect(out.split("\n")).toHaveLength(1);
   });
 });
