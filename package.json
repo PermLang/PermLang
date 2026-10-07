@@ -57,6 +57,7 @@
     "test:coverage": "vitest run --coverage",
     "permlang": "tsx src/cli.ts",
     "permlang:released": "node scripts/permlang-released.mjs",
+    "sbom": "node scripts/sbom.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {

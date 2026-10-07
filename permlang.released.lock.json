@@ -65,6 +65,7 @@
       "npm.script(permlang: tsx src/cli.ts)",
       "npm.script(permlang:released: node scripts/permlang-released.mjs)",
       "npm.script(prepublishOnly: npm run typecheck && npm test && npm run build)",
+      "npm.script(sbom: node scripts/sbom.mjs)",
       "npm.script(test: vitest run)",
       "npm.script(test:coverage: vitest run --coverage)",
       "npm.script(test:watch: vitest)",
