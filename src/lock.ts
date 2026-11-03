@@ -332,7 +332,8 @@ export function diffLocks(base: LockFile | undefined, head: LockFile): LockDiff 
   }
   const beforeUnsafe = base?.unsafe ?? {};
   const afterUnsafe = head.unsafe;
-  const entries = (r: Record<string, string>) => Object.entries(r).map(([key, reason]) => ({ key, reason }));
+  // By key, as "functions" is, whatever order the locks list them in.
+  const entries = (r: Record<string, string>) => Object.keys(r).sort().map((key) => ({ key, reason: own(r, key)! }));
   return {
     functions,
     unsafeAdded: entries(afterUnsafe).filter(({ key }) => !Object.hasOwn(beforeUnsafe, key)),

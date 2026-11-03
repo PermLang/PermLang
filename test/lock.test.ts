@@ -194,6 +194,25 @@ describe("permlang diff", () => {
     expect(formatDiffText(diff, {})).toBe("src/render.ts#compile\n  ~ @perm-unsafe: anything goes (was: template compiler)");
   });
 
+  // The @perm-unsafe lists followed the order the head lock's keys were written in, so diffing
+  // two locks one way and then the other listed the same changes in different orders (found by
+  // the property tests, seed 560200112).
+  it("lists @perm-unsafe changes by key, whatever order the locks have them in", () => {
+    // JSON.parse makes `__proto__` an own key, as it is in a lock that's read.
+    const a = JSON.parse('{"permlang":2,"functions":{},"unsafe":{"__proto__":" ","toString":" "}}') as LockFile;
+    const b = JSON.parse('{"permlang":2,"functions":{},"unsafe":{"toString":"","__proto__":""}}') as LockFile;
+    expect(diffLocks(a, b).unsafeChanged).toEqual([
+      { key: "__proto__", before: " ", after: "" },
+      { key: "toString", before: " ", after: "" },
+    ]);
+    expect(diffLocks(b, a).unsafeChanged).toEqual([
+      { key: "__proto__", before: "", after: " " },
+      { key: "toString", before: "", after: " " },
+    ]);
+    expect(diffLocks(undefined, b).unsafeAdded.map((u) => u.key)).toEqual(["__proto__", "toString"]);
+    expect(diffLocks(b, { permlang: 2, functions: {}, unsafe: {} }).unsafeRemoved.map((u) => u.key)).toEqual(["__proto__", "toString"]);
+  });
+
   // Several Action runs on one pull request, one per package, replaced each other's comment
   // (found in the code review, G12).
   it("marks the comment with the folder it's for, when that isn't the repository root", () => {
