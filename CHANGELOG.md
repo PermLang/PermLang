@@ -2,6 +2,30 @@
 
 All notable changes to PermLang.
 
+## 0.4.4 (2026-11-03)
+
+**A security release.** With `@types/node` 24 or earlier, PermLang missed calls to
+`fs.statSync()` and `fs.lstatSync()`. If your code calls them, the check fails once
+after you upgrade: review those calls, then run `permlang lock` and commit (or add
+`fs.read` to the function's `@perm`).
+
+### Security
+
+- **Calls to `statSync` and `lstatSync` weren't reported (low,
+  [GHSA-hmw7-j6x3-6f9r](https://github.com/PermLang/PermLang/security/advisories/GHSA-hmw7-j6x3-6f9r)).**
+  `@types/node` before 25 declares both as constants of one type, `StatSyncFn`,
+  so a call to them resolves to that type, which PermLang didn't count as part of
+  fs. A function could read a file's metadata (whether it exists, and its size,
+  owner and times) without declaring `fs.read`, and a pull request that added
+  such a call passed. PermLang now recognizes the type, however the function is
+  called, and counts any other callable type in Node's fs modules as a write, so
+  an fs function it doesn't know can't pass silently.
+
+### Project
+
+- **PermLang's own lock** records three of its functions that call `statSync`
+  or `lstatSync`.
+
 ## 0.4.3 (2026-10-07)
 
 **A security release**, for workflows that 0.4.2's `permlang init --workflow`
