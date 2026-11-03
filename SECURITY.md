@@ -80,8 +80,11 @@ When a vulnerability in one of them can't affect PermLang (the vulnerable code
 never runs in PermLang's use of the package, say), it's recorded in
 [permlang.openvex.json](permlang.openvex.json): an
 [OpenVEX](https://openvex.dev) document, which scanners can read, saying which
-vulnerability, which versions of PermLang, and why it doesn't apply. The release
-notes say so too. If a scanner reports one that isn't there, please open an issue.
+vulnerability, which versions of PermLang, and why it doesn't apply. A test
+([test/vex.test.ts](test/vex.test.ts)) checks each one: it runs PermLang with the
+vulnerable code replaced by a function that records every call, and expects none.
+The release notes say so too. If a scanner reports one that isn't there, please
+open an issue.
 
 ## Verifying a release
 

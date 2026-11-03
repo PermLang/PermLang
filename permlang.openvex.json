@@ -3,8 +3,39 @@
   "@id": "https://github.com/PermLang/PermLang/blob/main/permlang.openvex.json",
   "author": "The PermLang maintainers",
   "role": "Project maintainers",
-  "timestamp": "2026-10-07T00:00:00Z",
-  "version": 1,
+  "timestamp": "2026-11-03T00:00:00Z",
+  "version": 2,
   "tooling": "Written by hand, as SECURITY.md describes",
-  "statements": []
+  "statements": [
+    {
+      "vulnerability": {
+        "@id": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+        "name": "GHSA-g3hv-75wg-m249",
+        "aliases": ["CVE-2026-118764"]
+      },
+      "timestamp": "2026-11-03T00:00:00Z",
+      "products": [
+        { "@id": "pkg:npm/permlang@0.1.0", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.1.1", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.1.2", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.2.0", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.2.1", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.2.2", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.2.3", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.2.4", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.3.0", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.3.1", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.3.2", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.3.3", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.4.0", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.4.1", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.4.2", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.4.3", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] },
+        { "@id": "pkg:npm/permlang@0.4.4", "subcomponents": [{ "@id": "pkg:npm/minimatch" }] }
+      ],
+      "status": "not_affected",
+      "justification": "vulnerable_code_not_in_execute_path",
+      "impact_statement": "PermLang installs minimatch only through ts-morph's @ts-morph/common, which calls it to match glob patterns against the files of an in-memory file system, or in getSourceFiles(patterns). PermLang uses neither: it reads files from disk, where ts-morph matches patterns with tinyglobby, and lists source files without patterns. test/vex.test.ts runs PermLang with minimatch replaced by a function that records every call, and expects none."
+    }
+  ]
 }
