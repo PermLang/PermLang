@@ -74,7 +74,7 @@
       "npm.script(typecheck: tsc --noEmit)"
     ],
     "permlang.config.json#<permlang.config.json>": [
-      "permlang.adapter(permlang/adapters/ts-morph.json sha256:4b4ff4cd85055020)",
+      "permlang.adapter(permlang/adapters/ts-morph.json sha256:4b4ff4cd85055020f31f44a76ae08ada77ddc8bdd9d98221354b94c479712a00)",
       "permlang.files(src)",
       "permlang.strictness(development)",
       "permlang.tools(warn)",

@@ -2,6 +2,22 @@
 
 All notable changes to PermLang.
 
+## 0.5.0 (unreleased)
+
+### What newly fails
+
+- **A lock that records a team adapter fails once.** The lock now records each
+  adapter manifest's whole SHA-256, not its first 16 hex digits, so the first
+  check after upgrading reports that the check runs with an adapter the lock
+  doesn't record. Run `permlang lock` once and commit the change.
+
+### Changed
+
+- **Team adapters are recorded by their whole SHA-256.** With 16 hex digits, a
+  different manifest (one that declares a package pure, say) could, with enough
+  computing, be made to match the one the lock records, and the lock wouldn't
+  change.
+
 ## 0.4.3 (2026-10-07)
 
 **A security release**, for workflows that 0.4.2's `permlang init --workflow`

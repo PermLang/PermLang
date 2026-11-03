@@ -82,7 +82,8 @@ describe("the settings entry", () => {
   it("records each adapter by its content, not its line endings or formatting", () => {
     write("adapters/a.json", '{ "permlang": 1, "package": "a", "default": [] }\n');
     const first = entry(settings({ adapters: [{ file: path.join(dir, "adapters", "a.json"), from: "config" }] })).actual.find((c) => c.startsWith("permlang.adapter"));
-    expect(first).toMatch(/^permlang\.adapter\(adapters\/a\.json sha256:[0-9a-f]{16}\)$/);
+    // The whole SHA-256: 0.4 kept 16 hex digits, which a different adapter could be made to match.
+    expect(first).toMatch(/^permlang\.adapter\(adapters\/a\.json sha256:[0-9a-f]{64}\)$/);
     write("adapters/a.json", '{\r\n  "permlang": 1,\r\n  "package": "a",\r\n  "default": []\r\n}\r\n');
     expect(entry(settings({ adapters: [{ file: path.join(dir, "adapters", "a.json"), from: "config" }] })).actual).toContain(first);
     write("adapters/a.json", '{ "permlang": 1, "package": "a", "default": [], "functions": {} }\n');
