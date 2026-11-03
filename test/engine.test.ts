@@ -129,6 +129,24 @@ describe("classes built by expressions", () => {
   });
 });
 
+describe("fs functions declared as a constant of a callable type", () => {
+  it("are classified by the type, and one of a type PermLang doesn't know is a write", () => {
+    const report = checkTsConfig(project({
+      // As @types/node before 25 declares statSync, for a made-up function.
+      "src/fs.d.ts": 'declare module "fs" {\n  interface ShredFn { (path: string): void }\n  export const shredSync: ShredFn;\n}\n',
+      "src/app.ts": [
+        'import { shredSync, statSync } from "node:fs";',
+        "/** @perm env(MODE) */",
+        "export function t() {",
+        '  shredSync("./data/a");',
+        '  return statSync("./data/b");',
+        "}",
+      ].join("\n"),
+    }));
+    expect(errors(report, "app.ts")).toEqual(["4 PERM001 fs.write(./data/a)", "5 PERM001 fs.read(./data/b)"]);
+  });
+});
+
 describe("reusing a ts-morph Project", () => {
   it("gives fresh results after the code changes", () => {
     const dir = path.dirname(project({}));

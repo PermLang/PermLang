@@ -2,7 +2,7 @@
 
 What could go wrong with PermLang, who might try to make it go wrong, and why its defences hold.
 
-Last reviewed: 2026-10-07, for version 0.4.3
+Last reviewed: 2026-11-03, for version 0.4.4
 
 1. [How to read this](#how-to-read-this)
 2. [What PermLang promises, and what it doesn't](#what-permlang-promises-and-what-it-doesnt)
@@ -390,7 +390,8 @@ Writing this threat model found four vulnerabilities, all in how PermLang runs i
 GitHub Actions rather than in its analysis. Each was fixed privately, released, and
 published as a GitHub security advisory the same day, as [SECURITY.md](../SECURITY.md)
 describes. Checking the first fix on PermLang's own workflow then found a fifth, in
-that fix.
+that fix. A sixth, in the analysis, showed up later in PermLang's own lock, when a
+Dependabot update of Node's type definitions made PermLang see calls it had missed.
 
 | Advisory | Severity | What it was | Fixed in |
 | --- | --- | --- | --- |
@@ -399,6 +400,7 @@ that fix.
 | [GHSA-h4jc-gqvh-2675](https://github.com/PermLang/PermLang/security/advisories/GHSA-h4jc-gqvh-2675) | Moderate | A PermLang step that never runs counted as still checking with the base's lock, so a pull request could move the real check to a lock of its own (TB2). | 0.4.2 |
 | [GHSA-86xw-2f2v-g8vw](https://github.com/PermLang/PermLang/security/advisories/GHSA-86xw-2f2v-g8vw) | Low | A file path starting with `::` could start a workflow command in the job log, hiding annotations (TB7). | 0.4.2 |
 | [GHSA-86ff-3f4h-rrjp](https://github.com/PermLang/PermLang/security/advisories/GHSA-86ff-3f4h-rrjp) | Low | In 0.4.2's two jobs, a failed install skipped the check's job, which a required check counts as passed (TB4). | 0.4.3 |
+| [GHSA-hmw7-j6x3-6f9r](https://github.com/PermLang/PermLang/security/advisories/GHSA-hmw7-j6x3-6f9r) | Low | With `@types/node` 24 or earlier, which declares `statSync` and `lstatSync` as constants of one type, calls to them weren't reported as `fs.read`. | 0.4.4 |
 
 The same review also fixed, as hardening, the problems it rated too small for an
 advisory: a stale comment when the diff died, a capability named `constructor`

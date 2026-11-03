@@ -22,6 +22,7 @@ export function fsFunctionName(declaration: Node): string | undefined {
     return Node.isClassDeclaration(owner) && isInFsModule(owner) ? STREAM_CLASSES.get(owner.getName()) : undefined;
   }
   if (Node.isMethodSignature(declaration)) return fileHandleMethod(declaration);
+  if (Node.isCallSignatureDeclaration(declaration)) return callableType(declaration);
   if (!Node.isFunctionDeclaration(declaration) && !Node.isVariableDeclaration(declaration)) return undefined;
   if (!isInFsModule(declaration)) return undefined;
   // `realpathSync.native()` and `readFile.__promisify__()` are declared in a namespace named after the function.
@@ -68,6 +69,21 @@ function fileHandleMethod(declaration: Node & { getName(): string }): string | u
   if (!Node.isInterfaceDeclaration(owner) || owner.getName() !== "FileHandle") return undefined;
   const inFs = owner.getAncestors().some((a) => Node.isModuleDeclaration(a) && FS_MODULES.has(a.getName().replace(/^["']|["']$/g, "")));
   return inFs ? FILE_HANDLE_METADATA.get(declaration.getName()) : undefined;
+}
+
+// Types that fs functions are declared with. @types/node before 25 declares
+// `const statSync: StatSyncFn` (and lstatSync, which reads its path the same way), so a call
+// resolves to the type's call signature, not to the constant.
+const CALLABLE_TYPES = new Map([["StatSyncFn", "statSync"]]);
+
+/**
+ * The fs function a call signature of a type in an fs module is. A type not listed here is an
+ * fs function of an unknown kind, and fsCapabilities treats that as a write.
+ */
+function callableType(signature: Node): string | undefined {
+  const owner = signature.getParent();
+  if (!Node.isInterfaceDeclaration(owner) || !isInFsModule(owner)) return undefined;
+  return CALLABLE_TYPES.get(owner.getName()) ?? owner.getName();
 }
 
 // Operations on an open descriptor add no access; it was granted at open(). Writing to one opened
